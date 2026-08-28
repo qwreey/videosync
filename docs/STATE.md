@@ -45,36 +45,62 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 - `client/userscript` — the shipping Tampermonkey bundle (`npm run build` -> 54 kB, one IIFE).
 - `harness/browser` — pinned container (chromium + ffmpeg + Xvfb), a media server that can starve
   the player on demand, and probes. `mise run probe` runs the detector validation;
-  `probe-userscript.mjs` runs the whole stack in two real browsers (17/17).
+  `probe-userscript.mjs` runs the whole stack in two real browsers (17/17);
+  `probe-youtube.mjs` drives the real YouTube player (9/9); `probe-csp.mjs` answers the
+  mixed-content question. Results are committed under `harness/browser/results/`.
 
 `mise run test` runs the Go and TS suites.
 
 ## The next task, concretely
 
-**A live smoke test on YouTube and Laftel.** Everything is validated against a
-`<video>` we control; nothing has met a provider that has its own opinions.
+Everything that can be validated without your accounts has been. The two things
+left both need you:
 
-1. Install `client/userscript/dist/videosync.user.js` in Tampermonkey, run
-   `videosyncd` somewhere both browsers can reach, and open the same YouTube
-   video in two profiles.
-2. The two questions to answer, in order of how much they would cost to be
-   wrong about:
-   - **Does the provider reset `playbackRate`?** MSE-level it is confirmed safe
-     (BROWSER-FINDINGS §7: asked 1.1, held 1.1). YouTube and Laftel wrap their
-     own player logic around the element and could reset it on their own timer.
-     If they do, `AdapterCapabilities.supportsPlaybackRateNudge` goes false for
-     that provider and the correction law needs a measured seek-only path.
-   - **Does writing `currentTime` fight the provider's own seek handling?**
-     Laftel rests on one blog post; YouTube's player will re-render its scrubber.
-3. Then the things a controlled page cannot show: ads interrupting playback,
-   the SPA router replacing the element mid-session (`SwappableAdapter` handles
-   the mechanics, but the *media key* changing under a joined room does not),
-   and a site whose CSP or extension policy blocks the socket despite `@grant`.
-4. Record each as a measurement with a number in `docs/BROWSER-FINDINGS.md`, not
-   as an inference from a capability flag.
+### 1. Laftel — the last unmeasured provider (needs your session)
 
-Only after that: the extension (MV3 + Firefox), which is deliberately last
-because it is the highest platform risk and the userscript already ships.
+`research/provider-player-control.md` says the player is a plain scriptable
+`<video>` on the strength of one Korean dev blog. Nothing has confirmed it, and
+Laftel is a D1 priority provider.
+
+```
+cd client/userscript && npm run build     # -> dist/videosync.user.js
+```
+Install it in Tampermonkey, open a Laftel episode, and check three things in the
+console via `window.VideoSync`:
+
+- `VideoSync.mediaKey()` — does it differ per episode? The generic rule is
+  `host:pathname`, which is an assumption for Laftel, not a measurement. If the
+  episode is in a query parameter, `client/core/src/adapter/mediakey.ts` needs a
+  rule the way YouTube has one.
+- `VideoSync.adapter.setRate(1.1)`, wait 10 s, `VideoSync.adapter.readState().rate`
+  — does Laftel's player reset it? YouTube does not (BROWSER-FINDINGS §8). If
+  Laftel does, that provider's `supportsPlaybackRateNudge` goes false and the
+  correction law needs a measured seek-only path.
+- `VideoSync.adapter.seekTo(120)` — does a raw `currentTime` write stick, or does
+  the player fight it the way Netflix reportedly does?
+
+Record each as a number in `docs/BROWSER-FINDINGS.md`, not as an inference from
+a capability flag.
+
+### 2. Tampermonkey itself (needs your browser)
+
+Every browser measurement so far injected the bundle into the main world via
+CDP. That is the *pessimistic* side of the CSP question — a pass there implies a
+pass in the userscript sandbox — but it means `@grant`, `GM_setValue`, and the
+panel inside a real extension have never actually run. Install it and open two
+profiles on the same YouTube video against a TLS-terminated server.
+
+**Your server needs TLS.** Measured, not assumed: from an https page a script
+can reach neither `http://` nor `ws://` on your server, and the blocked call
+never settles, so it looks exactly like a server that is down
+(BROWSER-FINDINGS §8). Either `-tls-cert/-tls-key`, or anything that terminates
+TLS in front of it.
+
+### Then: the extension
+
+Deliberately last — highest platform risk, and the userscript already ships.
+The known unknowns are MV3 service-worker lifetime holding a WebSocket, and the
+same question on Firefox, which has a different lifetime model.
 
 ## Open questions that block things
 
