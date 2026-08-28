@@ -1,0 +1,29 @@
+# Toolchain for VideoSync. Versions are pinned deliberately, not `latest` —
+# this repo is a reference for future sessions and floating versions make
+# research citations and reproductions drift.
+
+[tools]
+go = "1.27.0"
+node = "26.8.1"
+
+[env]
+# Keep module/package caches inside the project so a sandbox reset is clean
+# and so disk usage is visible in one place (the host FS runs tight on space).
+GOPATH = "{{config_root}}/.cache/go"
+GOMODCACHE = "{{config_root}}/.cache/go/pkg/mod"
+GOBIN = "{{config_root}}/.cache/go/bin"
+
+[tasks.server]
+description = "Run the sync server"
+dir = "{{config_root}}/server"
+run = "go run ./cmd/videosyncd"
+
+[tasks.sim]
+description = "Run the Risk-A simulation harness (no browser)"
+dir = "{{config_root}}/server"
+run = "go run ./cmd/simharness"
+
+[tasks.test]
+description = "Run all Go tests"
+dir = "{{config_root}}/server"
+run = "go test ./..."
