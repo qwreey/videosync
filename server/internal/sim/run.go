@@ -22,8 +22,10 @@ type Scenario struct {
 	DurationMs int64
 	Clients    []ClientProfile
 	Commands   []Command
-	StartPos   int64
+	StartPos    int64
 	StartPaused bool
+	// NoStaleResend is a control: see Server.NoStaleResend.
+	NoStaleResend bool
 }
 
 // Result is what we compare strategies on.
@@ -54,6 +56,7 @@ type Result struct {
 	GatesOpened      int
 	SeeksSuppressed  int
 	BiasLearned      int
+	StaleResends     int
 	// Seeks split by what they actually cost: an in-buffer seek is ~free, an
 	// out-of-buffer seek costs a segment fetch AND rebuffers for it.
 	InBufferSeeks    int
@@ -66,6 +69,12 @@ type Result struct {
 	// seeks. Any value > 0 means the room would have been dragged backward by
 	// someone's buffering -- the bug syncplay ships.
 	Misdetections int
+	// SpuriousCmds counts commands originated by the browser rather than by a
+	// user -- a hidden muted tab's pause/play. Each one moves the whole room.
+	SpuriousCmds int
+	// RoomPausedBySuspension counts anchor transitions into paused that were
+	// caused by a suspended member.
+	RoomPausedBySuspension int
 
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
@@ -87,6 +96,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 
 	start := vsync.Anchor{PositionMs: sc.StartPos, AtServerMs: 0, Paused: sc.StartPaused, MediaKey: "m"}
 	srv := NewServer(corr, tun, start)
+	srv.NoStaleResend = sc.NoStaleResend
 	for _, id := range order {
 		clients[id].anchor = start
 		clients[id].lastKnownPos = float64(sc.StartPos)
@@ -94,6 +104,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 
 	var divergences []float64
 	var anchorErrs []float64
+	roomPausedBySuspension := 0
 	lastCmdAt := int64(-1 << 40)
 	cmdIdx := 0
 	type pendingConv struct{ at int64 }
@@ -103,9 +114,17 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	for now := int64(0); now <= sc.DurationMs; now += stepMs {
 		// 1. deliver
 		for _, e := range net.Due(now) {
+			// A message in flight when the link drops is lost, in both
+			// directions -- that is what makes reconnect a real test.
+			if c, ok := clients[e.from]; ok && c.Offline(now) {
+				continue
+			}
 			if e.to == "server" {
 				srv.Deliver(e, net, now, clients)
 			} else if c, ok := clients[e.to]; ok {
+				if c.Offline(now) {
+					continue
+				}
 				c.Deliver(e.msg, now)
 			}
 		}
@@ -120,16 +139,33 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			cmdIdx++
 		}
 
-		// 3. advance players and apply scheduled commands
+		// 3. advance players, apply scheduled commands, drain client-originated
+		//    commands (browser-driven pause/play among them)
 		for _, id := range order {
 			c := clients[id]
+			if c.Offline(now) {
+				// Still playing locally -- a dropped connection does not pause
+				// anyone's video, which is exactly why they drift apart.
+				c.Advance(now, stepMs)
+				continue
+			}
+			c.UpdateSuspension(now)
 			c.RunScheduled(now)
 			c.Advance(now, stepMs)
+			for _, cm := range c.TakeOutbox() {
+				if cm.Kind == "pause" && c.Suspended() {
+					roomPausedBySuspension++
+				}
+				net.Send(now, id, id, "server", true, cm)
+			}
 		}
 
 		// 4. client timers
 		for _, id := range order {
 			c := clients[id]
+			if c.Offline(now) {
+				continue
+			}
 			if now%timeSyncEveryMs == 0 || (now < 250 && now%50 == 0) {
 				c.TimeSync(net, now)
 			}
@@ -150,8 +186,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			var live []float64
 			for _, id := range order {
 				c := clients[id]
-				if c.stalled(now) {
-					continue // legitimately behind; that is the gate's job
+				if c.stalled(now) || c.Offline(now) || c.Suspended() {
+					continue // legitimately behind, absent, or not watching
 				}
 				live = append(live, c.Pos())
 			}
@@ -159,7 +195,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 				exp := float64(srv.Anchor().Expected(now))
 				for _, id := range order {
 					c := clients[id]
-					if c.stalled(now) || !c.haveOffset {
+					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() {
 						continue
 					}
 					anchorErrs = append(anchorErrs, math.Abs(c.Pos()-exp))
@@ -178,7 +214,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 				allIn := true
 				for _, id := range order {
 					c := clients[id]
-					if c.stalled(now) || !c.haveOffset {
+					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() {
 						continue
 					}
 					exp := float64(srv.Anchor().Expected(c.serverNowEst(now)))
@@ -203,11 +239,14 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		SeeksIssued: srv.SeeksIssued, UnnecessarySeeks: srv.UnnecessarySeeks,
 		NudgesIssued: srv.NudgesIssued, GatesOpened: srv.GatesOpened,
 		SeeksSuppressed: srv.SeeksSuppressed, BiasLearned: srv.BiasLearned,
-		ConvergeMs: converge,
+		StaleResends: srv.StaleResends,
+		RoomPausedBySuspension: roomPausedBySuspension,
+		ConvergeMs:             converge,
 	}
 	for _, id := range order {
 		c := clients[id]
 		res.Misdetections += c.Misdetections
+		res.SpuriousCmds += c.SpuriousCmds
 		res.InBufferSeeks += c.InBufferSeeks
 		res.OutOfBufferSeeks += c.OutOfBufferSeeks
 		res.RateTimeMs += c.RateTimeMs

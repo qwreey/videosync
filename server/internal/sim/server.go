@@ -19,7 +19,15 @@ type Server struct {
 	gated map[string]int64 // client -> server time it started gating
 	corr  map[string]*corrState
 
+	// NoStaleResend disables the stale-anchor resend, as a control. Without it
+	// a client that missed a command holds a stale anchor and reports
+	// residual ~= 0 -- because the residual is measured against that same
+	// stale anchor -- while being arbitrarily out of position. No corrector
+	// reads LastAppliedSeq, so nothing else notices.
+	NoStaleResend bool
+
 	// metrics
+	StaleResends     int
 	SeeksIssued      int
 	NudgesIssued     int
 	UnnecessarySeeks int // seek issued while the residual was already closing
@@ -136,6 +144,16 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 		// command delay for the whole room. RTT is a difference of two
 		// same-clock timestamps, so it carries no offset error.
 		s.pings[r.ClientID] = r.RTTMs
+
+		// A lagging lastAppliedSeq is the only signal that distinguishes "in
+		// sync" from "confidently wrong about what it is syncing to". It is
+		// already on the wire and nothing was reading it.
+		if !s.NoStaleResend && r.LastAppliedSeq < s.seq {
+			s.StaleResends++
+			net.Send(now, r.ClientID, "server", r.ClientID, false, MsgState{
+				Seq: s.seq, When: now, EmittedAt: now, Anchor: s.anchor, By: "server", Kind: "resync"})
+			return
+		}
 
 		cs := s.corr[r.ClientID]
 		if cs == nil {

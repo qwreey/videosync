@@ -646,3 +646,98 @@ uses free seeks instead of rate.
   "win" that simply stops correcting would fail.
 - `TestServoRefusesToChaseAClockBias` — with a control proving a phase integrator still walks into
   the trap, so the scenario has not been weakened.
+
+---
+
+# Round 8 — membership, reconnection, and a rule that was too absolute
+
+Three scenario classes the harness had never modelled, all of which turned out to contain a
+correctness bug rather than a tuning question. Full output: `docs/poc-run-8.txt`.
+
+## 33. Browser tab suspension moves the room (measured, then reproduced)
+
+`docs/BROWSER-FINDINGS.md` §5 measured Chrome pausing a **muted, hidden** tab and firing a real
+`pause` event. The sim now models it, with a `NoSuspendGuard` control:
+
+```
+guarded: 0 spurious commands / 0 room pauses
+naive:   4 spurious commands / 2 room pauses
+```
+
+Two members' worth of tab-switching pauses the whole room twice in 90 seconds. Nothing in the
+existing design catches it: the stall detector only fires on a freeze while `paused === false`, and
+this freeze sets `paused === true`, so it passes straight through as user intent.
+
+This also required a piece the harness never had: **clients could not originate commands at all.**
+Every command came from scenario injection, so the path where a client's own detector decides to
+broadcast had never been exercised. It is now.
+
+A suspended member is also **absent, not buffering** — `Report.Suspended` is on the wire and every
+corrector returns `ActionNone` for it, so the readiness gate cannot hold the room for someone who
+is not watching.
+
+## 34. A member that misses one command is stranded, invisibly
+
+`reconnect`: one member is offline across a seek. On return it holds a stale anchor — and because
+its residual is measured *against that same stale anchor*, it reports **≈ 0** while being minutes
+out of position. This is the third blindness of the residual channel, alongside §21 (laundered
+bias) and the stall case.
+
+`LastAppliedSeq` has been on the wire since the §5 amendment and **no corrector ever read it.**
+Resending state when a client's `lastAppliedSeq` lags the server's is three lines:
+
+| | mean anchor error |
+|---|---|
+| without the resend | **115 603 ms** |
+| with it | **250 ms** |
+
+A 460x improvement from reading a field we were already sending. Note that *max* divergence is
+unchanged (569 s in both) — that is the instant of reconnect itself, which no design can avoid;
+sustained error is what separates "recovered" from "stranded", and it is the metric this needed.
+
+## 35. "Never seek outside the buffer" was too absolute — the harness caught it
+
+Round 7 concluded that out-of-buffer seeks are never worth their cost. `tab-suspension` falsified
+that immediately: a member returning from a 15 s suspension is 15 s behind, and the ±10 % rate
+clamp closes at most 100 ms of gap per second, so a rate-only recovery takes **150 seconds**.
+Servo scored **3442 ms** mean anchor error against the plain threshold's 28 ms.
+
+The rule is not about the buffer, it is about which correction is cheaper:
+
+- target **buffered** → seek, at any gap above the band. It costs ~20 ms.
+- target **unbuffered**, gap above `NudgeMaxResidual` → seek anyway. One segment fetch
+  (~150–400 ms) beats minutes of audibly wrong playback.
+- otherwise → rate.
+
+With that, servo takes **1 free + 3 costly** seeks on `long-stalls` against the baseline's
+**0 + 4**, and scores 52/38 ms against 71/145.
+
+## 36. Full table, all eleven scenarios
+
+Anchor error mean/p95 ms:
+
+| scenario | threshold-500 | **servo** |
+|---|---|---|
+| steady/rate-drift | 160/455 | **15/30** |
+| transient-hiccup | 13/**10** | **12**/32 |
+| long-stalls | 71/145 | **52/38** |
+| one-slow-client | **92**/448 | 100/**372** |
+| clock-skew | 124/333 | **23/56** |
+| latency-asymmetry | 390/595 | **11/15** |
+| asymmetry+cmds | 389/600 | **294/594** |
+| tab-suspension | **28**/45 | 31/45 |
+| reconnect | **242**/15 | 249/**45** |
+| late-join | 53/224 | **16/42** |
+| command-storm | **13/25** | 15/30 |
+
+Servo wins clearly on five, ties on four, and is marginally behind on two (`tab-suspension`,
+`command-storm`) where both are already inside a single frame at 25 fps. The wins are large
+(10x, 5x, 35x) and the losses are 2–3 ms.
+
+## 37. What is now covered that was not
+
+The §19 harness gaps are closed: seeks cost what the browser says they cost, and join / leave /
+reconnect / suspension all exist as scenarios. **Background throttling deliberately does not** —
+§4 of the browser findings measured that an audible tab is exempt, and §5 that a muted hidden one
+is paused outright rather than throttled, so the "1 Hz eval loop" scenario turned out to describe
+a state that does not occur. That gap closed by being measured away rather than by being modelled.

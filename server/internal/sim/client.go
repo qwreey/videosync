@@ -29,6 +29,26 @@ type ClientProfile struct {
 	// buffering guard). Used as a control: a Misdetections count of 0 proves
 	// nothing unless the same scenario produces a non-zero count without it.
 	NoStallInference bool
+
+	// Suspends are [start, end) windows where this member's tab is hidden AND
+	// its video is muted. Chrome pauses the element itself in that state and
+	// fires a real `pause` event, indistinguishable at the DOM level from the
+	// user pressing pause (measured: docs/BROWSER-FINDINGS.md 5).
+	Suspends [][2]int64
+	// NoSuspendGuard broadcasts those browser-initiated transitions as if they
+	// were user intent -- what a client written without the measurement does.
+	// Control for TestSuspendGuardIsLoadBearing.
+	NoSuspendGuard bool
+
+	// JoinAtMs is when this member joins. A late joiner arrives with zero clock
+	// samples, so every confidence-gated correction refuses to act -- the
+	// member most in need of correction is the one that cannot be corrected.
+	JoinAtMs int64
+	// Disconnects are [start, end) windows where nothing reaches this member
+	// and nothing leaves. On reconnect it holds a stale anchor and, because its
+	// residual is measured AGAINST that stale anchor, reports ~0 while being
+	// arbitrarily out of position.
+	Disconnects [][2]int64
 }
 
 // Client is a simulated player plus the client half of the sync protocol.
@@ -69,6 +89,18 @@ type Client struct {
 	// bought with speed changes. Nudge COUNT is not comparable across control
 	// laws -- a continuous controller emits one per report by construction.
 	RateTimeMs float64
+
+	// Browser-initiated suspension. Distinguished from buffering by what the
+	// element reports: suspension is paused==true with readyState 4 and a full
+	// buffer; buffering is paused==false with readyState<3 and a draining one.
+	suspended bool
+	// outbox carries commands this client originates. Until now the harness
+	// only injected commands from scenarios, so the path where a client's own
+	// detector decides to broadcast was never exercised at all.
+	outbox []MsgCmd
+	// SpuriousCmds counts commands this client sent that were caused by the
+	// browser, not by its user.
+	SpuriousCmds int
 
 	// stall inference -- the client cannot call stalled(); it must work this
 	// out from what a real <video> exposes: readyState, and the fact that
@@ -138,6 +170,65 @@ func (c *Client) inBuffer(posMs float64) bool {
 	return posMs/1000 >= backS && posMs/1000 <= c.bufEndS
 }
 
+// Offline reports whether this member is unreachable right now.
+func (c *Client) Offline(serverMs int64) bool {
+	if serverMs < c.P.JoinAtMs {
+		return true
+	}
+	for _, w := range c.P.Disconnects {
+		if serverMs >= w[0] && serverMs < w[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) inSuspendWindow(serverMs int64) bool {
+	for _, w := range c.P.Suspends {
+		if serverMs >= w[0] && serverMs < w[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// TakeOutbox drains commands this client decided to originate.
+func (c *Client) TakeOutbox() []MsgCmd {
+	out := c.outbox
+	c.outbox = nil
+	return out
+}
+
+// UpdateSuspension models the browser pausing a hidden muted tab, and the
+// client's decision about whether that is user intent worth broadcasting.
+func (c *Client) UpdateSuspension(serverMs int64) {
+	want := c.inSuspendWindow(serverMs)
+	if want == c.suspended {
+		return
+	}
+	c.suspended = want
+	if want {
+		c.paused = true // the browser did this, not the user
+	} else {
+		c.paused = c.anchor.Paused // resumes itself on re-show
+	}
+	if c.P.NoSuspendGuard {
+		// No guard: a `pause`/`play` event is a `pause`/`play` event. One
+		// member backgrounding a muted tab pauses the whole room, and
+		// switching back resumes it -- even a room deliberately paused.
+		kind := "play"
+		if want {
+			kind = "pause"
+		}
+		c.outbox = append(c.outbox, MsgCmd{ClientID: c.P.ID, Kind: kind, PositionMs: int64(c.posMs)})
+		c.SpuriousCmds++
+	}
+	// With the guard: recognised as browser suspension, never broadcast. The
+	// member is absent, not buffering -- see gating below.
+}
+
+func (c *Client) Suspended() bool { return c.suspended }
+
 func (c *Client) stalled(serverMs int64) bool {
 	if serverMs < c.seekStallUntil {
 		return true
@@ -152,6 +243,14 @@ func (c *Client) stalled(serverMs int64) bool {
 
 // Advance moves playback forward by dt ms of real time, and moves the buffer.
 func (c *Client) Advance(serverMs, dt int64) {
+	if c.suspended {
+		// Paused by the browser: position frozen, but the buffer stays full
+		// and readyState stays 4. That is what makes it distinguishable from
+		// a buffering stall.
+		c.readyState = 4
+		c.bufferedS = c.bufEndS - c.posMs/1000
+		return
+	}
 	// Rate cost accrues whenever a nudge is in effect and playback is running.
 	if !c.paused && !c.stalled(serverMs) {
 		c.RateTimeMs += math.Abs(c.appliedRate-1.0) * float64(dt)
@@ -276,6 +375,7 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 		Paused:         c.paused,
 		ReadyState:     c.readyState,
 		BufferedAheadS:  c.bufferedS,
+		Suspended:       c.suspended,
 		BufferedBehindS: math.Min(10, c.posMs/1000),
 		LastAppliedSeq: c.lastAppliedSeq,
 		AtServerMs:     est,

@@ -34,6 +34,11 @@ type Report struct {
 	// ClockSamples counts accepted min-RTT samples. Corrections before the
 	// estimate has settled do more harm than good.
 	ClockSamples int
+	// Suspended means the browser paused this member's element because its tab
+	// is hidden and muted. Such a member is ABSENT, not behind: the readiness
+	// gate must not hold the room for them, or the room waits forever for
+	// someone who is not watching.
+	Suspended bool
 }
 
 // Closing reports whether the residual is shrinking on its own, i.e. the slope

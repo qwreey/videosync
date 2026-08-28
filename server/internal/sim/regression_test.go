@@ -178,9 +178,12 @@ func TestSchedulingLaundersClockBias(t *testing.T) {
 
 // The browser probe measured that an in-buffer seek is free (~20 ms at any
 // network speed) while an out-of-buffer seek costs a full segment fetch and
-// rebuffers for it -- leaving the client further out of position than it
-// started. A corrector must therefore never seek outside the buffer.
-func TestServoNeverSeeksOutOfBuffer(t *testing.T) {
+// rebuffers for it. The rule that follows is NOT "never seek out of buffer" --
+// that version of this test failed a member returning from a 15 s tab
+// suspension, who then spent 150 s nudging at the 10% rate clamp. The rule is
+// that a seek must be the cheaper of the two options: free when buffered, and
+// worth its cost only when the gap exceeds what rate can absorb.
+func TestServoPrefersCheapCorrections(t *testing.T) {
 	tun := vsync.DefaultTunables()
 	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
 	meh := Link{UpMs: 80, DownMs: 80, JitterMs: 30}
@@ -194,15 +197,50 @@ func TestServoNeverSeeksOutOfBuffer(t *testing.T) {
 		},
 	}
 	servo := Run(sc, &vsync.ServoCorrector{}, tun)
-	if servo.OutOfBufferSeeks != 0 {
-		t.Errorf("servo issued %d out-of-buffer seeks; each one rebuffers the client it was meant to fix",
-			servo.OutOfBufferSeeks)
-	}
-	// Control: the plain threshold strategy does take those expensive seeks,
-	// so a zero above means something.
 	base := Run(sc, vsync.ThresholdCorrector{}, tun)
+
+	// The baseline takes every correction as an unconditional seek, so all of
+	// its post-stall seeks land outside the drained buffer.
 	if base.OutOfBufferSeeks == 0 {
-		t.Error("control: baseline took no out-of-buffer seeks -- scenario no longer exercises the cost")
+		t.Fatal("control: baseline took no expensive seeks -- scenario no longer exercises the cost")
+	}
+	if servo.OutOfBufferSeeks >= base.OutOfBufferSeeks {
+		t.Errorf("servo took %d expensive seeks vs baseline %d -- it is not preferring cheap ones",
+			servo.OutOfBufferSeeks, base.OutOfBufferSeeks)
+	}
+	if servo.InBufferSeeks == 0 {
+		t.Error("servo took no free in-buffer seeks; it should prefer them over nudging a step")
+	}
+	if servo.MeanAnchorErrMs > base.MeanAnchorErrMs {
+		t.Errorf("servo %.0f ms worse than baseline %.0f ms despite cheaper corrections",
+			servo.MeanAnchorErrMs, base.MeanAnchorErrMs)
+	}
+	t.Logf("servo %.0f/%.0f ms with %d free + %d costly seeks; baseline %.0f/%.0f with %d + %d",
+		servo.MeanAnchorErrMs, servo.P95AnchorErrMs, servo.InBufferSeeks, servo.OutOfBufferSeeks,
+		base.MeanAnchorErrMs, base.P95AnchorErrMs, base.InBufferSeeks, base.OutOfBufferSeeks)
+}
+
+// A member returning from a browser tab suspension is many seconds behind.
+// Refusing an expensive seek there is worse than paying for it: the rate clamp
+// closes at most 10% of real time, so a 15 s gap would take 150 s to absorb.
+func TestServoPaysForASeekWhenRateCannotCatchUp(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	sc := Scenario{
+		Name: "tab-suspension", Seed: 21, DurationMs: 90000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: good, Suspends: [][2]int64{{20000, 35000}}},
+			{ID: "c", IntrinsicRate: 1.0, Link: good},
+		},
+	}
+	r := Run(sc, &vsync.ServoCorrector{}, tun)
+	if r.MeanAnchorErrMs > 200 {
+		t.Errorf("member returning from suspension never caught up: mean anchor error %.0f ms "+
+			"(a rate-only recovery from a 15 s gap takes 150 s)", r.MeanAnchorErrMs)
+	}
+	if r.OutOfBufferSeeks == 0 {
+		t.Error("expected servo to pay for one expensive seek here; a free correction does not exist")
 	}
 }
 
@@ -254,4 +292,127 @@ func TestServoRefusesToChaseAClockBias(t *testing.T) {
 	if pll.MeanAnchorErrMs < 100 {
 		t.Error("control: a phase integrator no longer walks into the bias trap -- scenario weakened")
 	}
+}
+
+// Chrome pauses a muted video when its tab is hidden and fires a real `pause`
+// event (measured: docs/BROWSER-FINDINGS.md 5). A client that treats that as user
+// intent pauses the entire room because one member switched tabs -- and
+// resumes it when they switch back, even a room someone deliberately paused.
+func TestSuspendGuardIsLoadBearing(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	mk := func(noGuard bool) Scenario {
+		good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+		return Scenario{
+			Name: "suspension", Seed: 21, DurationMs: 90000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good, NoSuspendGuard: noGuard,
+					// member b keeps switching to another tab with sound off
+					Suspends: [][2]int64{{20000, 35000}, {55000, 70000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: good},
+			},
+		}
+	}
+	guarded := Run(mk(false), &vsync.ServoCorrector{}, tun)
+	if guarded.SpuriousCmds != 0 {
+		t.Errorf("guarded client broadcast %d browser-initiated commands", guarded.SpuriousCmds)
+	}
+	if guarded.RoomPausedBySuspension != 0 {
+		t.Errorf("room was paused %d times by a suspended member", guarded.RoomPausedBySuspension)
+	}
+
+	// Control: without the guard the bug must actually reproduce, or the test
+	// above is asserting nothing.
+	naive := Run(mk(true), &vsync.ServoCorrector{}, tun)
+	if naive.SpuriousCmds == 0 {
+		t.Error("control: no spurious commands without the guard -- scenario does not exercise the bug")
+	}
+	if naive.RoomPausedBySuspension == 0 {
+		t.Error("control: the room was never paused by a suspension -- bug not reproduced")
+	}
+	t.Logf("guarded: %d spurious cmds / %d room pauses; naive: %d / %d",
+		guarded.SpuriousCmds, guarded.RoomPausedBySuspension,
+		naive.SpuriousCmds, naive.RoomPausedBySuspension)
+}
+
+// A suspended member is absent, not buffering: the readiness gate must not
+// hold the room for someone who is not watching.
+func TestSuspendedMemberDoesNotGateTheRoom(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	sc := Scenario{
+		Name: "suspend-gate", Seed: 22, DurationMs: 60000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: good, Suspends: [][2]int64{{15000, 45000}}},
+		},
+	}
+	r := Run(sc, &vsync.ServoCorrector{}, tun)
+	if r.GatesOpened != 0 {
+		t.Errorf("room gated %d times on a suspended member", r.GatesOpened)
+	}
+}
+
+// A member that misses a command holds a stale anchor -- and because its
+// residual is measured against that same stale anchor, it reports ~0 while
+// being arbitrarily out of position. The residual channel is blind to it; only
+// the lagging lastAppliedSeq shows it, and no corrector reads that field.
+func TestStaleAnchorAfterReconnect(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	mk := func(noResend bool) Scenario {
+		return Scenario{
+			Name: "reconnect", Seed: 31, DurationMs: 90000, NoStaleResend: noResend,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				// b is offline across the seek, so it never learns the room moved.
+				{ID: "b", IntrinsicRate: 1.0, Link: good, Disconnects: [][2]int64{{25000, 40000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: good},
+			},
+			Commands: []Command{{AtMs: 30000, ClientID: "a", Kind: "seek", PositionMs: 600000}},
+		}
+	}
+	blind := Run(mk(true), &vsync.ServoCorrector{}, tun)
+	fixed := Run(mk(false), &vsync.ServoCorrector{}, tun)
+
+	// Max divergence is the wrong lens here: it captures the single instant
+	// right after reconnect, which is huge no matter how fast recovery is.
+	// Sustained error is what distinguishes "recovered" from "stranded".
+	if blind.MeanAnchorErrMs < 10000 {
+		t.Errorf("control: a member that missed a seek should stay far out of position without the "+
+			"resend, got mean %.0f ms -- scenario no longer reproduces", blind.MeanAnchorErrMs)
+	}
+	if fixed.StaleResends == 0 {
+		t.Error("no stale resend fired for a member that missed a command")
+	}
+	if fixed.MeanAnchorErrMs > blind.MeanAnchorErrMs/10 {
+		t.Errorf("resend did not recover the member: mean %.0f ms with vs %.0f ms without",
+			fixed.MeanAnchorErrMs, blind.MeanAnchorErrMs)
+	}
+	t.Logf("mean anchor error: blind %.0f ms -> with resend %.0f ms (%d resends); "+
+		"max %.0f -> %.0f (the instant of reconnect, unavoidable)",
+		blind.MeanAnchorErrMs, fixed.MeanAnchorErrMs, fixed.StaleResends,
+		blind.MaxDivergenceMs, fixed.MaxDivergenceMs)
+}
+
+// A late joiner arrives with zero clock samples, so a confidence-gated
+// corrector refuses to act on the member that needs it most. Verify it does
+// converge, and record how long it takes.
+func TestLateJoinerConverges(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	sc := Scenario{
+		Name: "late-join", Seed: 41, DurationMs: 90000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: good},
+			{ID: "c", IntrinsicRate: 1.0, Link: Link{UpMs: 80, DownMs: 80, JitterMs: 30}, JoinAtMs: 30000},
+		},
+	}
+	r := Run(sc, &vsync.ServoCorrector{}, tun)
+	if r.MeanAnchorErrMs > 200 {
+		t.Errorf("late joiner never converged: mean anchor error %.0f ms", r.MeanAnchorErrMs)
+	}
+	t.Logf("with a joiner at t=30s: mean anchor err %.0f ms, p95 %.0f ms, in/out seeks %d/%d",
+		r.MeanAnchorErrMs, r.P95AnchorErrMs, r.InBufferSeeks, r.OutOfBufferSeeks)
 }

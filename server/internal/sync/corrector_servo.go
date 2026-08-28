@@ -56,6 +56,11 @@ func targetBuffered(r Report, a Anchor, serverMs int64) bool {
 }
 
 func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
+	// A suspended member is absent, not behind. Gating on them holds the room
+	// for someone who is not watching (docs/BROWSER-FINDINGS.md 5).
+	if r.Suspended {
+		return Decision{Action: ActionNone, Why: "suspended"}
+	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
 		return Decision{Action: ActionGate, Why: "buffering"}
 	}
@@ -111,6 +116,16 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	if abs64(r.ResidualMs) > band && targetBuffered(r, a, serverMs) {
 		s.rateBias = 0 // step is gone; do not keep a frequency correction for it
 		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "free seek"}
+	}
+	// An out-of-buffer seek is expensive, but not seeking is not free either:
+	// the rate clamp closes at most 10% of real time, so a gap of G ms takes
+	// G/0.10 ms of audibly wrong playback to absorb. Past NudgeMaxResidual that
+	// is minutes, and one segment fetch is plainly the cheaper of the two.
+	// (The first version of this rule refused out-of-buffer seeks outright and
+	// left a member returning from a 15 s tab suspension nudging for 150 s.)
+	if abs64(r.ResidualMs) >= t.NudgeMaxResidual {
+		s.rateBias = 0
+		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "gap beyond what rate can close"}
 	}
 
 	rate := clampF(1.0+s.rateBias+phase, t.RateMin, t.RateMax)

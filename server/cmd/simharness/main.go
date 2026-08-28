@@ -92,6 +92,38 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
+			// Chrome pauses a muted hidden tab and fires a real `pause`. A
+			// member switching tabs must not move the room.
+			Name: "tab-suspension", Seed: 21, DurationMs: 90000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good,
+					Suspends: [][2]int64{{20000, 35000}, {55000, 70000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh},
+			},
+		},
+		{
+			// A member offline across a seek comes back holding a stale anchor
+			// and reports residual ~0 against it.
+			Name: "reconnect", Seed: 31, DurationMs: 90000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good, Disconnects: [][2]int64{{25000, 40000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh},
+			},
+			Commands: []sim.Command{{AtMs: 30000, ClientID: "a", Kind: "seek", PositionMs: 600000}},
+		},
+		{
+			// A joiner arrives with zero clock samples -- the member most in
+			// need of correction is the one confidence gating refuses to touch.
+			Name: "late-join", Seed: 41, DurationMs: 90000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 0.997, Link: good},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh, JoinAtMs: 30000},
+			},
+		},
+		{
 			Name: "command-storm", Seed: 6, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -156,7 +188,7 @@ func main() {
 	// segment fetch and rebuffers for it (docs/BROWSER-FINDINGS.md 2).
 	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %6s %5s\n",
 		"scenario", "strategy", "anchorErr", "p95Anchor",
-		"seek/in", "seek/OUT", "rateTime", "gates", "MISD")
+		"seek/in", "seek/OUT", "rateTime", "gates", "BAD")
 	fmt.Println(strings.Repeat("-", 104))
 
 	for _, sc := range scenarios() {
@@ -165,7 +197,7 @@ func main() {
 			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %6d %5d\n",
 				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs,
 				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs,
-				r.GatesOpened, r.Misdetections)
+				r.GatesOpened, r.Misdetections+r.SpuriousCmds)
 			if len(r.ConvergeMs) > 0 {
 				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
 			}

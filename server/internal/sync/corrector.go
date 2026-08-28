@@ -97,6 +97,9 @@ type ThresholdCorrector struct{ HardSeekMs int64 }
 func (ThresholdCorrector) Name() string { return "threshold" }
 
 func (c ThresholdCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
+	if r.Suspended {
+		return Decision{Action: ActionNone, Why: "suspended"}
+	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
 		return Decision{Action: ActionGate, Why: "buffering"}
 	}
@@ -160,6 +163,9 @@ type StepRampCorrector struct{}
 func (StepRampCorrector) Name() string { return "step-ramp" }
 
 func (StepRampCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
+	if r.Suspended {
+		return Decision{Action: ActionNone, Why: "suspended"}
+	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
 		return Decision{Action: ActionGate, Why: "buffering"}
 	}
