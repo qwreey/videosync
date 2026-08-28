@@ -202,6 +202,7 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 		// Honest error bound: full path asymmetry biases the estimate by at
 		// most half the round trip.
 		UncertaintyMs: c.bestRTT / 2,
+		RTTMs:         c.bestRTT,
 		ClockSamples:  c.clockSamples,
 	}, true
 }
@@ -247,7 +248,8 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 		}
 	case MsgCorrect:
 		if v.Mode == "seek" {
-			c.posMs = float64(v.TargetMs)
+			// Re-derive at apply time from our own anchor and clock estimate.
+			c.posMs = float64(c.anchor.Expected(c.serverNowEst(serverMs)))
 			c.lastKnownPos = c.posMs
 			c.residualHist = nil
 			c.SeeksApplied++

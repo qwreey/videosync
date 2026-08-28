@@ -73,9 +73,15 @@ func (s *Server) cmdDelay() int64 {
 			vals[j], vals[j-1] = vals[j-1], vals[j]
 		}
 	}
-	idx := (len(vals)*95 + 99) / 100
-	if idx >= len(vals) {
-		idx = len(vals) - 1
+	// A percentile is meaningless at n=3, and the naive ceil-index collapses
+	// to max() for every room smaller than ~40 members -- so SYNTHESIS section 2's
+	// "p95 so one outlier cannot dominate" was delivered by no code path.
+	// Use second-highest once there are at least three members, which is the
+	// smallest honest "drop the worst outlier"; below that the 2000 ms cap is
+	// the only protection and we say so.
+	idx := len(vals) - 1
+	if len(vals) >= 3 {
+		idx = len(vals) - 2
 	}
 	return vsync.ClampI(2*vals[idx], 500, 2000)
 }
@@ -113,7 +119,11 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 
 	case MsgReport:
 		r := v.R
-		s.pings[r.ClientID] = now - r.AtServerMs + 0 // crude one-way estimate
+		// Use the client's own measured round trip, not (now - its estimated
+		// server time): the latter propagates one client's clock bias into the
+		// command delay for the whole room. RTT is a difference of two
+		// same-clock timestamps, so it carries no offset error.
+		s.pings[r.ClientID] = r.RTTMs
 
 		cs := s.corr[r.ClientID]
 		if cs == nil {
@@ -162,7 +172,7 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 			cs.lastSeekAt = now
 			cs.residualAtSeek = eff.ResidualMs
 			net.Send(now, r.ClientID, "server", r.ClientID, false,
-				MsgCorrect{Mode: "seek", TargetMs: d.TargetMs, When: now, Why: d.Why})
+				MsgCorrect{Mode: "seek", When: now, Why: d.Why})
 		case vsync.ActionNudge:
 			s.NudgesIssued++
 			net.Send(now, r.ClientID, "server", r.ClientID, false,

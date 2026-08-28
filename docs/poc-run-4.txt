@@ -1,0 +1,55 @@
+scenario             strategy          maxDiv   p95Div  meanDiv  seeks  suppr nudges  gates   bias  MISD
+----------------------------------------------------------------------------------------------------------------------
+steady/rate-drift    threshold-500        918      823      471      3      2      0      0      0     0
+steady/rate-drift    threshold-2000      2160     2052     1080      0      0      0      0      0     0
+steady/rate-drift    step-ramp            939      857      480      3      0     18      0      0     0
+steady/rate-drift    thresh+conf          918      823      471      3      2      0      0      0     0
+steady/rate-drift    step-ramp+conf       939      857      480      3      0     18      0      0     0
+
+transient-hiccup     threshold-500        895        5        5      3      0      0      3      0     0
+transient-hiccup     threshold-2000      2300     1400      541      1      0      0      3      0     0
+transient-hiccup     step-ramp            895        5        5      3      0      0      3      0     0
+transient-hiccup     thresh+conf          895        5        5      3      0      0      3      0     0
+transient-hiccup     step-ramp+conf       895        5        5      3      0      0      3      0     0
+
+long-stalls          threshold-500       6000        5       20      4      4      0      4      0     0
+long-stalls          threshold-2000      6000        5       20      4      4      0      4      0     0
+long-stalls          step-ramp           6000        5       20      4      4      0      4      0     0
+long-stalls          thresh+conf         6000        5       20      4      4      0      4      0     0
+long-stalls          step-ramp+conf      6000        5       20      4      4      0      4      0     0
+
+one-slow-client      threshold-500       4303      453      217      2      8      0      1      0     0
+one-slow-client      threshold-2000      4303      831      379      1      4      0      1      0     0
+one-slow-client      step-ramp           4303      500      232      2      4     31      1      0     0
+one-slow-client      thresh+conf         4303      453      217      2      8      0      1      0     0
+one-slow-client      step-ramp+conf      4303      500      232      2      4     31      1      0     0
+
+clock-skew           threshold-500        720      684      360      0      0      0      0      0     0
+clock-skew           threshold-2000       720      684      360      0      0      0      0      0     0
+clock-skew           step-ramp            720      684      360      0      0      0      0      0     0
+clock-skew           thresh+conf          720      684      360      0      0      0      0      0     0
+clock-skew           step-ramp+conf       720      684      360      0      0      0      0      0     0
+
+latency-asymmetry    threshold-500       1175     1175     1150      4     24      0      0      0     0
+latency-asymmetry    threshold-2000         0        0        0      0      0      0      0      0     0
+latency-asymmetry    step-ramp           1175     1175     1150      3     10      0      0      0     0
+latency-asymmetry    thresh+conf            0        0        0      0      0      0      0      0     0
+latency-asymmetry    step-ramp+conf         0        0        0      0      0      0      0      0     0
+
+command-storm        threshold-500     272320    24395     4743     19     62      0      0      2     0
+                                       converge: [0 400 1000 0 50 900] ms
+command-storm        threshold-2000    272260    24285     4424     10     16      0      0      0     0
+                                       converge: [0 0 1000 0 50 800] ms
+command-storm        step-ramp         272370    24385     4724     19     49      2      0      2     0
+                                       converge: [0 500 800 0 50 1000] ms
+command-storm        thresh+conf       272320    24195     4312     19     60      0      0      2     0
+                                       converge: [0 400 900 0 50 800] ms
+command-storm        step-ramp+conf    272370    24385     4724     19     49      2      0      2     0
+                                       converge: [0 500 800 0 50 1000] ms
+
+CONTROL: same scenario, stall inference DISABLED (= syncplay's behaviour)
+  transient-hiccup   stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 0
+  long-stalls        stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 13
+

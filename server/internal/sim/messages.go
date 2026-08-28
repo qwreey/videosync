@@ -31,11 +31,15 @@ type MsgAck struct {
 }
 type MsgReport struct{ R vsync.Report }
 type MsgCorrect struct {
-	Mode     string // seek | nudge
-	TargetMs int64
-	Rate     float64
-	When     int64
-	Why      string
+	Mode string // seek | nudge
+	Rate float64
+	When int64
+	Why  string
+	// Deliberately carries NO absolute target position. A position computed at
+	// send time is stale by one downlink delay on arrival, which silently
+	// injects that delay as sync error -- it made every seek in the harness
+	// land ~DownMs behind and confounded the round-2 conclusion. The client
+	// re-derives Expected() from its own anchor at apply time instead.
 }
 type MsgGate struct {
 	Waiting   bool

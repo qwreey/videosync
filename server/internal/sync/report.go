@@ -25,6 +25,9 @@ type Report struct {
 	// guesswork -- and POC-FINDINGS section 6 showed that guesswork actively
 	// creates divergence that was not there.
 	UncertaintyMs int64
+	// RTTMs is the client's best observed round trip. Unlike any offset-derived
+	// quantity it is bias-free, so the server can safely use it for scheduling.
+	RTTMs int64
 	// ClockSamples counts accepted min-RTT samples. Corrections before the
 	// estimate has settled do more harm than good.
 	ClockSamples int

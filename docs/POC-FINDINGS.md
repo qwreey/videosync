@@ -287,3 +287,83 @@ kept as a backstop for biases that exceed the error bound (a clock that is *wron
 *uncertain*), but that case is not currently exercised by any scenario. **Unmeasured code.**
 
 Everything in "Still not evidence about a browser" from round 2 remains true.
+
+---
+
+# Round 4 — three harness defects, found by adversarial review
+
+An independent review of the architecture found three implementation defects in the harness itself.
+All three were verified in the code and fixed. Full output: `docs/poc-run-4.txt`.
+
+## 15. Corrections must not carry an absolute position
+
+`MsgCorrect` carried `TargetMs = anchor.Expected(now)` computed at **send** time, and the client
+assigned it verbatim on **arrival**. Every hard seek therefore landed one downlink-delay behind, by
+construction. The `When` field was ignored entirely.
+
+Fixed by removing `TargetMs` from the message: a correction now says only *that* the client should
+re-sync, and the client re-derives `Expected()` from its own anchor at apply time. This is a
+protocol rule, not a harness detail — **never send a position that will be stale on arrival.**
+
+The cost was real and it was not confined to the pathological scenario:
+
+| scenario | mean before | mean after |
+|---|---|---|
+| transient-hiccup | 26 | **5** |
+| long-stalls | 72 | **20** |
+| one-slow-client | 331 | **217** |
+
+## 16. `p95` was `max()` for every realistic room size
+
+`idx := (len*95 + 99) / 100`, clamped to `len-1`, selects the maximum for every n below ~40.
+SYNTHESIS §2's stated reason for using p95 — "so one outlier cannot dominate" — was therefore
+delivered by no code path; the 2000 ms cap was the only protection.
+
+A percentile is meaningless at n=3 and no index arithmetic fixes that. Replaced with
+**second-highest for n>=3, max below that**, which is the smallest honest "drop the worst outlier",
+and SYNTHESIS §2 should be amended to say so rather than claiming a percentile.
+
+## 17. The command delay was contaminated by one client's clock bias
+
+`s.pings[id] = now - r.AtServerMs` derived the ping from the client's **estimated** server time, so
+a client with a biased offset pushed that bias into the scheduling delay for the entire room.
+Replaced with the client's own measured `bestRTT`, which is a difference of two same-clock
+timestamps and therefore carries no offset error.
+
+## 18. But the round-2 conclusion survives — with a corrected explanation
+
+The review's headline claim was that `latency-asymmetry`'s 1184 ms was client b's 1200 ms downlink
+rather than clock bias, making round 2 §6 unproven. **Measured: it moved 1184 → 1150, about 3 %.**
+The attribution was wrong; the two numbers were close by coincidence.
+
+The actual mechanism, which the arithmetic confirms exactly:
+
+```
+b: up=20, down=1200  -> offset = (20 + (-1200))/2 = -590 ms   (believes it is 590 ms ahead)
+c: up=1200, down=20  -> offset = (1200 + (-20))/2 = +590 ms   (believes it is 590 ms behind)
+```
+
+Each client is pulled toward its *own* biased notion of correct, in opposite directions. The
+separation is **2 x 590 = 1180 ms**, which is what we measure. So round 2 §6 stands as written:
+seeking on a biased clock estimate actively creates divergence that was not there. Confidence
+gating (round 3) remains the fix, and still takes this scenario to 0.
+
+Recording this because the review's reasoning was sound and its demand for the fix was right — the
+bugs were real and worth 3-5x on the healthy scenarios — while its numerical attribution was not.
+Fixing a confound is worth doing even when it turns out not to have been the cause.
+
+## 19. Harness gaps that block the next round of comparisons
+
+Named by the same review, all confirmed absent:
+
+- **Seeks are free.** No `SeekLatencyMs` or post-seek rebuffer cost, so any strategy that trades
+  seeks for accuracy is being scored on a benefit with no price attached. This flatters hard-seek
+  strategies and is the single most misleading gap.
+- **No join / leave / reconnect scenario exists at all.** Late joiners, state recovery, and
+  reconnect storms are entirely unmeasured.
+- **No background-throttle profile.** Every client-side-authority claim rests on a ~10 Hz loop
+  that a backgrounded tab clamps to ~1 Hz, and D5's userscript cannot guarantee otherwise.
+- Missing metrics: transition spread across clients, correction efficacy (which would have caught
+  §15 immediately), and rate churn.
+
+These belong to the next round, before any further strategy comparison is trusted.
