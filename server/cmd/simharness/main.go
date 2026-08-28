@@ -119,12 +119,13 @@ func controlRun(tun vsync.Tunables) {
 func main() {
 	tun := vsync.DefaultTunables()
 	correctors := []vsync.Corrector{
-		vsync.ThresholdCorrector{},                    // what all 9 references do
-		vsync.ThresholdCorrector{HardSeekMs: 2000},    // cytube/SyncTube-style wide deadband
-		vsync.DerivativeCorrector{},                   // ours, v1
-		vsync.StepRampCorrector{},                     // ours, v2 (post-harness)
+		vsync.ThresholdCorrector{},                                       // what all 9 references do
+		vsync.ThresholdCorrector{HardSeekMs: 2000},                       // cytube/SyncTube-style wide deadband
+		vsync.StepRampCorrector{},                                        // ours, v2
+		vsync.ConfidenceGated{Inner: vsync.ThresholdCorrector{}},         // baseline + confidence gating
+		vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}},          // ours, v3
 	}
-	names := []string{"threshold-500", "threshold-2000", "derivative", "step-ramp"}
+	names := []string{"threshold-500", "threshold-2000", "step-ramp", "thresh+conf", "step-ramp+conf"}
 
 	fmt.Printf("%-20s %-15s %8s %8s %8s %6s %6s %6s %6s %6s %5s\n",
 		"scenario", "strategy", "maxDiv", "p95Div", "meanDiv",

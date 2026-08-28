@@ -57,6 +57,9 @@ type Tunables struct {
 	MinBufferedS    float64
 	SeekThresholdMs int64
 	ReportThreshold int64
+	// MinClockSamples gates all position correction until the offset estimate
+	// has settled.
+	MinClockSamples int
 }
 
 func DefaultTunables() Tunables {
@@ -72,6 +75,7 @@ func DefaultTunables() Tunables {
 		MinBufferedS:     1.0,
 		SeekThresholdMs:  1000,
 		ReportThreshold:  250,
+		MinClockSamples:  3,
 	}
 }
 
@@ -216,4 +220,43 @@ func ClampI(v, lo, hi int64) int64 {
 		return hi
 	}
 	return v
+}
+
+// --- Confidence gating (decorator) ------------------------------------------
+
+// ConfidenceGated wraps any Corrector and refuses to act on a residual the
+// client cannot actually distinguish from its own clock error.
+//
+// Motivation is empirical, not aesthetic: under one-way latency asymmetry the
+// min-RTT offset estimate is biased by ~half the path difference and this is
+// undetectable in principle. POC-FINDINGS section 6 measured what happens when
+// a corrector acts on it anyway -- three clients that were playing at exactly
+// 1.0x and perfectly aligned were pushed 1.2 s apart *by the corrections
+// themselves*. Learning the bias afterwards does not undo that.
+//
+// The fix is to treat the offset as an interval rather than a point: widen the
+// dead-band to the client's own uncertainty, so a residual inside the error
+// bound is left alone.
+type ConfidenceGated struct{ Inner Corrector }
+
+func (c ConfidenceGated) Name() string { return c.Inner.Name() + "+conf" }
+
+func (c ConfidenceGated) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
+	// Buffering is observed directly from the player and does not depend on
+	// any clock estimate, so it stays live even before the clock settles.
+	buffering := r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS
+
+	if r.ClockSamples < t.MinClockSamples {
+		if buffering {
+			return Decision{Action: ActionGate, Why: "buffering"}
+		}
+		return Decision{Action: ActionNone, Why: "clock not settled"}
+	}
+
+	// Inside our own error bound we cannot tell whether the client is off or
+	// our estimate is. Widen the dead-band rather than guess.
+	if r.UncertaintyMs > t.ToleranceMs {
+		t.ToleranceMs = r.UncertaintyMs
+	}
+	return c.Inner.Decide(r, a, serverMs, t)
 }

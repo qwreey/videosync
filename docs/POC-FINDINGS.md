@@ -209,3 +209,81 @@ there, and the no-host arrival-order serialization held with no flapping.
 The harness still has no `setInterval` clamp and its seeks are instantaneous. Background-tab
 throttling, MSE seek latency, buffered-range stalls, autoplay rejection, and whether
 `playbackRate` nudging is safe at all on the target players remain untested.
+
+---
+
+# Round 3 — clock-confidence gating
+
+Full output: `docs/poc-run-3.txt`. Locked in by `server/internal/sim/regression_test.go`.
+
+## 10. Treat the offset as an interval, not a point
+
+Round 2 left an implied requirement: do not correct until the clock estimate is trusted. The
+principled form of that is not a timer or a sample count — it is an **error bound**.
+
+With min-RTT sampling the offset error is bounded by **±bestRTT/2**, reached exactly when the path
+is fully asymmetric. That is NTP's "maximum error". A residual smaller than that bound is
+**indistinguishable from our own measurement error**, so acting on it is guesswork — and round 2
+measured what guesswork costs.
+
+Implemented as a decorator (`ConfidenceGated`) so it composes with any strategy and can be A/B'd:
+
+- fewer than `MinClockSamples` exchanges → no position correction at all (buffering gating stays
+  live, since it reads the player directly and needs no clock);
+- otherwise widen the dead-band to `max(ToleranceMs, UncertaintyMs)`.
+
+The client reports `UncertaintyMs` and `ClockSamples` alongside the residual, so the server judges
+with the client's own error bound in hand.
+
+## 11. Result: strictly free, and it fully fixes the asymmetry case
+
+Mean divergence, seeks in parentheses:
+
+| scenario | threshold-500 | step-ramp | **step-ramp+conf** |
+|---|---|---|---|
+| steady/rate-drift | 445 (3) | 447 (3) | 447 (3) |
+| transient-hiccup | **26** (3) | **26** (3) | **26** (3) |
+| long-stalls | **72** (4) | **72** (4) | **72** (4) |
+| one-slow-client | 331 (3) | 326 (2) | **326** (2) |
+| clock-skew | 360 (0) | 360 (0) | 360 (0) |
+| latency-asymmetry | 1184 (6) | 1184 (6) | **0** (0) |
+| command-storm | 5360 (19) | 4390 (19) | **4169** (19) |
+
+Gating changes **nothing** on healthy links — identical numbers, cell for cell — and takes
+`latency-asymmetry` from 1184 ms mean and 6 seeks to **0 ms and 0 seeks**. It is a strict
+improvement, which is rare enough to be worth stating plainly.
+
+`step-ramp+conf` is now the strategy to build.
+
+## 12. A bug worth recording, because the first result looked like a design failure
+
+The first gated run was catastrophic — `long-stalls` mean went 72 → 5946 ms with zero seeks. That
+read as "gating is too aggressive". It was not: `ClockSamples` was counting only *accepted*
+(new-minimum) samples. The minimum RTT is found within the first few probes and then almost never
+improves, so the counter froze at 2, never reached `MinClockSamples`, and corrections stayed
+disabled for the whole session.
+
+Counting completed exchanges instead fixed it. The lesson is about the metric, not the design: **a
+confidence signal must not be derived from a quantity that stops changing once it converges.**
+
+## 13. Regression tests
+
+`server/internal/sim/regression_test.go` locks in four findings, each with a control where a
+control is what makes the assertion meaningful:
+
+- stall guard on → 0 misdetections, **and** guard off → non-zero (a zero alone proves nothing);
+- confidence gating → 0 seeks and ~0 divergence on a pure clock bias, **and** ungated → non-zero
+  seeks (so the scenario is still stressing the bias);
+- gating does not degrade a healthy scenario;
+- two conflicting no-host commands 50 ms apart converge without flapping.
+
+`mise run test`.
+
+## 14. What is still open
+
+The failed-correction detector and bias learning (round 2 §6) are now mostly redundant on the
+scenarios we have — confidence gating prevents the bad seeks that they existed to bound. They are
+kept as a backstop for biases that exceed the error bound (a clock that is *wrong*, not merely
+*uncertain*), but that case is not currently exercised by any scenario. **Unmeasured code.**
+
+Everything in "Still not evidence about a browser" from round 2 remains true.

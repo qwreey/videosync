@@ -17,6 +17,17 @@ type Report struct {
 	BufferedAheadS float64
 	LastAppliedSeq uint64
 	AtServerMs     int64
+	// UncertaintyMs is the client's honest error bound on its own clock
+	// estimate: with min-RTT sampling the offset error is bounded by
+	// +/- bestRTT/2, reached exactly when the path is fully asymmetric. This
+	// is NTP's "maximum error" idea. A residual smaller than this is
+	// indistinguishable from our own measurement error, so acting on it is
+	// guesswork -- and POC-FINDINGS section 6 showed that guesswork actively
+	// creates divergence that was not there.
+	UncertaintyMs int64
+	// ClockSamples counts accepted min-RTT samples. Corrections before the
+	// estimate has settled do more harm than good.
+	ClockSamples int
 }
 
 // Closing reports whether the residual is shrinking on its own, i.e. the slope

@@ -37,9 +37,10 @@ type Client struct {
 	bufferedS   float64
 
 	// --- clock estimate ---
-	estOffsetMs int64 // add to client clock to get server clock
-	bestRTT     int64
-	haveOffset  bool
+	estOffsetMs  int64 // add to client clock to get server clock
+	bestRTT      int64
+	haveOffset   bool
+	clockSamples int
 
 	// --- sync state ---
 	anchor         vsync.Anchor
@@ -122,6 +123,11 @@ func (c *Client) onTimeReply(m MsgTimeReply, serverMs int64) {
 	offset := ((m.TRecv - m.T0) + (m.TSend - t1)) / 2
 	// min-RTT rule: only accept the sample if this is the cleanest path we have
 	// seen. The minimum-RTT sample is the least polluted by queuing delay.
+	// Count every completed exchange. Counting only accepted (new-minimum)
+	// samples is wrong: the minimum is found within the first few probes and
+	// then almost never improves, so such a counter freezes low and would
+	// disable correction for the whole session.
+	c.clockSamples++
 	if !c.haveOffset || rtt < c.bestRTT {
 		c.bestRTT = rtt
 		c.estOffsetMs = offset
@@ -193,6 +199,10 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 		BufferedAheadS: c.bufferedS,
 		LastAppliedSeq: c.lastAppliedSeq,
 		AtServerMs:     est,
+		// Honest error bound: full path asymmetry biases the estimate by at
+		// most half the round trip.
+		UncertaintyMs: c.bestRTT / 2,
+		ClockSamples:  c.clockSamples,
 	}, true
 }
 
