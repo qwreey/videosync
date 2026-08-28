@@ -18,6 +18,12 @@ type ClientProfile struct {
 	// Stalls are [start, end) windows in server time where the player buffers.
 	Stalls [][2]int64
 	Link   Link
+	// MaxBufferS is how far ahead the player keeps data. Measured default for
+	// hls.js in docs/BROWSER-FINDINGS.md was ~10-12 s.
+	MaxBufferS float64
+	// FillRate is how fast the buffer refills relative to real time when it is
+	// not full (a 2 s segment fetched in 0.5 s is 4x).
+	FillRate float64
 	// NoStallInference disables the stall guard, reproducing what syncplay
 	// ships (client.py:521-531 dead-reckons whenever paused is false, with no
 	// buffering guard). Used as a control: a Misdetections count of 0 proves
@@ -49,6 +55,21 @@ type Client struct {
 	residualHist   []sample
 	pending        []MsgState // scheduled commands not yet due
 
+	// --- buffer model (docs/BROWSER-FINDINGS.md 2) -------------------------
+	// A seek inside the buffered range is free (~20 ms measured, at any network
+	// speed). A seek outside it costs one segment fetch AND rebuffers for that
+	// whole time -- which makes the client MORE out of position before it gets
+	// better. Treating all seeks as free is what flattered every seek-based
+	// strategy in rounds 1-6.
+	bufEndS         float64
+	seekStallUntil  int64
+	OutOfBufferSeeks int
+	InBufferSeeks    int
+	// RateTimeMs is the integral of |playbackRate-1| dt: how much time-shift was
+	// bought with speed changes. Nudge COUNT is not comparable across control
+	// laws -- a continuous controller emits one per report by construction.
+	RateTimeMs float64
+
 	// stall inference -- the client cannot call stalled(); it must work this
 	// out from what a real <video> exposes: readyState, and the fact that
 	// currentTime stops advancing while paused is still false.
@@ -75,9 +96,16 @@ func NewClient(p ClientProfile, startPos float64, paused bool) *Client {
 	if p.IntrinsicRate == 0 {
 		p.IntrinsicRate = 1.0
 	}
+	if p.MaxBufferS == 0 {
+		p.MaxBufferS = 11 // measured hls.js default in the browser harness
+	}
+	if p.FillRate == 0 {
+		p.FillRate = 4
+	}
 	return &Client{
 		P: p, posMs: startPos, paused: paused, appliedRate: 1.0,
-		readyState: 4, bufferedS: 30,
+		readyState: 4, bufferedS: p.MaxBufferS,
+		bufEndS: startPos/1000 + p.MaxBufferS,
 	}
 }
 
@@ -89,7 +117,31 @@ func (c *Client) serverNowEst(serverMs int64) int64 {
 	return c.clockNow(serverMs) + c.estOffsetMs
 }
 
+// segFetchMs is what one segment fetch costs on this link. The browser probe
+// measured an out-of-buffer seek costing almost exactly this, with readyState
+// below HAVE_FUTURE_DATA for the same duration.
+func (c *Client) segFetchMs() int64 {
+	d := c.P.Link.UpMs + c.P.Link.DownMs
+	if d < 20 {
+		d = 20 // even locally a seek is not instantaneous
+	}
+	return d
+}
+
+// inBuffer reports whether a position is already buffered, which is the whole
+// story on what a seek costs.
+func (c *Client) inBuffer(posMs float64) bool {
+	backS := c.posMs/1000 - 10 // players keep a back buffer
+	if backS < 0 {
+		backS = 0
+	}
+	return posMs/1000 >= backS && posMs/1000 <= c.bufEndS
+}
+
 func (c *Client) stalled(serverMs int64) bool {
+	if serverMs < c.seekStallUntil {
+		return true
+	}
 	for _, w := range c.P.Stalls {
 		if serverMs >= w[0] && serverMs < w[1] {
 			return true
@@ -98,17 +150,44 @@ func (c *Client) stalled(serverMs int64) bool {
 	return false
 }
 
-// Advance moves playback forward by dt ms of real time.
+// Advance moves playback forward by dt ms of real time, and moves the buffer.
 func (c *Client) Advance(serverMs, dt int64) {
+	// Rate cost accrues whenever a nudge is in effect and playback is running.
+	if !c.paused && !c.stalled(serverMs) {
+		c.RateTimeMs += math.Abs(c.appliedRate-1.0) * float64(dt)
+	}
+
 	if c.stalled(serverMs) {
 		c.readyState = 2
-		c.bufferedS = 0
-		return // player is buffering: position does not advance
+		c.bufferedS = c.bufEndS - c.posMs/1000
+		if c.bufferedS < 0 {
+			c.bufferedS = 0
+		}
+		// A network stall starves the buffer; a seek stall is waiting on a fetch.
+		if serverMs >= c.seekStallUntil {
+			c.bufEndS = c.posMs / 1000
+		}
+		return // position does not advance
 	}
-	c.readyState = 4
-	c.bufferedS = 30
+
 	if !c.paused {
 		c.posMs += float64(dt) * c.P.IntrinsicRate * c.appliedRate
+	}
+	// Refill toward MaxBufferS.
+	want := c.posMs/1000 + c.P.MaxBufferS
+	if c.bufEndS < want {
+		c.bufEndS += (float64(dt) / 1000) * c.P.FillRate
+		if c.bufEndS > want {
+			c.bufEndS = want
+		}
+	}
+	c.bufferedS = c.bufEndS - c.posMs/1000
+	if c.bufferedS < 0 {
+		c.bufferedS = 0
+	}
+	c.readyState = 4
+	if c.bufferedS < 0.3 {
+		c.readyState = 2
 	}
 }
 
@@ -196,7 +275,8 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 		PositionMs:     int64(c.posMs),
 		Paused:         c.paused,
 		ReadyState:     c.readyState,
-		BufferedAheadS: c.bufferedS,
+		BufferedAheadS:  c.bufferedS,
+		BufferedBehindS: math.Min(10, c.posMs/1000),
 		LastAppliedSeq: c.lastAppliedSeq,
 		AtServerMs:     est,
 		// Honest error bound: full path asymmetry biases the estimate by at
@@ -255,7 +335,17 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 	case MsgCorrect:
 		if v.Mode == "seek" {
 			// Re-derive at apply time from our own anchor and clock estimate.
-			c.posMs = float64(c.anchor.Expected(c.serverNowEst(serverMs)))
+			target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
+			if c.inBuffer(target) {
+				c.InBufferSeeks++ // ~free, measured at ~20 ms regardless of link
+			} else {
+				// Costs one segment fetch and rebuffers for the same duration:
+				// the client is MORE out of position before it is less.
+				c.OutOfBufferSeeks++
+				c.seekStallUntil = serverMs + c.segFetchMs()
+				c.bufEndS = target / 1000
+			}
+			c.posMs = target
 			c.lastKnownPos = c.posMs
 			c.residualHist = nil
 			c.SeeksApplied++

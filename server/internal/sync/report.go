@@ -15,6 +15,9 @@ type Report struct {
 	Paused         bool
 	ReadyState     int
 	BufferedAheadS float64
+	// BufferedBehindS matters as much as ahead: a backward correction that
+	// lands inside the back buffer is free, one outside it rebuffers.
+	BufferedBehindS float64
 	LastAppliedSeq uint64
 	AtServerMs     int64
 	// UncertaintyMs is the client's honest error bound on its own clock

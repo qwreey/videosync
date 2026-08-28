@@ -1,0 +1,96 @@
+scenario             strategy         anchorErr p95Anchor seek/in seek/OUT rateTime  gates  MISD
+--------------------------------------------------------------------------------------------------------
+steady/rate-drift    threshold-500          160       455      3      0        0      0     0
+steady/rate-drift    threshold-2000         364      1011      0      0        0      0     0
+steady/rate-drift    step-ramp+conf         163       472      3      0       91      0     0
+steady/rate-drift    pll                      4         9      0      0     2298      0     0
+steady/rate-drift    fll                     24        42      0      0     2107      0     0
+steady/rate-drift    hybrid                  41        65      0      0     2050      0     0
+steady/rate-drift    hybrid+conf             41        65      0      0     2050      0     0
+steady/rate-drift    servo                   15        30      0      0     2128      0     0
+
+transient-hiccup     threshold-500           13        10      3      0        0      3     0
+transient-hiccup     threshold-2000         194      1390      0      1        0      3     0
+transient-hiccup     step-ramp+conf          13        10      3      0        0      3     0
+transient-hiccup     pll                     36       222      0      0     2958      3     0
+transient-hiccup     fll                    434      2264      0      0       39      3     0
+transient-hiccup     hybrid                  14        15      3      0        0      3     0
+transient-hiccup     hybrid+conf             14        15      3      0        0      3     0
+transient-hiccup     servo                   12        32      3      0       66      3     0
+
+long-stalls          threshold-500           71       145      0      4        0      4     0
+long-stalls          threshold-2000          71       145      0      4        0      4     0
+long-stalls          step-ramp+conf          71       145      0      4        0      4     0
+long-stalls          pll                    121        28      4      0     1707      4     0
+long-stalls          fll                   2671     13490      0      0        0      4     0
+long-stalls          hybrid                1004      7490      1      2      984      5     0
+long-stalls          hybrid+conf           1004      7490      1      2      984      5     0
+long-stalls          servo                  103        74      4      0     1294      4     0
+
+one-slow-client      threshold-500           92       448      2      1        0      1     0
+one-slow-client      threshold-2000         230      1099      0      1        0      1     0
+one-slow-client      step-ramp+conf         103       485      1      1      259      1     0
+one-slow-client      pll                    142        41      1      0     2554      1     0
+one-slow-client      fll                   1075      4368      0      0      812      1     0
+one-slow-client      hybrid                 470      3713      0      0     4934      1     0
+one-slow-client      hybrid+conf            470      3713      0      0     4934      1     0
+one-slow-client      servo                   36        70      1      0     1381      1     0
+
+clock-skew           threshold-500          124       333      0      0        0      0     0
+clock-skew           threshold-2000         124       333      0      0        0      0     0
+clock-skew           step-ramp+conf         124       333      0      0        0      0     0
+clock-skew           pll                      4         9      0      0      878      0     0
+clock-skew           fll                    102       291      0      0      311      0     0
+clock-skew           hybrid                 265      1293     11      0     9789      0     0
+clock-skew           hybrid+conf            265      1293     11      0     9789      0     0
+clock-skew           servo                   23        56      0      0      736      0     0
+
+latency-asymmetry    threshold-500          390       595      4      0        0      0     0
+latency-asymmetry    threshold-2000          10        10      0      0        0      0     0
+latency-asymmetry    step-ramp+conf          10        10      0      0        0      0     0
+latency-asymmetry    pll                    375       598      0      0     1957      0     0
+latency-asymmetry    fll                     10        10      0      0        0      0     0
+latency-asymmetry    hybrid                  18        44      0      0     1117      0     0
+latency-asymmetry    hybrid+conf             10        10      0      0        0      0     0
+latency-asymmetry    servo                   11        15      0      0      143      0     0
+
+asymmetry+cmds       threshold-500          389       600      4      0        0      0     0
+                                       converge: [0 0] ms
+asymmetry+cmds       threshold-2000         295       595      0      0        0      0     0
+                                       converge: [1600 0] ms
+asymmetry+cmds       step-ramp+conf         295       600      0      0        0      0     0
+                                       converge: [1600 0] ms
+asymmetry+cmds       pll                    375       603      0      0     2070      0     0
+                                       converge: [0 0] ms
+asymmetry+cmds       fll                    294       595      0      0        0      0     0
+                                       converge: [1600 0] ms
+asymmetry+cmds       hybrid                 294       595      0      0        0      0     0
+                                       converge: [1600 0] ms
+asymmetry+cmds       hybrid+conf            294       595      0      0        0      0     0
+                                       converge: [1600 0] ms
+asymmetry+cmds       servo                  296       595      0      0       68      0     0
+                                       converge: [1600 0] ms
+
+command-storm        threshold-500           12        25      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        threshold-2000          12        25      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        step-ramp+conf          12        25      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        pll                   1423     14260      0      0      424      9     0
+                                       converge: [0 0 0 0 50 800] ms
+command-storm        fll                     14        35      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        hybrid                  14        35      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        hybrid+conf             14        35      0      0        0      9     0
+                                       converge: [0 0 0 0 50 0] ms
+command-storm        servo                   14        29      0      0      275      9     0
+                                       converge: [0 0 0 0 50 0] ms
+
+CONTROL: same scenario, stall inference DISABLED (= syncplay's behaviour)
+  transient-hiccup   stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 0
+  long-stalls        stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 13
+

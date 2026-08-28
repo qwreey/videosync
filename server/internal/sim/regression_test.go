@@ -175,3 +175,83 @@ func TestSchedulingLaundersClockBias(t *testing.T) {
 			withCmd.SeeksIssued, withCmd.BiasLearned)
 	}
 }
+
+// The browser probe measured that an in-buffer seek is free (~20 ms at any
+// network speed) while an out-of-buffer seek costs a full segment fetch and
+// rebuffers for it -- leaving the client further out of position than it
+// started. A corrector must therefore never seek outside the buffer.
+func TestServoNeverSeeksOutOfBuffer(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	meh := Link{UpMs: 80, DownMs: 80, JitterMs: 30}
+	sc := Scenario{
+		Name: "long-stalls", Seed: 7, DurationMs: 120000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: good,
+				Stalls: [][2]int64{{20000, 24000}, {55000, 58500}, {90000, 96000}}},
+			{ID: "c", IntrinsicRate: 1.0, Link: meh, Stalls: [][2]int64{{40000, 43000}}},
+		},
+	}
+	servo := Run(sc, &vsync.ServoCorrector{}, tun)
+	if servo.OutOfBufferSeeks != 0 {
+		t.Errorf("servo issued %d out-of-buffer seeks; each one rebuffers the client it was meant to fix",
+			servo.OutOfBufferSeeks)
+	}
+	// Control: the plain threshold strategy does take those expensive seeks,
+	// so a zero above means something.
+	base := Run(sc, vsync.ThresholdCorrector{}, tun)
+	if base.OutOfBufferSeeks == 0 {
+		t.Error("control: baseline took no out-of-buffer seeks -- scenario no longer exercises the cost")
+	}
+}
+
+// A rate mismatch is what playbackRate is for, and the frequency term should
+// cancel it rather than letting error accumulate to a dead-band and seeking.
+func TestServoCancelsRateDriftWithoutSeeking(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	sc := Scenario{
+		Name: "steady/rate-drift", Seed: 1, DurationMs: 120000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.000, Link: good},
+			{ID: "b", IntrinsicRate: 0.990, Link: good},
+			{ID: "c", IntrinsicRate: 1.008, Link: good},
+		},
+	}
+	servo := Run(sc, &vsync.ServoCorrector{}, tun)
+	base := Run(sc, vsync.ThresholdCorrector{}, tun)
+	if servo.MeanAnchorErrMs >= base.MeanAnchorErrMs {
+		t.Errorf("servo %.0f ms should beat threshold %.0f ms on a pure rate mismatch",
+			servo.MeanAnchorErrMs, base.MeanAnchorErrMs)
+	}
+	// Rate-time is not overhead here: cancelling 1.0%% and 0.8%% errors over
+	// 120 s necessarily costs about 0.018*120000 = 2160 ms of time-shift.
+	if servo.RateTimeMs < 1500 || servo.RateTimeMs > 3500 {
+		t.Errorf("rate-time %.0f ms is outside the range the physics requires (~2160 ms)", servo.RateTimeMs)
+	}
+}
+
+// Confidence must be inside a continuous control law, not wrapped around it:
+// ConfidenceGated is a no-op for a controller that never consults the
+// dead-band (docs/POC-FINDINGS.md 26).
+func TestServoRefusesToChaseAClockBias(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	sc := Scenario{
+		Name: "latency-asymmetry", Seed: 5, DurationMs: 120000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: Link{UpMs: 25, DownMs: 25, JitterMs: 5}},
+			{ID: "b", IntrinsicRate: 1.0, Link: Link{UpMs: 20, DownMs: 1200, JitterMs: 10}},
+			{ID: "c", IntrinsicRate: 1.0, Link: Link{UpMs: 1200, DownMs: 20, JitterMs: 10}},
+		},
+	}
+	servo := Run(sc, &vsync.ServoCorrector{}, tun)
+	if servo.MeanAnchorErrMs > 50 {
+		t.Errorf("servo chased an unmeasurable bias: %.0f ms anchor error (clients all play at 1.0x and start aligned)",
+			servo.MeanAnchorErrMs)
+	}
+	pll := Run(sc, &vsync.PLLCorrector{}, tun)
+	if pll.MeanAnchorErrMs < 100 {
+		t.Error("control: a phase integrator no longer walks into the bias trap -- scenario weakened")
+	}
+}

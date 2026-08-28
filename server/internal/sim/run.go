@@ -54,6 +54,14 @@ type Result struct {
 	GatesOpened      int
 	SeeksSuppressed  int
 	BiasLearned      int
+	// Seeks split by what they actually cost: an in-buffer seek is ~free, an
+	// out-of-buffer seek costs a segment fetch AND rebuffers for it.
+	InBufferSeeks    int
+	OutOfBufferSeeks int
+	// RateTimeMs = sum over clients of integral |playbackRate-1| dt. The honest
+	// counterpart to seek count, because nudge count is not comparable across
+	// control laws.
+	RateTimeMs float64
 	// Misdetections counts stalls the client's detector mistook for user
 	// seeks. Any value > 0 means the room would have been dragged backward by
 	// someone's buffering -- the bug syncplay ships.
@@ -198,7 +206,11 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		ConvergeMs: converge,
 	}
 	for _, id := range order {
-		res.Misdetections += clients[id].Misdetections
+		c := clients[id]
+		res.Misdetections += c.Misdetections
+		res.InBufferSeeks += c.InBufferSeeks
+		res.OutOfBufferSeeks += c.OutOfBufferSeeks
+		res.RateTimeMs += c.RateTimeMs
 	}
 	if len(divergences) > 0 {
 		sorted := append([]float64(nil), divergences...)

@@ -565,3 +565,84 @@ from the baseline instead of gating it off, which is precisely where `hybrid` lo
 
 Before running that comparison the harness gaps from §19 should be closed — seeks are still free,
 so every seek-based strategy is scored on a benefit with no price attached.
+
+---
+
+# Round 7 — the harness stops lying about seeks, and a strategy finally dominates
+
+Two changes, in this order because the second depends on the first: the simulation now models what
+the browser probe measured about seek cost, and a corrector was built from every finding so far.
+Full output: `docs/poc-run-7.txt`. Runs verified byte-identical across invocations.
+
+## 29. Seeks are no longer free, and the split matters more than the count
+
+`docs/BROWSER-FINDINGS.md` §2 measured that seek cost is entirely determined by one thing:
+
+- **in-buffer seek: ~20 ms, at every network speed.** Free.
+- **out-of-buffer seek: one full segment fetch** (155 ms at 150 ms segment latency, 405 ms at
+  400 ms) **and `readyState` below 3 for that whole time.** The client is *more* out of position
+  before it is less.
+
+The sim client now carries a buffer model (fill rate, max depth, back buffer) and a seek to an
+unbuffered position stalls it for one segment fetch. `SeeksIssued` is replaced by
+**`seek/in` and `seek/OUT`** — counting them together was hiding the entire cost structure.
+
+Effect on the existing table: `long-stalls` for `threshold-500` went from 18/15 to **71/145**, and
+all four of its seeks turned out to be out-of-buffer. A stall drains the buffer, so the corrective
+seek lands outside it, which rebuffers, which is the **seek → rebuffer → residual → seek** loop the
+harness previously could not produce.
+
+## 30. `ServoCorrector`
+
+Built from the accumulated findings rather than from a control-theory textbook:
+
+| finding | consequence in the law |
+|---|---|
+| phase is unobservable up to the clock bias; slope is not (§24) | the term that fixes rate mismatch integrates **slope**, never residual |
+| you cannot resolve phase finer than `UncertaintyMs`, and scheduling launders exactly that much (§21) | phase term is **proportional and dead-banded at `max(tolerance, uncertainty)`** — it drives error to the bound and stops. No phase integrator: it would aim at a target that does not exist |
+| `ConfidenceGated` is a no-op for continuous laws (§26) | confidence is **inside** the law |
+| a stall's slope (~1000 ms/s) is not a rate error (10 ms/s) | the frequency integrator **freezes** above `RampMaxSlope` |
+| in-buffer seeks are free, out-of-buffer seeks rebuffer (§29) | seek gate is **cost, not size**: seek whenever the target is buffered and the error exceeds the band; **never** seek outside the buffer |
+
+That last row was the one that took two attempts. The first version kept the inherited "only seek
+if the gap exceeds 3 s" rule and lost badly on both stall scenarios — rate-nudging a 900 ms step
+takes 9 seconds of audibly wrong playback to fix what a free seek fixes instantly. The correct
+question was never *how big* the error is; it is *what the correction costs*.
+
+## 31. Results
+
+Anchor error mean/p95 ms; `OUT` is out-of-buffer seeks, the expensive kind.
+
+| scenario | threshold-500 | step-ramp+conf | **servo** |
+|---|---|---|---|
+| steady/rate-drift | 160/455 · 0 OUT | 163/472 · 0 OUT | **15/30** · 0 OUT |
+| transient-hiccup | **13/10** · 0 OUT | **13/10** · 0 OUT | 12/32 · 0 OUT |
+| long-stalls | 71/145 · **4 OUT** | 71/145 · **4 OUT** | 103/**74** · **0 OUT** |
+| one-slow-client | 92/448 · 1 OUT | 103/485 · 1 OUT | **36/70** · 0 OUT |
+| clock-skew | 124/333 | 124/333 | **23/56** |
+| latency-asymmetry | 390/595 | **10/10** | 11/15 |
+| asymmetry+cmds | 389/600 | 295/600 | 296/595 |
+| command-storm | **12/25** | **12/25** | 14/29 |
+
+- **10x better on rate drift** (15 vs 160), **2.5x on one-slow-client**, **5x on clock skew**.
+- **Zero out-of-buffer seeks in every scenario**, against 4 and 1 for the baselines — those are the
+  seeks that visibly freeze the picture.
+- Ties on the three rows dominated by something other than correction (`command-storm` is
+  transitions, `asymmetry+cmds` is laundered bias which nothing can fix, `transient-hiccup` is
+  already near zero).
+- `long-stalls` is the one real trade: worse mean (103 vs 71), better tail (74 vs 145), and it
+  avoids four rebuffers. Given that a rebuffer is a visible freeze and mean error here is
+  sub-frame, that trade is worth taking — but it is a trade, not a win.
+
+`rateTimeMs` (integral of `|rate-1| dt`) shows the cost is not overhead: 2128 ms on
+`steady/rate-drift`, where cancelling 1.0 % and 0.8 % rate errors over 120 s *necessarily* costs
+about 2160 ms of time-shift. On `transient-hiccup` it spends only 66 ms, because there it correctly
+uses free seeks instead of rate.
+
+## 32. Regression tests added
+
+- `TestServoNeverSeeksOutOfBuffer` — with a control proving the baseline does take them.
+- `TestServoCancelsRateDriftWithoutSeeking` — including a physics bound on rate-time, so a
+  "win" that simply stops correcting would fail.
+- `TestServoRefusesToChaseAClockBias` — with a control proving a phase integrator still walks into
+  the trap, so the scenario has not been weakened.

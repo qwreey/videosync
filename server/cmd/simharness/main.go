@@ -142,26 +142,30 @@ func main() {
 		&vsync.FLLCorrector{},                                   // frequency-locked loop (bias-immune)
 		&vsync.HybridCorrector{},                                // FLL-aided PLL
 		vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}},  // hybrid + confidence gating
-		vsync.ConfidenceGated{Inner: &vsync.PLLCorrector{}},     // PLL, bias-gated
+		&vsync.ServoCorrector{},                                 // synthesis of every finding
 	}
 	names := []string{"threshold-500", "threshold-2000", "step-ramp+conf",
-		"pll", "fll", "hybrid", "hybrid+conf", "pll+conf"}
+		"pll", "fll", "hybrid", "hybrid+conf", "servo"}
 
 	// anchorErr is the PRIMARY metric: error against the true server clock.
 	// meanDiv (inter-client spread) is kept for continuity but rewards
 	// inaction -- a strategy that does nothing scores 0 when clients start
 	// aligned. Do not rank on it.
-	fmt.Printf("%-20s %-16s %9s %9s %8s %6s %6s %6s %5s\n",
-		"scenario", "strategy", "anchorErr", "p95Anchor", "meanDiv",
-		"seeks", "nudges", "gates", "MISD")
+	// Seeks are split because they do not cost the same thing: an in-buffer
+	// seek is ~free at any network speed, an out-of-buffer seek costs a full
+	// segment fetch and rebuffers for it (docs/BROWSER-FINDINGS.md 2).
+	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %6s %5s\n",
+		"scenario", "strategy", "anchorErr", "p95Anchor",
+		"seek/in", "seek/OUT", "rateTime", "gates", "MISD")
 	fmt.Println(strings.Repeat("-", 104))
 
 	for _, sc := range scenarios() {
 		for i, c := range correctors {
 			r := sim.Run(sc, c, tun)
-			fmt.Printf("%-20s %-16s %9.0f %9.0f %8.0f %6d %6d %6d %5d\n",
-				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs, r.MeanDivergenceMs,
-				r.SeeksIssued, r.NudgesIssued, r.GatesOpened, r.Misdetections)
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %6d %5d\n",
+				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs,
+				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs,
+				r.GatesOpened, r.Misdetections)
 			if len(r.ConvergeMs) > 0 {
 				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
 			}
