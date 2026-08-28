@@ -5,10 +5,10 @@ package sync
 // Anchor is the single source of truth for where the room is.
 // See docs/PROTOCOL.md "Anchor".
 type Anchor struct {
-	PositionMs int64
-	AtServerMs int64
-	Paused     bool
-	MediaKey   string
+	PositionMs int64  `json:"positionMs"`
+	AtServerMs int64  `json:"atServerMs"`
+	Paused     bool   `json:"paused"`
+	MediaKey   string `json:"mediaKey"`
 }
 
 // Expected returns where a perfectly-synced client should be at server time T.

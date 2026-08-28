@@ -175,12 +175,12 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			}
 			if now%evalIntervalMs == 0 {
 				if r, ok := c.Evaluate(now, tun, false); ok {
-					net.Send(now, id, id, "server", true, MsgReport{R: r})
+					net.Send(now, id, id, "server", true, MsgReport{Report: r})
 				}
 			}
 			if now%hbIntervalMs == 0 {
 				if r, ok := c.Evaluate(now, tun, true); ok {
-					net.Send(now, id, id, "server", true, MsgReport{R: r})
+					net.Send(now, id, id, "server", true, MsgReport{Report: r})
 				}
 			}
 		}

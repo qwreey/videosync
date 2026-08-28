@@ -39,11 +39,12 @@ type Cmd struct {
 	MediaKey   string `json:"mediaKey,omitempty"`
 }
 
-// Report is the heartbeat / anomaly report (section 4). The embedded
-// vsync.Report carries ClientID, which the server overwrites with the
-// connection's identity before it is used for anything.
+// Report is the heartbeat / anomaly report (section 4). vsync.Report is
+// embedded so its fields sit at the top level of the frame exactly as
+// docs/PROTOCOL.md section 4 shows them. Its ClientID is json:"-": identity
+// comes from the connection, and OnReport overwrites the field before use.
 type Report struct {
-	R vsync.Report `json:"r"`
+	vsync.Report
 }
 
 // ChatIn is a chat line from a client.

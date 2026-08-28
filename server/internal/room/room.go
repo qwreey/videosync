@@ -2,6 +2,7 @@ package room
 
 import (
 	"sort"
+	"strings"
 
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
@@ -104,6 +105,12 @@ type Room struct {
 	GatesOpened      int
 	SeeksSuppressed  int // blocked by the cooldown or the failed-seek detector
 	BiasLearned      int // clients whose clock bias we gave up on and absorbed
+	GateFrames       int // Gate broadcasts actually put on the wire
+
+	// gateSig is the last announced gated set, so a Gate frame goes out only
+	// when the set CHANGES. Re-announcing it on every heartbeat would put a
+	// broadcast on the wire at the report rate times the member count.
+	gateSig string
 }
 
 func New(id string, c vsync.Corrector, t vsync.Tunables, start vsync.Anchor, sink Sink) *Room {
@@ -154,6 +161,8 @@ func (r *Room) Leave(now int64, id string) {
 	if f, ok := r.corrector.(Forgetter); ok {
 		f.Forget(id)
 	}
+	// The departing member may have been the only one the room was waiting for.
+	r.announceGate()
 }
 
 // MemberList is the membership snapshot sent to clients.
@@ -172,6 +181,16 @@ func (r *Room) MemberList() []MemberInfo {
 func (r *Room) send(id string, m Msg) {
 	if r.sink != nil {
 		r.sink.Send(id, m)
+	}
+}
+
+// Broadcast sends to every member; except is skipped when non-empty.
+func (r *Room) Broadcast(except string, m Msg) {
+	for _, id := range r.ids {
+		if id == except {
+			continue
+		}
+		r.send(id, m)
 	}
 }
 
@@ -245,7 +264,11 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	if m == nil {
 		return
 	}
-	rep := in.R
+	// The gate can open or close anywhere below, including on the stale-resend
+	// path, so the announcement is deferred rather than repeated.
+	defer r.announceGate()
+
+	rep := in.Report
 	// Identity comes from the connection, never from a field the sender fills.
 	rep.ClientID = id
 
@@ -345,6 +368,48 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 			r.send(id, Correct{Mode: "nudge", Rate: 1.0, When: now, Why: "in tolerance"})
 		}
 	}
+}
+
+// announceGate broadcasts the readiness gate, but only when the gated set has
+// actually changed. Every caller that can open or close a gate must end with
+// this, including Leave and Tick -- the gate is the one piece of room state
+// that can be entered by a report and left by silence.
+//
+// Jellyfin's anti-hang rule is that a member who leaves while buffering counts
+// as ready. We add what it lacks: GateTimeoutMs, after which a member who is
+// still buffering is dropped from the gate and the room resumes without them.
+func (r *Room) announceGate() {
+	ids := r.Gated()
+	sig := strings.Join(ids, ",")
+	if sig == r.gateSig {
+		return
+	}
+	r.gateSig = sig
+	r.GateFrames++
+	r.Broadcast("", Gate{Waiting: len(ids) > 0, WaitingOn: ids, Reason: "buffering"})
+}
+
+// Tick is the room's own timer: it expires readiness gates held by members who
+// have stopped reporting at all. Without it a member who buffers and then
+// vanishes without closing the socket holds the gate until the socket dies.
+func (r *Room) Tick(now int64) {
+	for _, id := range r.ids {
+		m := r.members[id]
+		if m.gated && now-m.gatedAt > GateTimeoutMs {
+			m.gated = false
+		}
+	}
+	r.announceGate()
+}
+
+// OnChat broadcasts a chat line. The server stamps the time and the identity;
+// neither is taken from the frame.
+func (r *Room) OnChat(now int64, id string, in ChatIn) {
+	m := r.members[id]
+	if m == nil {
+		return
+	}
+	r.Broadcast("", ChatOut{From: id, Name: m.Name, Text: in.Text, ServerMs: now})
 }
 
 // Gated returns the ids currently held by the readiness gate, in stable order.
