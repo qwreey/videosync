@@ -28,6 +28,13 @@ type MsgAck struct {
 	ReqID  int
 	Seq    uint64
 	Anchor vsync.Anchor
+	// When must be present. Excluding the sender from the state broadcast
+	// (echo suppression) accidentally excluded it from the *scheduling* the
+	// timebase exists to provide: with no `when` the sender had nothing to
+	// schedule against and never applied its own transition at all.
+	When      int64
+	EmittedAt int64
+	Kind      string
 }
 type MsgReport struct{ R vsync.Report }
 type MsgCorrect struct {

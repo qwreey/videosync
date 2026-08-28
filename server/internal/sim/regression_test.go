@@ -112,3 +112,66 @@ func TestNoHostConflictingCommandsConverge(t *testing.T) {
 		}
 	}
 }
+
+// The sender is excluded from the state broadcast for echo suppression. That
+// must NOT also exclude it from scheduling: without `when` on the ack it has
+// nothing to schedule against and never applies its own transition. The
+// existing suite passed with that bug present, which is why this test exists.
+func TestSenderAppliesItsOwnCommand(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	sc := Scenario{
+		Name: "sender-applies", Seed: 11, DurationMs: 30000,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: Link{UpMs: 25, DownMs: 25, JitterMs: 5}},
+			{ID: "b", IntrinsicRate: 1.0, Link: Link{UpMs: 80, DownMs: 80, JitterMs: 30}},
+		},
+		// "a" issues the pause, so "a" is the one at risk of not applying it.
+		Commands: []Command{{AtMs: 10000, ClientID: "a", Kind: "pause"}},
+	}
+	r := Run(sc, ConfidenceGatedStepRamp(), tun)
+	// If the sender keeps playing while everyone else pauses, divergence grows
+	// without bound for the remaining 20 s.
+	if r.MaxDivergenceMs > 500 {
+		t.Errorf("sender did not apply its own pause: max divergence %.0f ms", r.MaxDivergenceMs)
+	}
+}
+
+// A scheduled command makes each client apply at its own biased notion of
+// `when` and derive position from the same biased clock, so the error lands in
+// real media position while the residual reads ~0. Confidence gating cannot
+// see it. This test pins the known-bad number so a future fix shows up as a
+// failure rather than going unnoticed.
+func TestSchedulingLaundersClockBias(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	mk := func(cmds []Command) Scenario {
+		return Scenario{
+			Name: "launder", Seed: 5, DurationMs: 120000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: Link{UpMs: 25, DownMs: 25, JitterMs: 5}},
+				{ID: "b", IntrinsicRate: 1.0, Link: Link{UpMs: 20, DownMs: 1200, JitterMs: 10}},
+				{ID: "c", IntrinsicRate: 1.0, Link: Link{UpMs: 1200, DownMs: 20, JitterMs: 10}},
+			},
+			Commands: cmds,
+		}
+	}
+	quiet := Run(mk(nil), ConfidenceGatedStepRamp(), tun)
+	if quiet.MaxDivergenceMs != 0 {
+		t.Errorf("command-free asymmetry should stay at 0, got %.0f", quiet.MaxDivergenceMs)
+	}
+
+	withCmd := Run(mk([]Command{
+		{AtMs: 30000, ClientID: "a", Kind: "pause"},
+		{AtMs: 33000, ClientID: "a", Kind: "play"},
+	}), ConfidenceGatedStepRamp(), tun)
+
+	if withCmd.MaxDivergenceMs < 500 {
+		t.Fatalf("laundering no longer reproduces (%.0f ms) -- if this was fixed on purpose, "+
+			"update POC-FINDINGS and this test", withCmd.MaxDivergenceMs)
+	}
+	// The damage is invisible to the residual channel: the corrector does not
+	// even try. That blindness is the finding.
+	if withCmd.SeeksIssued != 0 || withCmd.BiasLearned != 0 {
+		t.Errorf("expected the residual channel to be blind, got %d seeks / %d biases learned",
+			withCmd.SeeksIssued, withCmd.BiasLearned)
+	}
+}

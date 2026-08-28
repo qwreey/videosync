@@ -242,9 +242,15 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 		}
 		c.pending = append(c.pending, v)
 	case MsgAck:
+		// The sender schedules its own command exactly like every other
+		// member. Anything else exempts the originator from the simultaneity
+		// the whole timebase exists to provide -- and in a real client that
+		// shows up as your own gesture landing CMD_DELAY before everyone
+		// else's, which is larger than the clock bias we worry about.
 		if v.Seq > c.lastAppliedSeq {
-			c.lastAppliedSeq = v.Seq
-			c.anchor = v.Anchor // roll optimistic apply onto the winning anchor
+			c.pending = append(c.pending, MsgState{
+				Seq: v.Seq, When: v.When, EmittedAt: v.EmittedAt,
+				Anchor: v.Anchor, By: c.P.ID, Kind: v.Kind})
 		}
 	case MsgCorrect:
 		if v.Mode == "seek" {

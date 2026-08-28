@@ -111,7 +111,9 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 			if id == v.ClientID {
 				// Sender is excluded from the broadcast but MUST get the ack,
 				// or its lastAppliedSeq never advances (SYNTHESIS 5 amendment).
-				net.Send(now, id, "server", id, false, MsgAck{ReqID: v.ReqID, Seq: s.seq, Anchor: s.anchor})
+				net.Send(now, id, "server", id, false, MsgAck{
+					ReqID: v.ReqID, Seq: s.seq, Anchor: s.anchor,
+					When: when, EmittedAt: now, Kind: v.Kind})
 				continue
 			}
 			net.Send(now, id, "server", id, false, st)

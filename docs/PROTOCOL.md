@@ -54,11 +54,19 @@ Server takes the per-room mutex, assigns a monotonic `seq`, updates the anchor, 
 
 - **to every other member** → `{"t":"state","seq":<n>,"when":<serverMs>,"emittedAt":<serverMs>,
   "anchor":{...},"by":"<clientId>","kind":"..."}`
-- **to the sender** → `{"t":"ack","reqId":"...","seq":<n>,"anchor":{...}}`
+- **to the sender** → `{"t":"ack","reqId":"...","seq":<n>,"anchor":{...},"when":<serverMs>,
+  "emittedAt":<serverMs>,"kind":"..."}`
 
 The sender is excluded from the broadcast (§4 layer 1) but **must** get the ack, or its
 `lastAppliedSeq` never advances (§5 amendment). The ack also carries the *winning* anchor: if the
 mutex ordered someone else first, the sender rolls its optimistic apply back to what the ack says.
+
+**The ack must carry `when`, and the sender must schedule against it exactly like everyone else.**
+Excluding the sender from the broadcast for echo suppression accidentally excluded it from the
+scheduling this whole timebase exists to provide. Measured cost of getting this wrong:
+`command-storm` mean divergence **4743 ms → 32 ms**, seeks **19 → 0** (docs/POC-FINDINGS.md §20).
+In a real client it appears as your own gesture landing `CMD_DELAY` (500-2000 ms) ahead of
+everyone else's — larger than the clock bias we spend so much effort on, and free to fix.
 
 `when = emittedAt + clamp(2 * p95_ping, 500ms, 2000ms)`. Capped because there is no host — one bad
 connection must not make every pause in the room sluggish (§2 amendment). A member slower than the

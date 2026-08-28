@@ -76,6 +76,22 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
+			// Same asymmetry, but with commands. A scheduled command makes
+			// each client apply at its OWN biased notion of `when` and derive
+			// its position from the same biased clock -- so the error lands in
+			// real media position while the residual reads ~0, invisible.
+			Name: "asymmetry+cmds", Seed: 5, DurationMs: 120000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: sim.Link{UpMs: 20, DownMs: 1200, JitterMs: 10}},
+				{ID: "c", IntrinsicRate: 1.0, Link: sim.Link{UpMs: 1200, DownMs: 20, JitterMs: 10}},
+			},
+			Commands: []sim.Command{
+				{AtMs: 30000, ClientID: "a", Kind: "pause"},
+				{AtMs: 33000, ClientID: "a", Kind: "play"},
+			},
+		},
+		{
 			Name: "command-storm", Seed: 6, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},

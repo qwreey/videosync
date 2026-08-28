@@ -187,3 +187,9 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	}
 	return res
 }
+
+// ConfidenceGatedStepRamp is the current best strategy (POC-FINDINGS section 11),
+// named once so tests do not each re-spell it.
+func ConfidenceGatedStepRamp() vsync.Corrector {
+	return vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}}
+}

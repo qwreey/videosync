@@ -367,3 +367,86 @@ Named by the same review, all confirmed absent:
   §15 immediately), and rate churn.
 
 These belong to the next round, before any further strategy comparison is trusted.
+
+---
+
+# Round 5 — two findings from the timebase review, both verified here
+
+Full output: `docs/poc-run-5.txt`. Both were checked against the code before being accepted.
+
+## 20. The command sender was exempt from its own command
+
+`MsgAck` carried `{reqId, seq, anchor}` — no `when`. The client set the anchor from it but never
+applied the transition: `paused` and `posMs` were untouched. **The member who pressed pause was the
+one member who did not pause.** `docs/PROTOCOL.md` §3 specified it that way, so this was a protocol
+defect, not a harness slip.
+
+Adding `when` to the ack and scheduling the sender like everyone else:
+
+| | before | after |
+|---|---|---|
+| command-storm mean divergence | 4743 ms | **32 ms** |
+| seeks issued | 19 | **0** |
+| converge after each command | [0 400 1000 0 50 900] | **[0 0 0 0 50 0]** |
+
+**The entire `command-storm` row of every earlier table was measuring this bug**, not any property
+of a correction strategy. Round 2 §7 and round 3 §11 should be read with that column struck out.
+
+The existing regression suite passed with the bug present, which is exactly the gap a suite is
+supposed to close. `TestSenderAppliesItsOwnCommand` now covers it.
+
+## 21. Scheduled commands launder clock bias into media position, invisibly
+
+This is the more serious finding, and it **scopes round 3's headline result**.
+
+Round 3 reported `latency-asymmetry` going to 0 ms / 0 seeks under confidence gating. That holds
+**only because the scenario issues no commands.** A new scenario, identical but with one
+pause/play pair:
+
+| scenario | step-ramp+conf mean | max | seeks | bias learned |
+|---|---|---|---|---|
+| latency-asymmetry (no commands) | 0 | 0 | 0 | 0 |
+| **asymmetry+cmds** | **838 ms** | **1180 ms** | **0** | **0** |
+
+The mechanism, confirmed by the arithmetic:
+
+A client with offset bias `B` applies a scheduled command when *its* estimate reaches `when` — that
+is `B` off in true time — and derives its position as `Expected(estimated now)`, using the same
+biased clock. The two errors do not cancel in media position; they **cancel in the residual**:
+
+```
+pos(T)      = Expected(when) + (T - (when + B))  = Expected(T) - B
+expected(T) = Expected(T + B_est)                = Expected(T) - B
+residual    = 0                                            <-- exactly zero
+```
+
+So the error lands in real media position, and the channel we use to detect error reads zero. Note
+the seeks and bias-learned columns: **0 and 0**. The corrector does not fail to fix it; it never
+sees it. The round-2 failed-seek/bias-learning machinery is structurally blind here — it needs a
+non-zero residual and gets exactly zero.
+
+### What this means
+
+`ConfidenceGated` is not a fix for path asymmetry. It fixes the half of the problem that is
+*visible in the residual* (steady-state correction), and does nothing for the half that enters
+through the scheduling path. That is a real limit and it should be stated plainly rather than left
+implied by a scenario that happens not to issue commands.
+
+The bound is the consolation: the laundered error is `|B| <= R_min/2`, which is exactly the
+`UncertaintyMs` already on the wire (measured: bias 590 ms, uncertainty 610 ms). **No passive
+channel can detect it** — its magnitude is bounded by the uncertainty of every channel available to
+measure it. So the honest response is not a better estimator but to *bound and disclose*:
+
+1. Floor `CMD_DELAY` and the tolerance band at the room's worst `UncertaintyMs`.
+2. Surface the resulting sync guarantee in the UI, since it cannot be measured away.
+
+`TestSchedulingLaundersClockBias` pins the known-bad numbers so that any future fix shows up as a
+failing test rather than passing unnoticed.
+
+## 22. Corrections owed to earlier rounds
+
+- Round 3 §11 "strictly free, and it fully fixes the asymmetry case" — **overstated.** It fixes the
+  command-free case. Scope it to steady-state correction.
+- Every `command-storm` figure before round 5 measured the §20 bug.
+- Round 2 §6's failed-seek detector and bias learning are now known to be blind to the dominant
+  asymmetry path, on top of already being unexercised elsewhere (round 3 §14).
