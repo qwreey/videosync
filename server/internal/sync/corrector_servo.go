@@ -136,3 +136,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	}
 	return Decision{Action: ActionNudge, Rate: rate, Why: "servo"}
 }
+
+// Forget drops per-client state when a member leaves. A simulation exits after
+// two minutes; a real room lives for weeks and this map would only ever grow.
+func (c *ServoCorrector) Forget(clientID string) { delete(c.st, clientID) }

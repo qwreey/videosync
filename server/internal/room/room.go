@@ -1,0 +1,366 @@
+package room
+
+import (
+	"sort"
+
+	vsync "github.com/qwreey/videosync/server/internal/sync"
+)
+
+// Sink delivers one frame to one member.
+//
+// Contract, and it matters: Sink.Send is called while the room lock is held,
+// so it MUST NOT block. A real transport buffers per connection and, when that
+// buffer is full, closes the connection and lets the reader report a Leave --
+// a slow member must never be able to stall every other member's commands
+// behind the room mutex.
+type Sink interface {
+	Send(clientID string, m Msg)
+}
+
+// Forgetter is implemented by correctors that keep per-client state. Rooms
+// live for weeks; without this the state map only grows.
+type Forgetter interface{ Forget(clientID string) }
+
+// Member is one participant, as the room sees them.
+type Member struct {
+	ID   string
+	Name string
+
+	// RTTMs is the client's own best observed round trip. Unlike anything
+	// derived from its offset estimate this is bias-free, so it is safe to
+	// feed into the command delay.
+	RTTMs  int64
+	hasRTT bool
+
+	LastAppliedSeq uint64
+	Suspended      bool
+	ReadyState     int
+	BufferedAheadS float64
+	LastSeenMs     int64
+
+	gated   bool
+	gatedAt int64
+	corr    corrState
+}
+
+// corrState tracks whether our corrections are actually working on one client.
+// Motivation: docs/POC-FINDINGS.md section 2 -- under one-way latency
+// asymmetry the clock offset is biased, the residual never closes, and a tight
+// deadband turns into thousands of useless seeks. No reference implementation
+// detects this.
+type corrState struct {
+	lastSeekAt     int64
+	residualAtSeek int64
+	failedSeeks    int
+	biasMs         int64 // learned clock-estimate bias, subtracted from reports
+}
+
+const (
+	// seekCooldownMs is the floor between two seeks for the same client. On
+	// its own this bounds the storm; it does not fix the cause.
+	seekCooldownMs = 2000
+	// failedSeeksBeforeBias: after this many seeks that did not move the
+	// residual, stop blaming the player and blame our own clock estimate.
+	failedSeeksBeforeBias = 3
+	// seekImprovementFrac: a seek "worked" if it cut the residual by at least
+	// this fraction.
+	seekImprovementFrac = 0.5
+	// GateTimeoutMs drops a still-buffering member from the gate so the room
+	// can continue without them. Jellyfin's Waiting state has no such timeout.
+	GateTimeoutMs = 30000
+)
+
+// Room is the timebase owner and the judge. It is NOT an aggregator: client
+// reports decide who needs correcting and whether the gate fires, they never
+// move the anchor (research/SYNTHESIS.md 4c).
+//
+// Room is not safe for concurrent use; the caller serialises it. In the real
+// server that is one mutex per room, which is also what makes command ordering
+// well-defined.
+type Room struct {
+	ID string
+
+	anchor    vsync.Anchor
+	seq       uint64
+	corrector vsync.Corrector
+	tun       vsync.Tunables
+	sink      Sink
+
+	members map[string]*Member
+	ids     []string // sorted; Go randomises map iteration and the harness must be deterministic
+
+	// NoStaleResend disables the stale-anchor resend, as a control. Without it
+	// a client that missed a command holds a stale anchor and reports
+	// residual ~= 0 -- because the residual is measured against that same
+	// stale anchor -- while being arbitrarily out of position. No corrector
+	// reads LastAppliedSeq, so nothing else notices.
+	NoStaleResend bool
+
+	// metrics
+	StaleResends     int
+	SeeksIssued      int
+	NudgesIssued     int
+	UnnecessarySeeks int // seek issued while the residual was already closing
+	GatesOpened      int
+	SeeksSuppressed  int // blocked by the cooldown or the failed-seek detector
+	BiasLearned      int // clients whose clock bias we gave up on and absorbed
+}
+
+func New(id string, c vsync.Corrector, t vsync.Tunables, start vsync.Anchor, sink Sink) *Room {
+	return &Room{
+		ID: id, anchor: start, corrector: c, tun: t, sink: sink,
+		members: map[string]*Member{},
+	}
+}
+
+func (r *Room) Anchor() vsync.Anchor     { return r.anchor }
+func (r *Room) Seq() uint64              { return r.seq }
+func (r *Room) Tunables() vsync.Tunables { return r.tun }
+func (r *Room) Member(id string) *Member { return r.members[id] }
+func (r *Room) Size() int                { return len(r.members) }
+func (r *Room) SetSink(s Sink)           { r.sink = s }
+
+// IDs returns the member ids in a stable order.
+func (r *Room) IDs() []string { return r.ids }
+
+func (r *Room) reindex() {
+	r.ids = r.ids[:0]
+	for id := range r.members {
+		r.ids = append(r.ids, id)
+	}
+	sort.Strings(r.ids)
+}
+
+// Join adds a member. It does not send Welcome -- the transport does that,
+// because only the transport knows whether the connection survived the join.
+func (r *Room) Join(now int64, id, name string) *Member {
+	m := &Member{ID: id, Name: name, LastSeenMs: now, ReadyState: 4}
+	r.members[id] = m
+	r.reindex()
+	return m
+}
+
+// Leave removes a member and every trace of them from the correction state.
+//
+// The gate entry must go with them: Jellyfin's anti-hang rule is that a member
+// who leaves while buffering counts as ready, otherwise a dropped connection
+// freezes the room for someone who is no longer in it.
+func (r *Room) Leave(now int64, id string) {
+	if _, ok := r.members[id]; !ok {
+		return
+	}
+	delete(r.members, id)
+	r.reindex()
+	if f, ok := r.corrector.(Forgetter); ok {
+		f.Forget(id)
+	}
+}
+
+// MemberList is the membership snapshot sent to clients.
+func (r *Room) MemberList() []MemberInfo {
+	out := make([]MemberInfo, 0, len(r.ids))
+	for _, id := range r.ids {
+		m := r.members[id]
+		out = append(out, MemberInfo{
+			ID: m.ID, Name: m.Name, Suspended: m.Suspended,
+			Ready: m.ReadyState >= r.tun.MinReadyState,
+		})
+	}
+	return out
+}
+
+func (r *Room) send(id string, m Msg) {
+	if r.sink != nil {
+		r.sink.Send(id, m)
+	}
+}
+
+// CmdDelay is clamp(2*p95_ping, 500, 2000). Capped because there is no host:
+// one bad connection must not make every pause in the room sluggish.
+func (r *Room) CmdDelay() int64 {
+	vals := make([]int64, 0, len(r.ids))
+	for _, id := range r.ids {
+		if m := r.members[id]; m.hasRTT {
+			vals = append(vals, m.RTTMs)
+		}
+	}
+	if len(vals) == 0 {
+		return 500
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	// A percentile is meaningless at n=3, and the naive ceil-index collapses to
+	// max() for every room smaller than ~40 members -- so SYNTHESIS section 2's
+	// "p95 so one outlier cannot dominate" was delivered by no code path. Use
+	// second-highest once there are at least three members, the smallest honest
+	// "drop the worst outlier"; below that the 2000 ms cap is the only
+	// protection and we say so.
+	idx := len(vals) - 1
+	if len(vals) >= 3 {
+		idx = len(vals) - 2
+	}
+	return vsync.ClampI(2*vals[idx], 500, 2000)
+}
+
+// OnTime answers a clock probe. Two server stamps, no arithmetic: the client
+// owns the offset estimate, because only the client knows its own t1.
+func (r *Room) OnTime(now int64, id string, m TimeReq) {
+	r.send(id, TimeReply{T0: m.T0, TRecv: now, TSend: now})
+}
+
+// OnCmd serialises one user command: assign seq, move the anchor, schedule the
+// transition into the future so every member transitions at the same instant.
+func (r *Room) OnCmd(now int64, id string, m Cmd) {
+	r.seq++
+	when := now + r.CmdDelay()
+	switch m.Kind {
+	case "pause":
+		r.anchor = r.anchor.Advance(when)
+		r.anchor.Paused = true
+	case "play":
+		r.anchor = r.anchor.Advance(when)
+		r.anchor.Paused = false
+	case "seek":
+		r.anchor = r.anchor.Reanchor(m.PositionMs, when, r.anchor.Paused)
+	case "media":
+		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
+			Paused: r.anchor.Paused, MediaKey: m.MediaKey}
+	}
+	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}
+	for _, mid := range r.ids {
+		if mid == id {
+			// Sender is excluded from the broadcast (echo suppression) but MUST
+			// get the ack, or its lastAppliedSeq never advances and it cannot
+			// tell stale state from fresh (SYNTHESIS 5 amendment).
+			r.send(mid, Ack{ReqID: m.ReqID, Seq: r.seq, Anchor: r.anchor,
+				When: when, EmittedAt: now, Kind: m.Kind})
+			continue
+		}
+		r.send(mid, st)
+	}
+}
+
+// OnReport judges one client's position report.
+func (r *Room) OnReport(now int64, id string, in Report) {
+	m := r.members[id]
+	if m == nil {
+		return
+	}
+	rep := in.R
+	// Identity comes from the connection, never from a field the sender fills.
+	rep.ClientID = id
+
+	m.LastSeenMs = now
+	m.LastAppliedSeq = rep.LastAppliedSeq
+	m.Suspended = rep.Suspended
+	m.ReadyState = rep.ReadyState
+	m.BufferedAheadS = rep.BufferedAheadS
+	// Use the client's own measured round trip, not (now - its estimated server
+	// time): the latter propagates one client's clock bias into the command
+	// delay for the whole room. RTT is a difference of two same-clock
+	// timestamps, so it carries no offset error.
+	m.RTTMs, m.hasRTT = rep.RTTMs, true
+
+	// A lagging lastAppliedSeq is the only signal that distinguishes "in sync"
+	// from "confidently wrong about what it is syncing to". It is already on
+	// the wire and nothing was reading it.
+	if !r.NoStaleResend && rep.LastAppliedSeq < r.seq {
+		r.StaleResends++
+		r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,
+			Anchor: r.anchor, By: "server", Kind: "resync"})
+		return
+	}
+
+	cs := &m.corr
+
+	// Judge the *effective* residual: what remains after subtracting the bias
+	// we have learned about this client's clock estimate.
+	eff := rep
+	eff.ResidualMs = rep.ResidualMs - cs.biasMs
+
+	// Did the last seek accomplish anything? If we seeked and the residual is
+	// essentially unchanged, the fault is not the player's position -- it is
+	// our own idea of where the client should be.
+	if cs.lastSeekAt > 0 && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
+		improved := abs64(eff.ResidualMs) <= int64(float64(abs64(cs.residualAtSeek))*seekImprovementFrac)
+		if improved {
+			cs.failedSeeks = 0
+		} else {
+			cs.failedSeeks++
+			if cs.failedSeeks >= failedSeeksBeforeBias {
+				// Absorb it. A residual that survives repeated seeks IS the
+				// clock bias, and it is the only way to observe a one-way
+				// latency asymmetry that min-RTT cannot see. Bound the learned
+				// bias by the client's own uncertainty: unbounded, a *lost*
+				// correction message is indistinguishable from a biased clock
+				// and the learner strands that client for the whole session.
+				// The principled bound is the one the timebase analysis
+				// derived -- a laundered offset satisfies |B| <= R_min/2,
+				// which is exactly UncertaintyMs.
+				bound := rep.UncertaintyMs
+				if bound <= 0 {
+					bound = r.tun.ToleranceMs
+				}
+				cs.biasMs = vsync.ClampI(cs.biasMs+eff.ResidualMs, -bound, bound)
+				cs.failedSeeks = 0
+				r.BiasLearned++
+				eff.ResidualMs = rep.ResidualMs - cs.biasMs
+			}
+		}
+		cs.lastSeekAt = 0
+	}
+
+	d := r.corrector.Decide(eff, r.anchor, now, r.tun)
+	switch d.Action {
+	case vsync.ActionSeek:
+		if now-cs.lastSeekAt < seekCooldownMs && cs.lastSeekAt > 0 {
+			r.SeeksSuppressed++
+			break
+		}
+		r.SeeksIssued++
+		if eff.Closing() && abs64(eff.ResidualMs) < r.tun.NudgeMaxResidual {
+			r.UnnecessarySeeks++
+		}
+		cs.lastSeekAt = now
+		cs.residualAtSeek = eff.ResidualMs
+		r.send(id, Correct{Mode: "seek", When: now, Why: d.Why})
+	case vsync.ActionNudge:
+		r.NudgesIssued++
+		r.send(id, Correct{Mode: "nudge", Rate: d.Rate, When: now, Why: d.Why})
+	case vsync.ActionGate:
+		if !m.gated {
+			m.gated, m.gatedAt = true, now
+			r.GatesOpened++
+		}
+		// Anti-hang: a member stuck buffering past the timeout is dropped from
+		// the gate and the room continues without them.
+		if now-m.gatedAt > GateTimeoutMs {
+			m.gated = false
+		}
+	default:
+		m.gated = false
+		// Only clear the rate when the client is genuinely back in tolerance.
+		// Clearing it while a nudge is still closing the gap cancels the
+		// correction that is working.
+		if d.ResetRate {
+			r.send(id, Correct{Mode: "nudge", Rate: 1.0, When: now, Why: "in tolerance"})
+		}
+	}
+}
+
+// Gated returns the ids currently held by the readiness gate, in stable order.
+func (r *Room) Gated() []string {
+	var out []string
+	for _, id := range r.ids {
+		if r.members[id].gated {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

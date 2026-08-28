@@ -81,8 +81,8 @@ type Client struct {
 	// whole time -- which makes the client MORE out of position before it gets
 	// better. Treating all seeks as free is what flattered every seek-based
 	// strategy in rounds 1-6.
-	bufEndS         float64
-	seekStallUntil  int64
+	bufEndS          float64
+	seekStallUntil   int64
 	OutOfBufferSeeks int
 	InBufferSeeks    int
 	// RateTimeMs is the integral of |playbackRate-1| dt: how much time-shift was
@@ -220,7 +220,7 @@ func (c *Client) UpdateSuspension(serverMs int64) {
 		if want {
 			kind = "pause"
 		}
-		c.outbox = append(c.outbox, MsgCmd{ClientID: c.P.ID, Kind: kind, PositionMs: int64(c.posMs)})
+		c.outbox = append(c.outbox, MsgCmd{Kind: kind, PositionMs: int64(c.posMs)})
 		c.SpuriousCmds++
 	}
 	// With the guard: recognised as browser suspension, never broadcast. The
@@ -292,7 +292,7 @@ func (c *Client) Advance(serverMs, dt int64) {
 
 // TimeSync starts one clock-sync exchange.
 func (c *Client) TimeSync(net *Network, serverMs int64) {
-	net.Send(serverMs, c.P.ID, c.P.ID, "server", true, MsgTimeReq{ClientID: c.P.ID, T0: c.clockNow(serverMs)})
+	net.Send(serverMs, c.P.ID, c.P.ID, "server", true, MsgTimeReq{T0: c.clockNow(serverMs)})
 }
 
 func (c *Client) onTimeReply(m MsgTimeReply, serverMs int64) {
@@ -368,17 +368,17 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 		return vsync.Report{}, false
 	}
 	return vsync.Report{
-		ClientID:       c.P.ID,
-		ResidualMs:     int64(res),
-		SlopeMsPerS:    c.slope(),
-		PositionMs:     int64(c.posMs),
-		Paused:         c.paused,
-		ReadyState:     c.readyState,
+		ClientID:        c.P.ID,
+		ResidualMs:      int64(res),
+		SlopeMsPerS:     c.slope(),
+		PositionMs:      int64(c.posMs),
+		Paused:          c.paused,
+		ReadyState:      c.readyState,
 		BufferedAheadS:  c.bufferedS,
 		Suspended:       c.suspended,
 		BufferedBehindS: math.Min(10, c.posMs/1000),
-		LastAppliedSeq: c.lastAppliedSeq,
-		AtServerMs:     est,
+		LastAppliedSeq:  c.lastAppliedSeq,
+		AtServerMs:      est,
 		// Honest error bound: full path asymmetry biases the estimate by at
 		// most half the round trip.
 		UncertaintyMs: c.bestRTT / 2,

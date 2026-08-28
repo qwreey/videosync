@@ -7,10 +7,13 @@ package sim
 import (
 	"container/heap"
 	"math/rand"
+
+	"github.com/qwreey/videosync/server/internal/room"
 )
 
-// Msg is anything one participant sends another.
-type Msg interface{ isMsg() }
+// Msg is anything one participant sends another. The set is the protocol's --
+// the harness invents no frames of its own.
+type Msg = room.Msg
 
 type envelope struct {
 	deliverAt int64

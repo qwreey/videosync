@@ -3,6 +3,7 @@ package sim
 import (
 	"math"
 	"sort"
+	"strconv"
 
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
@@ -17,11 +18,11 @@ type Command struct {
 
 // Scenario is one reproducible experiment.
 type Scenario struct {
-	Name       string
-	Seed       int64
-	DurationMs int64
-	Clients    []ClientProfile
-	Commands   []Command
+	Name        string
+	Seed        int64
+	DurationMs  int64
+	Clients     []ClientProfile
+	Commands    []Command
 	StartPos    int64
 	StartPaused bool
 	// NoStaleResend is a control: see Server.NoStaleResend.
@@ -98,6 +99,9 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	srv := NewServer(corr, tun, start)
 	srv.NoStaleResend = sc.NoStaleResend
 	for _, id := range order {
+		srv.Join(0, id, id)
+	}
+	for _, id := range order {
 		clients[id].anchor = start
 		clients[id].lastKnownPos = float64(sc.StartPos)
 	}
@@ -133,7 +137,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		for cmdIdx < len(sc.Commands) && sc.Commands[cmdIdx].AtMs <= now {
 			cm := sc.Commands[cmdIdx]
 			net.Send(now, cm.ClientID, cm.ClientID, "server", true,
-				MsgCmd{ClientID: cm.ClientID, ReqID: cmdIdx, Kind: cm.Kind, PositionMs: cm.PositionMs})
+				MsgCmd{ReqID: strconv.Itoa(cmdIdx), Kind: cm.Kind, PositionMs: cm.PositionMs})
 			awaiting = append(awaiting, pendingConv{at: now})
 			lastCmdAt = now
 			cmdIdx++
@@ -239,7 +243,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		SeeksIssued: srv.SeeksIssued, UnnecessarySeeks: srv.UnnecessarySeeks,
 		NudgesIssued: srv.NudgesIssued, GatesOpened: srv.GatesOpened,
 		SeeksSuppressed: srv.SeeksSuppressed, BiasLearned: srv.BiasLearned,
-		StaleResends: srv.StaleResends,
+		StaleResends:           srv.StaleResends,
 		RoomPausedBySuspension: roomPausedBySuspension,
 		ConvergeMs:             converge,
 	}
