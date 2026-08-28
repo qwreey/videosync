@@ -101,7 +101,8 @@ window.probe = Object.assign({}, {
 
   state() {
     return { ct: v.currentTime, paused: v.paused, rs: v.readyState, ns: v.networkState,
-             ahead: bufferedAhead(), ranges: bufferedRanges(), rate: v.playbackRate, muted: v.muted };
+             ahead: bufferedAhead(), ranges: bufferedRanges(), rate: v.playbackRate,
+             muted: v.muted, volume: v.volume };
   },
 
   events() { return evLog.splice(0); },
@@ -235,6 +236,14 @@ Object.assign(window.probe, {
     return { attached: true, counters: h.counters() };
   },
   detectorReset() { window.VSProbe.reset(); window.VSProbe.syncAnchorToElement(); return true; },
+  // A fresh detector: `everAudible` is per-playback, so a case that needs a
+  // never-audible stream must not inherit an earlier one's state.
+  attachDetector2() {
+    if (window.VSProbe) window.VSProbe.stop();
+    const h = VSCore.attach(v);
+    h.start(100);
+    return { attached: true };
+  },
   detectorCounters() { return window.VSProbe.counters(); },
   detectorBroadcasts() { return window.VSProbe.broadcast.map(b => ({ t: b.t, kind: b.o.kind })); },
   detectorKinds() {

@@ -1,0 +1,90 @@
+{
+  "chromium": "Chrome/151.0.7922.173",
+  "cases": [
+    {
+      "name": "steady playback broadcasts nothing",
+      "expect": 0,
+      "got": 0,
+      "pass": true,
+      "kinds": {
+        "idle": 40
+      }
+    },
+    {
+      "name": "a user seek is broadcast",
+      "expect": "seek",
+      "got": "seek",
+      "pass": true,
+      "broadcasts": [
+        {
+          "t": 4600.3,
+          "kind": "seek"
+        }
+      ]
+    },
+    {
+      "name": "a server correction is not rebroadcast",
+      "expect": 0,
+      "got": 0,
+      "pass": true,
+      "broadcasts": []
+    },
+    {
+      "name": "a stall is detected as a stall",
+      "expect": true,
+      "got": true,
+      "pass": true,
+      "kinds": {
+        "idle": 120,
+        "stall": 20
+      },
+      "starvedFromSeg": 13
+    },
+    {
+      "name": "a stall broadcasts nothing",
+      "expect": 0,
+      "got": 0,
+      "pass": true,
+      "broadcasts": []
+    },
+    {
+      "name": "a never-audible hidden tab is detected as suspension",
+      "expect": true,
+      "got": true,
+      "pass": true,
+      "kinds": {
+        "suspended": 6
+      }
+    },
+    {
+      "name": "suspension broadcasts nothing",
+      "expect": 0,
+      "got": 0,
+      "pass": true,
+      "broadcasts": []
+    },
+    {
+      "name": "resuming from suspension broadcasts nothing",
+      "expect": 0,
+      "got": 0,
+      "pass": true,
+      "broadcasts": []
+    }
+  ],
+  "suspendState": {
+    "ct": 3.149854,
+    "paused": true,
+    "rs": 4,
+    "ns": 2,
+    "ahead": 10.862095,
+    "ranges": [
+      [
+        0.08,
+        14.012
+      ]
+    ],
+    "rate": 1,
+    "muted": true,
+    "volume": 1
+  }
+}

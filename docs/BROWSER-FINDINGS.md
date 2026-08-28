@@ -84,53 +84,92 @@ Three consequences for the client:
 1. **A tab playing audible media is exempt from timer throttling.** That is the normal watch-party
    case, so the ~10 Hz local evaluation loop that every client-authority claim depends on
    (POC-FINDINGS §19, third gap) survives in the case that matters most.
-2. **A hidden muted tab is clamped to 1 Hz** — the feared case, and it is real. But see §5: such a
-   tab is also *paused by the browser*, so the 1 Hz clamp matters less than it first appears — the
-   client is not behind, it is absent.
+2. **A hidden muted tab is clamped to 1 Hz** — the feared case, and it is real. But see §5: a
+   *never-audible* hidden tab is also paused outright by the browser, so for that case the client
+   is not behind, it is absent. A tab that was audible and is now muted keeps playing **and** is
+   throttled, which is the combination the `Worker` tick exists for.
 3. **Worker timers are not throttled even then.** This is now measured rather than assumed, and it
    makes the local loop implementable as a Worker-driven tick for the muted case.
 
-## 5. RESOLVED — Chrome *pauses* a muted video when its tab is hidden
+## 5. Chrome pauses a hidden tab's video — but only if it has NEVER been audible
 
-The round-1 contradiction is settled, and the answer is more consequential than either
-alternative. `probe-throttle3` was simply wrong: it never verified that the tab had actually
-become hidden. `probe-throttle5` asserts `visibilityState === "hidden"` on every row.
+**This section corrects an earlier, overstated version of itself.** The first measurement showed a
+hidden *muted* tab being paused and concluded the trigger was `hidden && muted`. Building the
+detector against that rule produced a test that would not reproduce, which forced a four-condition
+experiment (`probe-bgpause2.mjs`):
 
-| tab | hidden | `readyState` | buffer | events on hide | on re-show |
-|---|---|---|---|---|---|
-| **muted** | **`paused` becomes `true`** | 4 | full (11.5 s) | **`pause`** | resumes itself, **`play` + `playing`** |
-| audible | keeps playing | 4 | full | none | none |
+| condition | result |
+|---|---|
+| A — muted **before** play, never audible | **paused** by the browser |
+| B — played audibly, **then** muted, then hidden | keeps playing |
+| C — media with **no audio track at all** | **paused** |
+| D — audible throughout | keeps playing |
 
-Identical for MSE (hls.js) and native progressive playback, so this is a media-pipeline policy,
-not an MSE/JS-timer effect. Unmuting *while hidden* does not rescue it — it stays paused until the
-tab is shown again.
+So the trigger is **"this playback has never produced sound"**, not "it is muted right now".
+`hidden && muted` was wrong: it would have suppressed genuine pauses in case B.
 
-### This is a protocol bug, not a curiosity
+The exemption is also **sticky at tab level**: once a tab has played audibly it stays exempt, and
+reloading the element does not reset it. Reproducing case A requires a fresh browser.
+
+### Observed behaviour in the vulnerable case
+
+| | value while hidden |
+|---|---|
+| `paused` | **`true`** (the browser did it) |
+| `readyState` | 4 |
+| buffered ahead | 10.9 s — full |
+| event on hide | **`pause`** |
+| on re-show | resumes itself, fires `play` + `playing` |
+
+### Why it is a protocol bug
 
 The browser emits a **genuine `pause` event**, indistinguishable at the DOM level from the user
-pressing pause. A naive client broadcasts it, and:
+pressing pause. Broadcast naively:
 
-- **one member backgrounding a muted tab pauses the entire room**;
-- when they switch back, the browser emits `play` and **the room resumes** — even if it had been
-  deliberately paused by someone else.
+- one member who started muted and switched tabs **pauses the entire room**;
+- switching back emits `play` and **resumes it** — even a room someone deliberately paused.
 
-Both directions are wrong, and both would ship without this measurement. Note that the stall
-detector (§1) is *not* the defence here: it only treats a freeze while `paused === false` as an
-anomaly, and this freeze sets `paused === true`, so it passes straight through as user intent.
+The stall detector is not the defence: it only treats a freeze while `paused === false` as an
+anomaly, and this freeze sets `paused === true`.
 
-### The rule
+### The rule, as implemented
 
-> A `play` or `pause` event that arrives while `document.hidden` is true **and** `video.muted` is
-> true is browser-initiated suspension, never user intent. Do not broadcast it. Mark the member
-> suspended, and suppress the paired event when the tab is shown again.
+> Track whether the element has **ever been audible** (`!paused && !muted` observed at least once
+> this playback). A `pause` while `document.hidden` on a never-audible playback, with
+> `readyState >= 3` and a full buffer, is browser suspension. Never broadcast it; mark the member
+> **suspended** and suppress the paired `play` on re-show.
 
-`document.hidden` alone is not sufficient: hardware media keys and the Media Session API can
-deliver *genuine* user pauses to a hidden tab. The `muted` conjunct is what distinguishes the
-browser's own power-saving pause from a real one.
+`document.hidden` alone cannot be the test — media keys and the Media Session API deliver genuine
+user pauses to hidden tabs.
 
-A suspended member is **absent, not buffering** — the readiness gate must not hold the room for
-them (§6 of SYNTHESIS assumes buffering is why a member is behind). This is a membership state,
-not a timing state.
+A suspended member is **absent, not buffering**: the readiness gate must not hold the room for
+them. The two are distinguishable by exactly the table above — suspension is `paused === true`
+with `readyState` 4 and a **full** buffer; buffering is `paused === false` with `readyState < 3`
+and a **draining** one.
+
+## 5b. Media does not load at all in a hidden tab
+
+Found while debugging a hang: calling `hls.loadSource()` in a tab that is not visible never
+resolves — `loadedmetadata` does not fire. Any client that tries to prepare a stream while
+backgrounded will hang rather than fail, so preparation must be deferred to visibility.
+
+## 5c. The shipping detector, validated end to end
+
+`probe-detector.mjs` runs the **actual bundled `client/core` detector** — not a model of it —
+against a live `<video>` in the pinned container. All eight assertions pass:
+
+| assertion | result |
+|---|---|
+| steady playback broadcasts nothing | 40/40 samples `idle` |
+| a genuine user seek IS broadcast | one `seek` |
+| a server-applied correction is NOT rebroadcast | 0 broadcasts — the two-diff rule works on a real element |
+| a buffering stall is detected as a stall | 20 `stall` samples |
+| a stall broadcasts nothing | 0 |
+| a never-audible hidden tab is detected as suspension | 6 `suspended` samples |
+| suspension broadcasts nothing | 0 |
+| resuming from suspension broadcasts nothing | 0 |
+
+Run it with `mise run probe`.
 
 ## 6. Reproducing
 

@@ -1,0 +1,54 @@
+[
+  {
+    "label": "A muted before play (never audible)",
+    "src": "/media/test.mp4",
+    "muteBeforePlay": true,
+    "muteAfterPlay": false,
+    "hidden": "hidden",
+    "ctBefore": 2.96,
+    "ctAfter": 2.97,
+    "advancedS": 0.01,
+    "pausedAfter": true,
+    "mutedAfter": true,
+    "backgroundPaused": true
+  },
+  {
+    "label": "B audible, then muted, then hidden",
+    "src": "/media/test.mp4",
+    "muteBeforePlay": false,
+    "muteAfterPlay": true,
+    "hidden": "hidden",
+    "ctBefore": 3.5,
+    "ctAfter": 10.22,
+    "advancedS": 6.72,
+    "pausedAfter": false,
+    "mutedAfter": true,
+    "backgroundPaused": false
+  },
+  {
+    "label": "C no audio track at all",
+    "src": "/media/noaudio.mp4",
+    "muteBeforePlay": false,
+    "muteAfterPlay": false,
+    "hidden": "hidden",
+    "ctBefore": 3,
+    "ctAfter": 3.01,
+    "advancedS": 0.01,
+    "pausedAfter": true,
+    "mutedAfter": false,
+    "backgroundPaused": true
+  },
+  {
+    "label": "D audible throughout",
+    "src": "/media/test.mp4",
+    "muteBeforePlay": false,
+    "muteAfterPlay": false,
+    "hidden": "hidden",
+    "ctBefore": 2.96,
+    "ctAfter": 9.67,
+    "advancedS": 6.72,
+    "pausedAfter": false,
+    "mutedAfter": false,
+    "backgroundPaused": false
+  }
+]

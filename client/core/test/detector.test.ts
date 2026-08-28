@@ -97,7 +97,7 @@ describe('SeekDetector', () => {
     assert.equal(d.seekDetections, 0, 'the stall gap was rebroadcast as a seek on resume');
   });
 
-  test('hidden + muted + paused is browser suspension, not a user pause', () => {
+  test('hidden + never-audible + paused is browser suspension, not a user pause', () => {
     const d = new SeekDetector(hidden);
     const frames = [
       ...Array.from({ length: 10 }, (_, i) => ({ positionS: 10 + i * 0.1, muted: true })),
@@ -126,6 +126,24 @@ describe('SeekDetector', () => {
     assert.equal(d.suspensions, 0);
   });
 
+  test('a tab that WAS audible is exempt, so a later pause there is user intent', () => {
+    // Measured: Chrome exempts a playback that has produced sound, permanently.
+    // Muting afterwards does not bring the exemption back down, so a pause in
+    // that state is a real one.
+    const d = new SeekDetector(hidden);
+    const frames = [
+      // audible for a while...
+      ...Array.from({ length: 10 }, (_, i) => ({ positionS: 10 + i * 0.1, muted: false })),
+      // ...then muted, then paused while hidden
+      ...Array.from({ length: 10 }, (_, i) => ({
+        positionS: 11, paused: true, muted: true, expectedS: 11 + i * 0.1,
+      })),
+    ];
+    const kinds = run(d, frames);
+    assert.equal(d.suspensions, 0, 'an exempt tab was treated as browser-suspended');
+    assert.ok(kinds.includes('playstate'), 'a genuine pause was swallowed');
+  });
+
   test('an unmuted hidden pause is user intent -- media keys reach hidden tabs', () => {
     const d = new SeekDetector(hidden);
     const frames = [
@@ -137,6 +155,17 @@ describe('SeekDetector', () => {
     const kinds = run(d, frames);
     assert.ok(kinds.includes('playstate'),
       'document.hidden alone was used to suppress; media-key pauses would be lost');
+  });
+
+  test('a video sitting at its end is not a stall', () => {
+    const d = new SeekDetector(visible);
+    // Frozen currentTime at the duration: the stall signature minus the reason.
+    // Gating the room on this would hold it for a member who has finished.
+    const frames = Array.from({ length: 30 }, (_, i) => ({
+      positionS: 600, durationS: 600, paused: true, expectedS: 600 + i * 0.1,
+    }));
+    run(d, frames);
+    assert.equal(d.stallDetections, 0, 'the end of the video was reported as buffering');
   });
 
   test('slope measures the rate error and is immune to a constant offset', () => {

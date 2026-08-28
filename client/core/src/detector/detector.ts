@@ -23,11 +23,14 @@ interface Sample { readonly t: number; readonly res: number }
  *    player: `readyState` 4 -> 2, buffer draining, `waiting` fired. syncplay
  *    ships without this guard.
  *
- *  - **Suspension guard.** Chrome pauses a *muted, hidden* tab and fires a real
- *    `pause`. Broadcast naively, one member switching tabs pauses the room --
- *    and resumes it on return. `document.hidden` alone is not enough to detect
- *    this: media keys deliver genuine user pauses to hidden tabs, so the
- *    `muted` conjunct is what separates the browser's power saving from intent.
+ *  - **Suspension guard.** Chrome pauses a hidden tab's video and fires a real
+ *    `pause` -- but only when that playback has **never been audible**. Measured
+ *    across four conditions: muted-before-play pauses, no-audio-track pauses,
+ *    audible-then-muted does NOT, audible-throughout does NOT. So the trigger is
+ *    "never made a sound", not "muted right now". Broadcast naively, one member
+ *    who started muted and switched tabs pauses the whole room -- and resumes it
+ *    on return. `document.hidden` alone cannot be the test either: media keys
+ *    deliver genuine user pauses to hidden tabs.
  */
 export class SeekDetector {
   private readonly cfg: DetectorConfig;
@@ -37,6 +40,12 @@ export class SeekDetector {
   private haveEvalPos = false;
   private stallSuspected = false;
   private suspended = false;
+  /**
+   * Whether this playback has ever actually produced sound. Chrome exempts a
+   * tab that has from background pausing, permanently -- muting it afterwards
+   * does not bring the exemption back down.
+   */
+  private everAudible = false;
   private lastPaused: boolean | null = null;
   private history: Sample[] = [];
 
@@ -70,8 +79,13 @@ export class SeekDetector {
     const posMs = s.positionS * 1000;
 
     // --- suspension: the browser paused us, we did not ---------------------
+    if (!s.paused && !s.muted) this.everAudible = true;
     const wasSuspended = this.suspended;
-    this.suspended = s.paused && s.muted && this.isHidden() && s.readyState >= this.cfg.minReadyState;
+    // readyState 4 with a full buffer is what separates this from buffering,
+    // where readyState drops below 3 and the buffer drains.
+    this.suspended =
+      s.paused && this.isHidden() && !this.everAudible &&
+      s.readyState >= this.cfg.minReadyState;
     if (this.suspended) {
       if (!wasSuspended) this.suspensions++;
       this.lastKnownPos = posMs;
@@ -89,11 +103,14 @@ export class SeekDetector {
     }
 
     // --- stall inference ---------------------------------------------------
+    // A video sitting at its end has a frozen currentTime too. That is not a
+    // stall and the room must not gate on it -- the member has finished.
+    const ended = s.durationS > 0 && s.positionS >= s.durationS - 0.25;
     const frozen =
-      this.haveEvalPos && !s.paused &&
+      !ended && this.haveEvalPos && !s.paused &&
       posMs - this.lastEvalPos < this.cfg.evalIntervalMs * 0.5;
     const wasStalled = this.stallSuspected;
-    this.stallSuspected = s.readyState < this.cfg.minReadyState || frozen;
+    this.stallSuspected = !ended && (s.readyState < this.cfg.minReadyState || frozen);
     this.lastEvalPos = posMs;
     this.haveEvalPos = true;
 

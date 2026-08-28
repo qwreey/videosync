@@ -102,10 +102,13 @@ Chrome **pauses a muted video when its tab is hidden**, firing a real `pause` ev
 `play` again when the tab is shown (measured: `docs/BROWSER-FINDINGS.md` §5). Broadcast naively,
 one member switching tabs pauses the whole room, and switching back resumes it.
 
-> A `play`/`pause` arriving while `document.hidden && video.muted` is browser suspension. Never
-> broadcast it; mark the member **suspended** and suppress the paired event on re-show.
+> A `pause` while `document.hidden`, on a playback that has **never been audible**, with
+> `readyState >= 3` and a full buffer, is browser suspension. Never broadcast it; mark the member
+> **suspended** and suppress the paired `play` on re-show.
 
-`document.hidden` alone is not enough — media keys deliver genuine user pauses to hidden tabs.
+The trigger is "never made a sound", not "currently muted" — measured across four conditions
+(`docs/BROWSER-FINDINGS.md` §5). `document.hidden` alone is not enough either: media keys deliver
+genuine user pauses to hidden tabs.
 
 A suspended member is **absent, not buffering**: the §6 readiness gate must not hold the room for
 them. Distinguish by the observable state — buffering is `paused === false`, `readyState < 3`,

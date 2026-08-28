@@ -24,6 +24,15 @@ dir = "{{config_root}}/server"
 run = "go run ./cmd/simharness"
 
 [tasks.test]
-description = "Run all Go tests"
-dir = "{{config_root}}/server"
-run = "go test ./..."
+description = "Run all tests (Go simulation + TS client core)"
+run = ["cd {{config_root}}/server && go test ./...", "cd {{config_root}}/client/core && npm test"]
+
+[tasks.probe]
+description = "Run the Risk-B browser probes in the pinned container"
+dir = "{{config_root}}/harness/browser"
+run = "./run.sh node probe-detector.mjs"
+
+[tasks.build-core]
+description = "Bundle the client core for the browser harness"
+dir = "{{config_root}}/client/core"
+run = "npm run build:probe"
