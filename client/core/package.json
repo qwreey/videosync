@@ -1,0 +1,17 @@
+{
+  "name": "@videosync/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Platform-agnostic sync core: adapters, detector, clock, protocol. Must not import any browser-extension API -- both the extension and the userscript shim depend on this.",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:probe": "esbuild src/probe-entry.ts --bundle --format=iife --global-name=VSCore --outfile=../../harness/browser/dist/core.js",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "esbuild": "^0.24.0"
+  }
+}

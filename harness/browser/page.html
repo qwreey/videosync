@@ -4,6 +4,7 @@
 <body>
 <video id="v" width="320" height="180" playsinline></video>
 <script src="/media/hls.js"></script>
+<script src="/dist/core.js"></script>
 <script>
 // Everything the driver needs is exposed on window.probe and returns JSON.
 // Kept in the page (not injected per-call) so sampling loops are not disturbed
@@ -223,6 +224,42 @@ Object.assign(window.probe, {
       rvfc: rvfcOn ? timerStats(rvfc) : { unsupported: true },
     };
   },
+});
+// ---- the REAL detector, attached to the REAL element ---------------------
+// Everything above this line is instrumentation. This is the shipping code
+// path from client/core, bundled and running against a live <video>.
+Object.assign(window.probe, {
+  attachDetector() {
+    const h = VSCore.attach(v);
+    h.start(100);
+    return { attached: true, counters: h.counters() };
+  },
+  detectorReset() { window.VSProbe.reset(); window.VSProbe.syncAnchorToElement(); return true; },
+  detectorCounters() { return window.VSProbe.counters(); },
+  detectorBroadcasts() { return window.VSProbe.broadcast.map(b => ({ t: b.t, kind: b.o.kind })); },
+  detectorKinds() {
+    const seen = {};
+    for (const r of window.VSProbe.trace) seen[r.kind] = (seen[r.kind] || 0) + 1;
+    return seen;
+  },
+  detectorTrace(n = 20) { return window.VSProbe.trace.slice(-n); },
+  syncAnchor() { window.VSProbe.syncAnchorToElement(); return true; },
+  // Simulate the room moving without us: the anchor jumps, we follow by
+  // seeking. The two-diff test must NOT call that a user seek.
+  async serverCorrection(deltaS) {
+    const target = v.currentTime + deltaS;
+    window.VSProbe.setAnchor(target * 1000, v.paused);
+    await window.VSProbe.adapter.seekTo(target);
+    window.VSProbe.detector.rebaseline(target);
+    return { target };
+  },
+  async userSeek(deltaS) {
+    // A real user drags the scrubber: the element moves and the room does not.
+    const target = v.currentTime + deltaS;
+    await window.VSProbe.adapter.seekTo(target);
+    return { target };
+  },
+  setMuted(m) { v.muted = m; return v.muted; },
 });
 window.__ready = true;
 </script>

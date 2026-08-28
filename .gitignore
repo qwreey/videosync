@@ -43,3 +43,6 @@ web-ext-artifacts/
 
 # Generated test media (regenerate with ffmpeg, see docs/BROWSER-FINDINGS.md)
 harness/browser/media/
+
+client/core/node_modules/
+harness/browser/dist/
