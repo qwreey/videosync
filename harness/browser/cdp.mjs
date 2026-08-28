@@ -21,7 +21,7 @@ export async function launch({ port = 9333, extraFlags = [], headful = false } =
     ...extraFlags,
     'about:blank',
   ];
-  const proc = spawn('chromium', flags, {
+  const proc = spawn(process.env.CHROME_BIN || 'chromium', flags, {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, ...(headful ? { DISPLAY: process.env.DISPLAY || ':99' } : {}) },
   });

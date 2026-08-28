@@ -84,30 +84,53 @@ Three consequences for the client:
 1. **A tab playing audible media is exempt from timer throttling.** That is the normal watch-party
    case, so the ~10 Hz local evaluation loop that every client-authority claim depends on
    (POC-FINDINGS §19, third gap) survives in the case that matters most.
-2. **A hidden muted tab is clamped to 1 Hz** — the feared case, and it is real.
+2. **A hidden muted tab is clamped to 1 Hz** — the feared case, and it is real. But see §5: such a
+   tab is also *paused by the browser*, so the 1 Hz clamp matters less than it first appears — the
+   client is not behind, it is absent.
 3. **Worker timers are not throttled even then.** This is now measured rather than assumed, and it
    makes the local loop implementable as a Worker-driven tick for the muted case.
 
-## 5. Unresolved: does a hidden *muted* tab keep playing at all?
+## 5. RESOLVED — Chrome *pauses* a muted video when its tab is hidden
 
-Two runs disagree and the contradiction is not yet explained.
+The round-1 contradiction is settled, and the answer is more consequential than either
+alternative. `probe-throttle3` was simply wrong: it never verified that the tab had actually
+become hidden. `probe-throttle5` asserts `visibilityState === "hidden"` on every row.
 
-- `probe-throttle4` (fresh browser per case, sampled from the driver every 5 s): a hidden muted
-  HLS tab advanced **0.0 s over 85 s**, ratio 0.00 — while `readyState` stayed **4** and the buffer
-  stayed **full at 11 s**. Audible: perfect 1.00.
-- `probe-throttle3` (one browser, cases in sequence, 45 s dwell): the same hidden muted HLS case
-  advanced **45.0 s over 45 s**, ratio 1.00.
+| tab | hidden | `readyState` | buffer | events on hide | on re-show |
+|---|---|---|---|---|---|
+| **muted** | **`paused` becomes `true`** | 4 | full (11.5 s) | **`pause`** | resumes itself, **`play` + `playing`** |
+| audible | keeps playing | 4 | full | none | none |
 
-If the `throttle4` result is the real one it matters a great deal, because that freeze is
-**not a buffering stall and must not be treated as one**: `readyState` 4 with a full buffer and no
-`waiting` event, versus §1's `readyState` 2 with an empty buffer and a `waiting` event. The correct
-response differs — a buffering client should gate the room; a hidden suspended client should not,
-or the room waits forever for someone who is not watching.
+Identical for MSE (hls.js) and native progressive playback, so this is a media-pipeline policy,
+not an MSE/JS-timer effect. Unmuting *while hidden* does not rescue it — it stays paused until the
+tab is shown again.
 
-The two are distinguishable by `readyState` and `bufferedAhead`, so the detector can tell them
-apart. But **which behaviour is real is not settled**, and no design should be built on either
-until it is. Next step: isolate what differs between the two runs (fresh vs reused browser,
-dwell length, tab-activation history).
+### This is a protocol bug, not a curiosity
+
+The browser emits a **genuine `pause` event**, indistinguishable at the DOM level from the user
+pressing pause. A naive client broadcasts it, and:
+
+- **one member backgrounding a muted tab pauses the entire room**;
+- when they switch back, the browser emits `play` and **the room resumes** — even if it had been
+  deliberately paused by someone else.
+
+Both directions are wrong, and both would ship without this measurement. Note that the stall
+detector (§1) is *not* the defence here: it only treats a freeze while `paused === false` as an
+anomaly, and this freeze sets `paused === true`, so it passes straight through as user intent.
+
+### The rule
+
+> A `play` or `pause` event that arrives while `document.hidden` is true **and** `video.muted` is
+> true is browser-initiated suspension, never user intent. Do not broadcast it. Mark the member
+> suspended, and suppress the paired event when the tab is shown again.
+
+`document.hidden` alone is not sufficient: hardware media keys and the Media Session API can
+deliver *genuine* user pauses to a hidden tab. The `muted` conjunct is what distinguishes the
+browser's own power-saving pause from a real one.
+
+A suspended member is **absent, not buffering** — the readiness gate must not hold the room for
+them (§6 of SYNTHESIS assumes buffering is why a member is behind). This is a membership state,
+not a timing state.
 
 ## 6. Reproducing
 

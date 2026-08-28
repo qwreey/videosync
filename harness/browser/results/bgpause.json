@@ -1,0 +1,55 @@
+{
+  "chromium": "Chrome/151.0.7922.173",
+  "cases": [
+    {
+      "muted": true,
+      "visible": {
+        "ct": 2.46,
+        "paused": false
+      },
+      "hidden": {
+        "ct": 2.47,
+        "paused": true,
+        "rs": 4,
+        "ahead": 11.5
+      },
+      "eventsOnHide": [
+        "pause"
+      ],
+      "unmuteRescue": {
+        "ct": 2.47,
+        "paused": true
+      },
+      "reshown": {
+        "ct": 5.18,
+        "paused": false
+      },
+      "eventsOnShow": [
+        "play",
+        "playing"
+      ],
+      "resumedByItself": true
+    },
+    {
+      "muted": false,
+      "visible": {
+        "ct": 2.41,
+        "paused": false
+      },
+      "hidden": {
+        "ct": 5.62,
+        "paused": false,
+        "rs": 4,
+        "ahead": 10.4
+      },
+      "eventsOnHide": [],
+      "unmuteRescue": null,
+      "reshown": {
+        "ct": 8.33,
+        "paused": false
+      },
+      "eventsOnShow": [],
+      "resumedByItself": true
+    }
+  ]
+}
