@@ -30,6 +30,9 @@ Do not re-derive a decision that SYNTHESIS already argued. Do not silently contr
    readiness-gate (§3, §4c, §6).
 6. No host. Server-assigned monotonic `seq` + per-room mutex resolve conflicts (§5).
 
+**Start here:** `docs/STATE.md` says what is done, what is next, and which earlier claims were
+corrected. Read it before picking up work.
+
 ## Traps that cost real time to rediscover
 
 - **`seq`/ack collision.** The server excludes the sender from the state *broadcast* but MUST still
@@ -47,6 +50,18 @@ Do not re-derive a decision that SYNTHESIS already argued. Do not silently contr
 - **MV3 bans remote code.** Adapters ship in the bundle; the server may send JSON only.
 - **MAIN and ISOLATED worlds share `window`/origin**, so `event.origin`/`event.source` authenticate
   nothing in the bridge. Per-load nonce is mandatory.
+- **The browser pauses a hidden tab whose playback was never audible**, firing a real `pause`.
+  Broadcast naively it pauses the whole room. The trigger is "never made a sound", NOT "currently
+  muted" — a tab that was audible is exempt for its lifetime. (`BROWSER-FINDINGS.md` §5.)
+- **Media does not load in a hidden tab at all** — `loadedmetadata` never fires, so preparation
+  hangs rather than failing.
+- **A client on a stale anchor reports `residual == 0`** while arbitrarily out of position, because
+  the residual is measured against that same stale anchor. `lastAppliedSeq` is the only signal;
+  resend state when it lags. Worth 115 603 ms -> 250 ms.
+- **Rank strategies on `anchorErr`, never on inter-client spread** — spread rewards a strategy that
+  does nothing.
+- **In-buffer seeks are ~free; out-of-buffer seeks cost a segment fetch and rebuffer.** The choice
+  is about price, not about the size of the error.
 
 ## Layout
 
