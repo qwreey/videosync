@@ -218,7 +218,15 @@ offset only** (§4c).
 | `readyState < 3` or `bufferedAheadS < 1` | buffering | readiness gate | server → `gate` |
 | `suspended` | tab hidden, playback never audible; the browser paused it | nothing — the member is **absent**, not behind | — |
 
-Server → `{"t":"correct","mode":"seek","targetPositionMs":<n>,"when":<serverMs>,"seq":<current>}`
+Server → `{"t":"correct","mode":"seek","when":<serverMs>}` / `{"t":"correct","mode":"nudge","rate":<f>,"when":<serverMs>}`
+A `nudge` the client is already holding is **not sent** — a continuous control
+law recomputes a rate on every report, and re-stating it would put a `correct`
+on the wire at the report rate, each one firing a `ratechange` on the very
+element the detector is watching (measured: 17 nudges in a 20 s session, 4 after
+the fix). It is re-stated every `RATE_REFRESH` anyway, because `correct` is
+unicast and unacknowledged: if the one that set the rate was lost, nothing else
+would ever tell the client again.
+
 **Unicast. Does not change the anchor and does not consume a `seq`** — it is a judgement about one
 client, not a room state change. This is the distinction that keeps the feedback loop out (§4c).
 
@@ -300,6 +308,16 @@ idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control th
 Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"..."}` returns
 `{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`.
 
+Both endpoints send **CORS** headers, and this is not a nicety: a userscript or
+a content script always runs on the OTT site's origin and never on the sync
+server's, so *every* API call is cross-origin. Without them the browser fetches
+the response and then refuses to let the script read it — which surfaces as a
+bare `TypeError: Failed to fetch` naming neither CORS nor the origin. With no
+`--allowed-origins` configured the header is `*`, which is safe because no
+credentials are involved: the room secret travels in the `hello` frame, never in
+a cookie. The WebSocket upgrade is **not** subject to CORS; it is governed by
+the `Origin` allowlist instead.
+
 Rotation:
 
 Client → `{"t":"rotate"}` — **any member may send it.**
@@ -352,6 +370,7 @@ client is `bad_frame`, because either would move room state without passing the 
 | `MAX_CHAT_LEN` | 320 bytes | chat truncation (cytube's value) |
 | `ROOM_IDLE_TTL` | 3 min | room deleted this long after its last member leaves |
 | `OUTBOX_DEPTH` | 64 frames | a member further behind than this is disconnected |
+| `RATE_REFRESH` | 5000 ms | re-state a rate the client should already hold, in case the `correct` was lost |
 
 ## Open, not yet settled
 

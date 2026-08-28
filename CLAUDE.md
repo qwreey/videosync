@@ -14,6 +14,7 @@ the media. If a request seems to want capture/relay, it is out of scope — say 
 | `docs/DECISIONS.md` | **Locked constraints.** Inputs, not open questions. Changing one needs an explicit decision from the user. |
 | `research/SYNTHESIS.md` | **The design.** 9 reference implementations distilled per sub-problem, with the reasoning and citations. The single most useful file in the repo. |
 | `docs/PROTOCOL.md` | Wire protocol spec. Derived from SYNTHESIS; keep them consistent. |
+| `docs/BROWSER-FINDINGS.md` | What a real browser actually does. §7 is the full-stack run. |
 | `research/*.md` | Per-reference deep dives, cited `file:line` into `refs/`. |
 
 Do not re-derive a decision that SYNTHESIS already argued. Do not silently contradict DECISIONS.
@@ -64,6 +65,18 @@ corrected. Read it before picking up work.
   alignment and `SkippedMs` (forward displacement imposed on a member = media they never saw) for
   what the room cost somebody. Ranking the readiness gate on `anchorErr` alone would have concluded
   it does nothing (10 ms vs 65 ms) while it was preventing 14.5 s of skipped media.
+- **Every millisecond field on the wire is an `int64`.** `performance.now()` is fractional; sending
+  `{"t":"time","t0":874.47}` gets `bad_frame` and the session stays joined while the clock never
+  settles and no correction ever fires. Round at the wire boundary.
+- **A userscript or content script is ALWAYS on a different origin from the server**, so every
+  `/api/rooms` call is cross-origin and needs CORS. Without it the browser succeeds at the request
+  and then refuses to let the script read it — `TypeError: Failed to fetch`, naming nothing.
+  The WebSocket upgrade is not subject to CORS; it uses the `Origin` allowlist.
+- **`@grant none` puts a userscript in the page context**, where the site's CSP governs its
+  WebSocket. No OTT site's `connect-src` lists your self-hosted server. Grant any GM API.
+- **Exact-value assertions on one seed are coin flips.** Two regression tests asserted "exactly 0"
+  and had been passing on seed 5's luck; the property holds in ~2/3 of seeds either way. Assert the
+  comparison, average over seeds, keep the control (POC-FINDINGS §39).
 - **A `hello` never changes room state.** Only the first member's `mediaKey` names the media, and
   only while the room is empty. Any later change is a `media` command — it takes a `seq` and
   reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.

@@ -13,7 +13,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Client core (adapter, detector, clock) | **done and browser-validated** — `client/core/` |
 | Sync server (Go, WebSocket, rooms) | **done** — `server/cmd/videosyncd` |
 | Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
-| Userscript shim | **not started** ← next |
+| Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
+| Live provider smoke test (YouTube, Laftel) | **not started** ← next |
 | Extension shim | not started (deliberately last) |
 
 ## What exists and works
@@ -35,42 +36,52 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   simulation's tests all passed while the `ack`-has-no-`when` bug was present.
 - `server/cmd/videosyncd` — the binary. `mise run server`. `POST /api/rooms`, `GET /ws`,
   `GET /healthz`.
-- `client/core` — `Html5Adapter`, `SeekDetector`, `ServerClock`. Written without TS parameter
-  properties so `node --experimental-strip-types` runs it with no build step. 11 unit tests.
+- `client/core` — `Html5Adapter`, `SeekDetector`, `ServerClock`, `SyncEngine` (the protocol client),
+  media-key normalization, element resolution, `SwappableAdapter`. Written without TS parameter
+  properties so `node --experimental-strip-types` runs it with no build step. 51 unit tests, plus
+  5 end-to-end tests that drive real engines over real WebSockets against a real `videosyncd`
+  (`npm run test:e2e`, or `mise run test-e2e`).
+- `client/userscript` — the shipping Tampermonkey bundle (`npm run build` -> 54 kB, one IIFE).
 - `harness/browser` — pinned container (chromium + ffmpeg + Xvfb), a media server that can starve
-  the player on demand, and probes. `mise run probe` runs the end-to-end detector validation.
+  the player on demand, and probes. `mise run probe` runs the detector validation;
+  `probe-userscript.mjs` runs the whole stack in two real browsers (17/17).
 
 `mise run test` runs the Go and TS suites.
 
 ## The next task, concretely
 
-**The userscript shim** (`client/userscript/`). It is the cheaper of the two shipping targets and
-carries no MV3 service-worker risk, so it validates the adapter layer at the lowest cost — it is
-also a shipping target in its own right (D5), not a spike.
+**A live smoke test on YouTube and Laftel.** Everything is validated against a
+`<video>` we control; nothing has met a provider that has its own opinions.
 
-1. A Tampermonkey bundle that pulls in `client/core` (adapter, detector, clock) and adds the
-   protocol client: `hello`, min-RTT `time` sampling, scheduled application of `state`/`ack` at
-   `when`, `hb` reporting, and applying `correct`.
-2. Point it at a local `videosyncd` and a local page first (`harness/browser/page.html` already
-   serves a real `<video>` with a controllable stall), then at YouTube, then at Laftel.
-3. **Measure `playbackRate` on both providers while you are there** — it is the open question the
-   whole servo design leans on, and the userscript is the cheapest place to answer it.
-4. Only then the extension.
+1. Install `client/userscript/dist/videosync.user.js` in Tampermonkey, run
+   `videosyncd` somewhere both browsers can reach, and open the same YouTube
+   video in two profiles.
+2. The two questions to answer, in order of how much they would cost to be
+   wrong about:
+   - **Does the provider reset `playbackRate`?** MSE-level it is confirmed safe
+     (BROWSER-FINDINGS §7: asked 1.1, held 1.1). YouTube and Laftel wrap their
+     own player logic around the element and could reset it on their own timer.
+     If they do, `AdapterCapabilities.supportsPlaybackRateNudge` goes false for
+     that provider and the correction law needs a measured seek-only path.
+   - **Does writing `currentTime` fight the provider's own seek handling?**
+     Laftel rests on one blog post; YouTube's player will re-render its scrubber.
+3. Then the things a controlled page cannot show: ads interrupting playback,
+   the SPA router replacing the element mid-session (`SwappableAdapter` handles
+   the mechanics, but the *media key* changing under a joined room does not),
+   and a site whose CSP or extension policy blocks the socket despite `@grant`.
+4. Record each as a measurement with a number in `docs/BROWSER-FINDINGS.md`, not
+   as an inference from a capability flag.
 
-Two things the client must get right that the server cannot enforce:
-
-- **Schedule against `ack.when` exactly like `state.when`.** The sender of a command is excluded
-  from the broadcast, not from the scheduling. Getting this wrong is invisible to the sender and
-  costs `CMD_DELAY` of divergence for everyone else.
-- **Never let `applyingRemote` be load-bearing.** Echo suppression is structural (the two-diff
-  test); the flag is a backstop only. syncwatch shipped a load-bearing timeout flag and it
-  deadlocks silently.
+Only after that: the extension (MV3 + Firefox), which is deliberately last
+because it is the highest platform risk and the userscript already ships.
 
 ## Open questions that block things
 
-- **Is `playbackRate` nudging safe on the providers we target?** The whole servo design leans on
-  it. Unmeasured on Laftel/YouTube. If it is not safe there, the correction law needs a seek-only
-  fallback path and the strategy comparison must be redone.
+- **Is `playbackRate` nudging safe on the providers we target?** **Half answered.** At the MSE
+  level it is confirmed: asked for 1.1 on hls.js with audio, the element held exactly 1.1 and
+  advanced 3.276 s in 3.0 s (BROWSER-FINDINGS §7). What is still open is whether YouTube's and
+  Laftel's own player code resets it. If either does, that provider's
+  `supportsPlaybackRateNudge` goes false and needs a measured seek-only path.
 - **Laftel** rests on one blog post plus the generic-adapter assumption. Needs a live smoke test
   with a real session.
 - **Firefox MV3 holding a WebSocket** — unverified, different lifetime model from Chrome.

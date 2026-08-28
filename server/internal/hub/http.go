@@ -36,13 +36,48 @@ func DefaultHTTPConfig() HTTPConfig {
 	}
 }
 
+// cors makes the JSON endpoints reachable from a page on another origin.
+//
+// This is not a nicety: a userscript or an extension content script always runs
+// on the OTT site's origin, never on the sync server's, so EVERY call to
+// /api/rooms is cross-origin. Without these headers the browser fetches the
+// response and then refuses to let the script read it -- which surfaces as a
+// bare "TypeError: Failed to fetch" with no indication that the request
+// actually succeeded. (The WebSocket upgrade is not subject to CORS at all; it
+// is governed by the Origin allowlist above instead.)
+//
+// No credentials are involved -- the room secret travels in the `hello` frame,
+// never in a cookie -- so a wildcard is safe when no allowlist is configured.
+func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		switch {
+		case len(allowed) == 0:
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		case origin != "" && originAllowed(allowed, origin):
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			// The response varies by Origin, so a shared cache must not serve
+			// one origin's response to another.
+			w.Header().Add("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "600")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // Handler returns the server's whole HTTP surface.
 func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", cors(cfg.AllowedOrigins, func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true, "rooms": h.Rooms(), "serverMs": h.clock.NowMs()})
-	})
-	mux.HandleFunc("POST /api/rooms", func(w http.ResponseWriter, r *http.Request) {
+	}))
+	mux.HandleFunc("POST /api/rooms", cors(cfg.AllowedOrigins, func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			MediaKey string `json:"mediaKey"`
 		}
@@ -54,7 +89,12 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 			return
 		}
 		writeJSON(w, 201, map[string]any{"roomId": id, "secret": secret})
-	})
+	}))
+	// Preflight. A userscript that sets Content-Type: application/json turns
+	// the room-create POST into a preflighted request; one that does not, does
+	// not. Answer either way rather than depend on the client's habits.
+	mux.HandleFunc("OPTIONS /api/rooms", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("OPTIONS /healthz", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		h.serveWS(w, r, cfg)
 	})

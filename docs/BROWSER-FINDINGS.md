@@ -171,16 +171,100 @@ against a live `<video>` in the pinned container. All eight assertions pass:
 
 Run it with `mise run probe`.
 
+## 7. The whole stack, in two real browsers (`probe-userscript.mjs`)
+
+Everything before this validated one layer against a model of the others: the
+Go harness simulated clients, the engine tests scripted a transport, the
+end-to-end Node test used a fake player. This run has no models left in it —
+the shipped userscript bundle, byte for byte as a user would install it, in two
+**separate** Chromium processes, on real MSE media, against a real
+`videosyncd`.
+
+Separate processes rather than two tabs, on purpose: a background tab is
+throttled and — if its playback was never audible — paused outright by the
+browser (§5), so two tabs would have re-measured §5 instead of measuring sync.
+Non-overlapping windows plus `--disable-renderer-backgrounding` keep both
+renderers foreground-live. That is a deliberate blind spot of this probe and
+not a claim that backgrounding does not matter.
+
+**17/17 checks pass.** `harness/browser/results/userscript-sync.json`.
+
+| what | measured |
+|---|---|
+| two players after 4 s of synced playback | **20 ms apart** (CDP sampling skew 1 ms) |
+| loopback `bestRTT` through the real clock exchange | 0.6 ms |
+| a pause on the element itself reaching the other browser | yes, and **0 commands** echoed back |
+| a scrubber drag propagating | yes, other browser landed at 60.00 s |
+| the readiness gate holding a `play` for a starved member | held; released on recovery |
+| frames the server rejected as malformed | 0 |
+
+### `playbackRate` is safe on a real MSE player — the servo's premise holds
+
+The open question the whole servo design leans on. Asked for **1.1**; the
+element **held exactly 1.1** and advanced **3.276 s in 3.0 s of wall clock**
+(implied 1.092×) on hls.js/MSE with audio, with no rate reset and no audio
+dropout.
+
+Measured **before joining a room**, deliberately. The first version of this
+probe measured it while joined and read `0.994` for a requested `1.1` — the
+servo was nudging the rate at the same time. It was measuring the corrector,
+not the player.
+
+> Scope: this answers the *MSE-level* question, which is the one the design
+> depends on. YouTube and Laftel wrap their own player logic around the element
+> and could still reset the rate; that needs a real session and is still open.
+
+### A cross-origin `fetch` was the first thing that broke
+
+`POST /api/rooms` from the page failed with a bare `TypeError: Failed to fetch`.
+The server had no CORS headers, and a userscript **always** runs on the OTT
+site's origin, never on the sync server's — so every API call is cross-origin,
+always. The request had actually succeeded; the browser just refused to let the
+script read the response.
+
+Only a real browser finds this. Every Go test passed, every Node test passed,
+and the failure message named neither CORS nor the origin. Fixed with an
+`Access-Control-Allow-Origin` that honours the same allowlist as the WebSocket
+upgrade, plus preflight. (The WebSocket handshake itself is not subject to
+CORS — it is governed by the `Origin` allowlist instead.)
+
+### The corrector was shouting a rate the client already had
+
+First run: **17 nudges to one member in a 20 s session**. A continuous control
+law recomputes a rate on every report, so the server was sending a `correct` at
+the report rate forever — and each one fires a `ratechange` on the very element
+the detector is watching. Suppressing a rate the client is already holding
+(within 0.001, re-stated every 5 s in case the unacknowledged `correct` that set
+it was lost) took the same session to **4 and 5 nudges**, with the two players
+still 20 ms apart.
+
 ## 6. Reproducing
 
+Everything runs in the pinned container — the host's package state is not
+persistent, so anything installed with `pacman` disappears on a host update and
+takes the reproducibility of every number above with it.
+
 ```
-pacman -S --needed chromium ffmpeg xorg-server-xvfb
-cd harness/browser && node server.mjs &          # media + stall control
-Xvfb :99 -screen 0 1280x800x24 &
-DISPLAY=:99 node probe-throttle2.mjs             # headful: real throttling
-node measure.mjs                                 # stall signature + seek cost
-node probe-seekcost.mjs                          # seek cost vs segment delay
-node probe-autoplay.mjs                          # autoplay policy
+docker build -t videosync-browser:latest harness/browser
+cd harness/browser
+./run.sh node probe-detector.mjs        # the detector against a real element
+./run.sh node measure.mjs               # stall signature + seek cost
+./run.sh node probe-seekcost.mjs        # seek cost vs segment delay
+./run.sh node probe-autoplay.mjs        # autoplay policy
+./run.sh node probe-throttle4.mjs       # headful: real throttling
+./run.sh node probe-bgpause2.mjs        # the four never-audible conditions
 ```
 
-Media regenerates with the two `ffmpeg` commands in the repo history; `media/` is gitignored.
+The full-stack run (§7) needs two artifacts staged into `harness/browser/dist/`
+first, because the container has no Go toolchain and does not build the client:
+
+```
+cd server && go build -o ../harness/browser/dist/videosyncd ./cmd/videosyncd
+cd ../client/userscript && npm run build && cp dist/videosync.user.js ../../harness/browser/dist/
+cd ../../harness/browser && ./run.sh node probe-userscript.mjs
+```
+
+`DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
+The container needs `--shm-size=1g`; Chrome's renderer hangs on the default
+64 MB `/dev/shm`. Test media regenerates itself on first run via `ffmpeg`;
+`media/` and `dist/` are gitignored because both are derived, not source.

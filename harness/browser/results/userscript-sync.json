@@ -1,0 +1,126 @@
+{
+  "checks": [
+    {
+      "name": "the userscript loaded and found the element in both browsers",
+      "ok": true
+    },
+    {
+      "name": "both are playing real MSE media",
+      "ok": true,
+      "detail": "duration 120.0s"
+    },
+    {
+      "name": "both derived the same mediaKey",
+      "ok": true,
+      "detail": "127.0.0.1:/sync-page.html"
+    },
+    {
+      "name": "playbackRate is honoured and holds on a real MSE player",
+      "ok": true,
+      "detail": "rate stayed 1.1, advanced 3.28s in 3s (implied 1.092x)"
+    },
+    {
+      "name": "two browsers joined one room",
+      "ok": true,
+      "detail": "MzYbBUq50VTrBPHV4zVjiQ"
+    },
+    {
+      "name": "the clock settled from real round trips",
+      "ok": true,
+      "detail": "bestRTT 0.6000003814697266 ms"
+    },
+    {
+      "name": "a play by one member started both",
+      "ok": true
+    },
+    {
+      "name": "the two players stayed together",
+      "ok": true,
+      "detail": "20 ms apart (sampling skew 1 ms), a=23.940s b=23.920s"
+    },
+    {
+      "name": "the sender scheduled its own command against the ack",
+      "ok": true,
+      "detail": "2 acks applied"
+    },
+    {
+      "name": "a pause on the element itself reached the other browser",
+      "ok": true
+    },
+    {
+      "name": "the receiver did not echo the pause back",
+      "ok": true,
+      "detail": "b sent 0 commands while applying a remote pause"
+    },
+    {
+      "name": "a scrubber drag on one element moved the other",
+      "ok": true,
+      "detail": "b at 60.00s"
+    },
+    {
+      "name": "the room saw the buffering member",
+      "ok": true
+    },
+    {
+      "name": "the gate held the play for the buffering member",
+      "ok": true,
+      "detail": "a is still paused"
+    },
+    {
+      "name": "the held play was released once the member recovered",
+      "ok": true
+    },
+    {
+      "name": "no frame was rejected as malformed",
+      "ok": true,
+      "detail": "a=0 b=0"
+    },
+    {
+      "name": "no correction storm",
+      "ok": true,
+      "detail": "seeks a=1 b=1, nudges a=4 b=5"
+    }
+  ],
+  "measurements": {
+    "rateNudge": {
+      "requested": 1.1,
+      "held": 1.1,
+      "advancedS": 3.276,
+      "impliedRate": 1.092
+    },
+    "loopbackRttMs": 0.6000003814697266,
+    "playbackGapMs": 20.2,
+    "samplingSkewMs": 1,
+    "senderAcks": 2,
+    "stats": {
+      "a": {
+        "cmdsSent": 5,
+        "statesApplied": 3,
+        "acksApplied": 5,
+        "correctionsSeek": 1,
+        "correctionsNudge": 4,
+        "nudgesUnsupported": 0,
+        "reportsSent": 21,
+        "timeSamples": 8,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0
+      },
+      "b": {
+        "cmdsSent": 0,
+        "statesApplied": 7,
+        "acksApplied": 0,
+        "correctionsSeek": 1,
+        "correctionsNudge": 5,
+        "nudgesUnsupported": 0,
+        "reportsSent": 50,
+        "timeSamples": 8,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0
+      }
+    }
+  }
+}

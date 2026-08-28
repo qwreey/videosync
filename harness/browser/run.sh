@@ -5,7 +5,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE=videosync-browser:latest
-exec docker run --rm -it \
+exec docker run --rm ${DOCKER_TTY:--it} \
   -v "$REPO:/work" \
   -p "${HOST_PORT:-8899}:8899" \
   --shm-size=1g \

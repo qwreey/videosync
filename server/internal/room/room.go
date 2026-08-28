@@ -48,6 +48,14 @@ type Member struct {
 	// room would never resume.
 	gateWaived bool
 	corr       corrState
+
+	// lastRate is the playbackRate we most recently told this client to hold,
+	// and when. A continuous control law recomputes a rate on every report, so
+	// without this the server sends a `correct` at the report rate forever --
+	// measured at 17 nudges in a 20 s browser session, each one firing a
+	// `ratechange` on the element the detector is watching.
+	lastRate   float64
+	lastRateAt int64
 }
 
 // corrState tracks whether our corrections are actually working on one client.
@@ -72,6 +80,9 @@ const (
 	// seekImprovementFrac: a seek "worked" if it cut the residual by at least
 	// this fraction.
 	seekImprovementFrac = 0.5
+	// rateRefreshMs re-states a rate the client should already be holding, in
+	// case the `correct` that set it was lost.
+	rateRefreshMs = 5000
 	// GateTimeoutMs drops a still-buffering member from the gate so the room
 	// can continue without them. Jellyfin's Waiting state has no such timeout.
 	GateTimeoutMs = 30000
@@ -113,6 +124,7 @@ type Room struct {
 	BiasLearned      int // clients whose clock bias we gave up on and absorbed
 	GateFrames       int // Gate broadcasts actually put on the wire
 	GatesWaived      int // members dropped from the gate by GATE_TIMEOUT
+	NudgesSuppressed int // rate commands the client was already holding
 	CmdsHeld         int // commands the gate held before applying
 	GateHoldMs       int64
 
@@ -445,7 +457,12 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		cs.residualAtSeek = eff.ResidualMs
 		r.send(id, Correct{Mode: "seek", When: now, Why: d.Why})
 	case vsync.ActionNudge:
+		if r.rateAlreadyHeld(m, d.Rate, now) {
+			r.NudgesSuppressed++
+			break
+		}
 		r.NudgesIssued++
+		m.lastRate, m.lastRateAt = d.Rate, now
 		r.send(id, Correct{Mode: "nudge", Rate: d.Rate, When: now, Why: d.Why})
 	case vsync.ActionGate:
 		if !m.gated && !m.gateWaived {
@@ -465,6 +482,11 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		// Clearing it while a nudge is still closing the gap cancels the
 		// correction that is working.
 		if d.ResetRate {
+			if r.rateAlreadyHeld(m, 1.0, now) {
+				r.NudgesSuppressed++
+				break
+			}
+			m.lastRate, m.lastRateAt = 1.0, now
 			r.send(id, Correct{Mode: "nudge", Rate: 1.0, When: now, Why: "in tolerance"})
 		}
 	}
@@ -536,6 +558,26 @@ func (r *Room) releaseGate(now int64) {
 
 // Held reports whether the gate is currently holding a command.
 func (r *Room) Held() bool { return r.held != nil }
+
+// rateAlreadyHeld reports whether telling this client to run at `rate` would
+// change nothing.
+//
+// The tolerance is one part in a thousand -- far finer than the 5% the rate
+// clamp allows, so no real correction is ever swallowed. The refresh exists
+// because a `correct` is unicast and unacknowledged: if the one that set the
+// rate was lost, nothing else would ever tell the client again. Re-stating it
+// every few seconds is cheaper than adding an acknowledgement, and cheaper
+// than putting the client's current rate in every heartbeat.
+func (r *Room) rateAlreadyHeld(m *Member, rate float64, now int64) bool {
+	if m.lastRateAt == 0 {
+		return false
+	}
+	if now-m.lastRateAt > rateRefreshMs {
+		return false
+	}
+	d := m.lastRate - rate
+	return d < 0.001 && d > -0.001
+}
 
 // Gated returns the ids currently held by the readiness gate, in stable order.
 func (r *Room) Gated() []string {

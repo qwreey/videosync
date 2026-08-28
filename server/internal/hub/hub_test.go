@@ -942,3 +942,71 @@ func TestOnlyTheFirstMemberNamesTheMedia(t *testing.T) {
 		t.Fatalf("anchor = %v", anchor)
 	}
 }
+
+func TestApiIsReachableCrossOrigin(t *testing.T) {
+	// A userscript or a content script always runs on the OTT site's origin,
+	// never on the sync server's, so EVERY /api/rooms call is cross-origin.
+	// Without these headers the browser fetches the response and then refuses
+	// to let the script read it -- surfacing as a bare "TypeError: Failed to
+	// fetch" with no hint that the request actually succeeded. Found by the
+	// Risk-B probe, not by any test that mocked a browser.
+	f := start(t, nil)
+	req, _ := http.NewRequest("POST", f.srv.URL+"/api/rooms", strings.NewReader("{}"))
+	req.Header.Set("Origin", "https://www.youtube.com")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q with no allowlist configured", got)
+	}
+
+	// Preflight, for a client that sends Content-Type: application/json.
+	pre, _ := http.NewRequest("OPTIONS", f.srv.URL+"/api/rooms", nil)
+	pre.Header.Set("Origin", "https://www.youtube.com")
+	pre.Header.Set("Access-Control-Request-Method", "POST")
+	presp, err := http.DefaultClient.Do(pre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer presp.Body.Close()
+	if presp.StatusCode != 204 {
+		t.Fatalf("preflight status %d", presp.StatusCode)
+	}
+	if !strings.Contains(presp.Header.Get("Access-Control-Allow-Methods"), "POST") {
+		t.Fatalf("preflight allows %q", presp.Header.Get("Access-Control-Allow-Methods"))
+	}
+}
+
+func TestCrossOriginIsRestrictedWhenAnAllowlistIsSet(t *testing.T) {
+	cfg := DefaultConfig()
+	h := New(cfg, NewClock())
+	hcfg := DefaultHTTPConfig()
+	hcfg.AllowedOrigins = []string{"https://laftel.net"}
+	srv := httptest.NewServer(h.Handler(hcfg))
+	t.Cleanup(func() { srv.Close(); h.Close() })
+
+	get := func(origin string) *http.Response {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/rooms", strings.NewReader("{}"))
+		req.Header.Set("Origin", origin)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	ok := get("https://laftel.net")
+	defer ok.Body.Close()
+	if got := ok.Header.Get("Access-Control-Allow-Origin"); got != "https://laftel.net" {
+		t.Fatalf("allowed origin got %q", got)
+	}
+	if !strings.Contains(ok.Header.Get("Vary"), "Origin") {
+		t.Fatal("no Vary: Origin -- a shared cache could serve one origin's response to another")
+	}
+	bad := get("https://evil.example")
+	defer bad.Body.Close()
+	if got := bad.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("disallowed origin got %q", got)
+	}
+}

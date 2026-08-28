@@ -836,3 +836,55 @@ Seeding the gate signature with "nothing held, nobody waiting" removed a
 spurious frame at the first report of every healthy room and brought the diff
 back to a single line — `reconnect`'s gate count halving, which is the waiver
 latch no longer double-counting one continuous buffering episode.
+
+## 39. Round 10 — two regression assertions had been passing on luck
+
+Suppressing redundant rate commands (§7 of BROWSER-FINDINGS) changed how much
+traffic crosses the simulated network, which re-rolled every jitter draw, which
+turned two regression tests red:
+
+```
+TestConfidenceGatingStopsBiasDrivenSeeks: want 0 seeks on a pure clock bias, got 1
+TestSchedulingLaundersClockBias:          command-free asymmetry should stay at 0, got 666
+```
+
+The obvious reading is that the change broke confidence gating. It did not.
+Both tests asserted **exactly zero** against **one seed**, and a scan over 60
+seeds showed the property holds in only about two thirds of them:
+
+| | 0 seeks in |
+|---|---|
+| before the change | 40 / 60 seeds |
+| after the change | 35 / 60 seeds |
+
+Statistically indistinguishable (p ≈ 0.46). The assertions had been passing on
+seed 5's luck since they were written, and any change that shifted the jitter
+sequence could turn them red with nothing wrong.
+
+**Why the property is statistical at all.** `ConfidenceGated` widens the
+dead-band to the client's own `UncertaintyMs`, which is `bestRTT/2` — and
+`bestRTT` is the *minimum* of a jittered sample. Whether the client happens to
+draw a low minimum decides whether the dead-band is narrow enough for the
+laundered bias to escape it. That is not a flaw in the gating; it is what
+"confidence" means when the confidence is itself measured.
+
+Both tests now average over 20 seeds and assert the **relative** claim they were
+always making — gated issues far fewer seeks and creates far less self-inflicted
+divergence than ungated — with the ungated arm kept as a control so a low gated
+number cannot pass by the scenario going quiet. They pass with and without the
+rate-suppression change.
+
+The lesson generalises past these two tests: **in a harness whose numbers move
+whenever traffic changes, an exact-value assertion on one seed is a coin flip
+wearing a lab coat.** Assert the comparison, average the sample, keep the
+control.
+
+### The change itself
+
+A continuous control law recomputes a rate on every report, so the server was
+sending a `correct{nudge}` at the report rate forever. Measured in a real
+browser: **17 nudges to one member in a 20 s session**, each firing a
+`ratechange` on the element the detector is watching. Suppressing a rate the
+client already holds (within 0.001, re-stated every 5 s in case the
+unacknowledged `correct` that set it was lost) took the same session to **4 and
+5** with the two players still 20 ms apart.
