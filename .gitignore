@@ -37,3 +37,6 @@ web-ext-artifacts/
 *.zip
 *.crx
 *.xpi
+
+# Agent worktrees (transient)
+.claude/worktrees/
