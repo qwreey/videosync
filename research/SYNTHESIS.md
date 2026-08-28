@@ -157,6 +157,65 @@ Rejected alternative: include the sender in the broadcast and rely on layer 2's 
 flag to swallow it. That makes correctness depend on a timeout-based flag — exactly the mechanism
 syncwatch proved fragile (§4).
 
+---
+
+## 4b. How a local seek is *detected* — events vs. polling (four references, four answers)
+
+Upstream of echo suppression sits a question §4 skipped: how do you notice the local user seeked?
+
+| Reference | Mechanism | Evidence |
+|---|---|---|
+| syncplay | **poll only**, two-diff discontinuity test | `client.py:218-223` |
+| VideoTogether | hybrid — DOM events wake it, a 2 s poll decides | `vt.js:2863` + `vt.js:3483` |
+| syncwatch | **DOM events only** | `content.ts:87-104` |
+| opentogethertube | **neither** — zero `seeked` listeners; seeks are explicit UI intent | grep: 1 match, a chat string |
+| jellyfin | ABSENT — client is outside the sparse checkout | — |
+
+### Syncplay's two-diff test is the best mechanism in the corpus
+
+```python
+def _determinePlayerStateChange(self, paused, position):
+    pauseChange = self.getPlayerPaused() != paused and self.getGlobalPaused() != paused
+    _playerDiff = abs(self.getPlayerPosition() - position)
+    _globalDiff = abs(self.getGlobalPosition() - position)
+    seeked = _playerDiff > constants.SEEK_THRESHOLD and _globalDiff > constants.SEEK_THRESHOLD
+    return pauseChange, seeked
+```
+`SEEK_THRESHOLD = 1` s. Both accessors dead-reckon (last known value + elapsed time when not
+paused), so the comparison holds during playback (`client.py:521-550`).
+
+- `_playerDiff` — new position vs. **last known local** position: "did the player jump?"
+- `_globalDiff` — new position vs. **where the room says we should be**: "is that jump also a
+  divergence from the room?"
+
+**The AND is echo suppression built into detection.** Remote-driven seek → `_playerDiff` large,
+`_globalDiff` ~0 → `seeked = False`, nothing rebroadcast. Only a local user seek makes both large.
+`pauseChange` is ANDed the same way.
+
+This has **no timeout and no flag, so it cannot get stuck** — structurally immune to the syncwatch
+failure documented in §4. Syncplay arrived here because it drives external players (mpv/VLC) over
+IPC where DOM events do not exist; the constraint produced the better design.
+
+Also noted: syncwatch has a second defect here beyond the stuck flag — `seeked` is only broadcast
+when the video is **paused** (`content.ts:100`), so seeks during playback are never sent as seeks.
+
+### Decision: hybrid, with events as trigger and the two-diff test as the sole authority
+
+Polling alone misses a scrub that lands back near its origin (both diffs small), and its detection
+latency is bounded by the poll interval. Events alone miss player-internal seeks that fire nothing,
+ad-insertion `currentTime` jumps, MSE non-monotonic `currentTime` near buffer boundaries, and
+**backgrounded tabs** (§11 item 1).
+
+1. `seeked` / `play` / `pause` / `ratechange` **trigger an immediate evaluation** — they never
+   broadcast directly.
+2. The evaluation is Syncplay's two-diff test, against last-known-local and expected-room position.
+3. A ~1 Hz poll runs **the same evaluation function**, so anything events miss is caught within a
+   second.
+
+One code path decides "is this user intent worth broadcasting", fed by two sources. Consequence for
+§4: layer 2's `applyingRemote` flag stops being load-bearing and becomes a secondary backstop —
+which is what we want after seeing what happens when a timeout flag is the only defence.
+
 ## 6. Buffering / readiness → Jellyfin's Waiting state, with Syncplay's instinct
 
 Jellyfin makes it a **dedicated state**, not a flag on Playing/Paused: per-member `IsBuffering`,
