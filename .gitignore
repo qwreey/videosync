@@ -40,3 +40,6 @@ web-ext-artifacts/
 
 # Agent worktrees (transient)
 .claude/worktrees/
+
+# Generated test media (regenerate with ffmpeg, see docs/BROWSER-FINDINGS.md)
+harness/browser/media/

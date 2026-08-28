@@ -1,0 +1,258 @@
+{
+  "chromium": "Chrome/151.0.7922.173",
+  "progressive": {
+    "load": {
+      "mode": "progressive",
+      "duration": 120
+    },
+    "play": {
+      "ok": true
+    },
+    "afterPlay": {
+      "ct": 3.956293,
+      "paused": false,
+      "rs": 4,
+      "ns": 1,
+      "ahead": 2.3363150000000004,
+      "ranges": [
+        [
+          0,
+          6.293
+        ]
+      ],
+      "rate": 1,
+      "muted": false
+    },
+    "seekInBuffer": {
+      "target": 2.957,
+      "inBufferBefore": true,
+      "seekedAfterMs": 0.8,
+      "canplayAfterMs": 0.9,
+      "readyStateBelow3Ms": 0,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ],
+      "samples": 400
+    },
+    "seekOutOfBuffer": {
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 1.1,
+      "canplayAfterMs": 1.1,
+      "readyStateBelow3Ms": 0,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ],
+      "samples": 400
+    }
+  },
+  "hls": {
+    "load": {
+      "mode": "hls",
+      "duration": 120,
+      "usingMSE": true
+    },
+    "play": {
+      "ok": true
+    },
+    "afterPlay": {
+      "ct": 4.09455,
+      "paused": false,
+      "rs": 4,
+      "ns": 2,
+      "ahead": 11.914315,
+      "ranges": [
+        [
+          0.08,
+          16.009
+        ]
+      ],
+      "rate": 1,
+      "muted": false
+    },
+    "seekInBuffer": {
+      "target": 3.095,
+      "inBufferBefore": true,
+      "seekedAfterMs": 2.3,
+      "canplayAfterMs": 2.3,
+      "readyStateBelow3Ms": 0,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ],
+      "samples": 400
+    },
+    "seekOutOfBuffer": {
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 4.7,
+      "canplayAfterMs": 4.7,
+      "readyStateBelow3Ms": 0,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ],
+      "samples": 400
+    },
+    "stall": {
+      "starvedFromSegment": 51,
+      "frozenStartMs": 13040,
+      "frozenMs": 980,
+      "pausedDuringFreeze": false,
+      "readyStatesDuringFreeze": [
+        2
+      ],
+      "events": [
+        {
+          "type": "waiting",
+          "ct": 113.9475,
+          "rs": 2
+        }
+      ]
+    },
+    "stallEvents": [
+      {
+        "type": "waiting",
+        "ct": 113.9475,
+        "rs": 2
+      }
+    ],
+    "stallTrace": [
+      {
+        "t": 12740.1,
+        "ct": 113.6639,
+        "paused": false,
+        "rs": 4,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.356
+      },
+      {
+        "t": 12840,
+        "ct": 113.7639,
+        "paused": false,
+        "rs": 4,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.256
+      },
+      {
+        "t": 12940,
+        "ct": 113.8639,
+        "paused": false,
+        "rs": 4,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.156
+      },
+      {
+        "t": 13040,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13140.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13240.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13340.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13440.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13540.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13640,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13740.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13840,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      },
+      {
+        "t": 13940.1,
+        "ct": 113.9475,
+        "paused": false,
+        "rs": 2,
+        "ns": 2,
+        "seeking": false,
+        "ahead": 0.073
+      }
+    ]
+  }
+}

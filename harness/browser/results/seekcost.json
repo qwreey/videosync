@@ -1,0 +1,149 @@
+{
+  "chromium": "Chrome/151.0.7922.173",
+  "runs": [
+    {
+      "delayMs": 0,
+      "kind": "inBuffer",
+      "target": 4.092,
+      "inBufferBefore": true,
+      "seekedAfterMs": 1,
+      "canplayAfterMs": 1.1,
+      "readyStateBelow3Ms": 0,
+      "resumeAfterMs": 20.2,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 0,
+      "kind": "outOfBuffer",
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 4.7,
+      "canplayAfterMs": 4.7,
+      "readyStateBelow3Ms": 0,
+      "resumeAfterMs": 20.2,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 50,
+      "kind": "inBuffer",
+      "target": 4.096,
+      "inBufferBefore": true,
+      "seekedAfterMs": 1.1,
+      "canplayAfterMs": 1.1,
+      "readyStateBelow3Ms": 0,
+      "resumeAfterMs": 20.1,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 50,
+      "kind": "outOfBuffer",
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 54.2,
+      "canplayAfterMs": 54.2,
+      "readyStateBelow3Ms": 40,
+      "resumeAfterMs": 60.1,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 150,
+      "kind": "inBuffer",
+      "target": 4.094,
+      "inBufferBefore": true,
+      "seekedAfterMs": 0.8,
+      "canplayAfterMs": 0.8,
+      "readyStateBelow3Ms": 0,
+      "resumeAfterMs": 20.1,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 150,
+      "kind": "outOfBuffer",
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 155.3,
+      "canplayAfterMs": 155.3,
+      "readyStateBelow3Ms": 139.9,
+      "resumeAfterMs": 180,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 400,
+      "kind": "inBuffer",
+      "target": 4.092,
+      "inBufferBefore": true,
+      "seekedAfterMs": 1.2,
+      "canplayAfterMs": 1.2,
+      "readyStateBelow3Ms": 0,
+      "resumeAfterMs": 20.1,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    },
+    {
+      "delayMs": 400,
+      "kind": "outOfBuffer",
+      "target": 95,
+      "inBufferBefore": false,
+      "seekedAfterMs": 404.8,
+      "canplayAfterMs": 404.8,
+      "readyStateBelow3Ms": 390,
+      "resumeAfterMs": 430.1,
+      "events": [
+        "seeking",
+        "waiting",
+        "seeked",
+        "canplay",
+        "playing",
+        "canplaythrough"
+      ]
+    }
+  ]
+}

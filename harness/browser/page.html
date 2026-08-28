@@ -1,0 +1,228 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VideoSync browser probe</title>
+<body>
+<video id="v" width="320" height="180" playsinline></video>
+<script src="/media/hls.js"></script>
+<script>
+// Everything the driver needs is exposed on window.probe and returns JSON.
+// Kept in the page (not injected per-call) so sampling loops are not disturbed
+// by CDP round trips.
+const v = document.getElementById('v');
+let hls = null;
+
+const ctl = (q) => fetch('/ctl?' + q).then(r => r.json());
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function bufferedAhead(t = v.currentTime) {
+  for (let i = 0; i < v.buffered.length; i++) {
+    if (v.buffered.start(i) <= t && t <= v.buffered.end(i)) return v.buffered.end(i) - t;
+  }
+  return 0;
+}
+function bufferedRanges() {
+  const out = [];
+  for (let i = 0; i < v.buffered.length; i++) out.push([+v.buffered.start(i).toFixed(3), +v.buffered.end(i).toFixed(3)]);
+  return out;
+}
+
+// A high-rate sampler. Uses performance.now() as the timebase so a frozen
+// currentTime is visible as exactly that -- frozen -- rather than being hidden
+// by a timebase that freezes with it.
+function sampler(intervalMs = 20) {
+  const rows = [];
+  const t0 = performance.now();
+  const id = setInterval(() => {
+    rows.push({
+      t: +(performance.now() - t0).toFixed(1),
+      ct: +v.currentTime.toFixed(4),
+      paused: v.paused,
+      rs: v.readyState,
+      ns: v.networkState,
+      seeking: v.seeking,
+      ahead: +bufferedAhead().toFixed(3),
+    });
+  }, intervalMs);
+  return { rows, stop: () => clearInterval(id) };
+}
+
+const evLog = [];
+for (const t of ['play','playing','pause','seeking','seeked','waiting','stalled','ratechange','canplay','canplaythrough','emptied','ended','error']) {
+  v.addEventListener(t, () => evLog.push({ t: +performance.now().toFixed(1), type: t, ct: +v.currentTime.toFixed(4), rs: v.readyState }));
+}
+
+// ---- M4: timer throttling ------------------------------------------------
+// Every client-authority claim in this design rests on a ~10 Hz local loop.
+// A hidden tab is exactly the case a watch-party client lives in, so what the
+// browser actually does to that loop is load-bearing, not trivia.
+function timerStats(stamps) {
+  const gaps = [];
+  for (let i = 1; i < stamps.length; i++) gaps.push(stamps[i] - stamps[i - 1]);
+  gaps.sort((a, b) => a - b);
+  if (!gaps.length) return { n: 0 };
+  return {
+    n: gaps.length,
+    minMs: +gaps[0].toFixed(1),
+    medMs: +gaps[Math.floor(gaps.length / 2)].toFixed(1),
+    maxMs: +gaps[gaps.length - 1].toFixed(1),
+  };
+}
+
+window.probe = Object.assign({}, {
+  async loadProgressive() {
+    if (hls) { hls.destroy(); hls = null; }
+    v.src = '/media/test.mp4';
+    await new Promise((res, rej) => {
+      v.addEventListener('loadedmetadata', res, { once: true });
+      v.addEventListener('error', rej, { once: true });
+    });
+    return { mode: 'progressive', duration: v.duration };
+  },
+
+  async loadHls() {
+    v.removeAttribute('src'); v.load();
+    if (hls) { hls.destroy(); }
+    hls = new Hls({ maxBufferLength: 10, maxMaxBufferLength: 20 });
+    hls.loadSource('/media/index.m3u8');
+    hls.attachMedia(v);
+    await new Promise((res, rej) => {
+      hls.on(Hls.Events.MANIFEST_PARSED, res);
+      hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) rej(new Error(d.details)); });
+    });
+    await new Promise((res) => v.readyState >= 1 ? res() : v.addEventListener('loadedmetadata', res, { once: true }));
+    return { mode: 'hls', duration: v.duration, usingMSE: !!(window.MediaSource && hls.media) };
+  },
+
+  async play() {
+    try { await v.play(); return { ok: true }; }
+    catch (e) { return { ok: false, name: e.name, message: e.message }; }
+  },
+
+  state() {
+    return { ct: v.currentTime, paused: v.paused, rs: v.readyState, ns: v.networkState,
+             ahead: bufferedAhead(), ranges: bufferedRanges(), rate: v.playbackRate, muted: v.muted };
+  },
+
+  events() { return evLog.splice(0); },
+  ctl,
+
+  // ---- M1/M2: what does a seek actually cost? ----------------------------
+  async measureSeek(target, { settleMs = 4000 } = {}) {
+    evLog.length = 0;
+    const s = sampler(10);
+    const inBufferBefore = bufferedAhead(target) > 0 ||
+      Array.from({ length: v.buffered.length }, (_, i) => [v.buffered.start(i), v.buffered.end(i)])
+        .some(([a, b]) => a <= target && target <= b);
+    const t0 = performance.now();
+    let tSeeked = null, tCanPlay = null;
+    const onSeeked = () => { if (tSeeked === null) tSeeked = performance.now(); };
+    const onCanPlay = () => { if (tSeeked !== null && tCanPlay === null) tCanPlay = performance.now(); };
+    v.addEventListener('seeked', onSeeked);
+    v.addEventListener('canplay', onCanPlay);
+    v.currentTime = target;
+    await sleep(settleMs);
+    v.removeEventListener('seeked', onSeeked);
+    v.removeEventListener('canplay', onCanPlay);
+    s.stop();
+    // how long readyState stayed below HAVE_FUTURE_DATA after the seek
+    let belowMs = 0;
+    for (let i = 1; i < s.rows.length; i++) if (s.rows[i].rs < 3) belowMs += s.rows[i].t - s.rows[i - 1].t;
+    // When did playback actually resume? `seeked` firing is not the same as
+    // the user seeing motion again -- that is the number a sync system cares
+    // about, because it is how long the client is out of position.
+    let resumeAfterMs = null;
+    for (let i = 1; i < s.rows.length; i++) {
+      const a = s.rows[i - 1], b = s.rows[i];
+      if (b.ct > a.ct + 0.001 && !b.paused && Math.abs(b.ct - target) < 3) { resumeAfterMs = b.t; break; }
+    }
+    return {
+      target, inBufferBefore,
+      seekedAfterMs: tSeeked === null ? null : +(tSeeked - t0).toFixed(1),
+      canplayAfterMs: tCanPlay === null ? null : +(tCanPlay - t0).toFixed(1),
+      readyStateBelow3Ms: +belowMs.toFixed(1),
+      resumeAfterMs,
+      events: evLog.map(e => e.type),
+      samples: s.rows.length,
+    };
+  },
+
+  // ---- M3: what does a real MSE stall look like? -------------------------
+  async observeStall({ delayMs = 9000, watchMs = 14000 } = {}) {
+    evLog.length = 0;
+    await ctl('reset');
+    const s = sampler(20);
+    // Starve the player from the next segment onward.
+    const seg = Math.floor(v.currentTime / 2) + 1;
+    await ctl(`delayMs=${delayMs}&delayFromSeg=${seg}`);
+    await sleep(watchMs);
+    s.stop();
+    await ctl('reset');
+    // Find the frozen window: currentTime not advancing while paused === false.
+    let frozenStart = null, frozenMs = 0, pausedDuringFreeze = null, rsDuringFreeze = new Set();
+    for (let i = 1; i < s.rows.length; i++) {
+      const a = s.rows[i - 1], b = s.rows[i];
+      const advanced = (b.ct - a.ct) * 1000 > (b.t - a.t) * 0.3;
+      if (!advanced && !b.paused) {
+        if (frozenStart === null) frozenStart = b.t;
+        frozenMs += b.t - a.t;
+        pausedDuringFreeze = b.paused;
+        rsDuringFreeze.add(b.rs);
+      } else if (frozenStart !== null && advanced) {
+        break;
+      }
+    }
+    return {
+      starvedFromSegment: seg,
+      frozenStartMs: frozenStart, frozenMs: +frozenMs.toFixed(1),
+      pausedDuringFreeze, readyStatesDuringFreeze: [...rsDuringFreeze],
+      events: evLog.map(e => ({ type: e.type, ct: e.ct, rs: e.rs })),
+      samples: s.rows,
+    };
+  },
+});
+// Merge in the throttling probes.
+Object.assign(window.probe, {
+  visibility: () => ({ visibilityState: document.visibilityState, hidden: document.hidden,
+                       hasFocus: document.hasFocus(), muted: v.muted, paused: v.paused }),
+
+  async measureTimers(durationMs = 6000, requestedMs = 100) {
+    const iv = [], to = [], wk = [], rvfc = [];
+    const t0 = performance.now();
+
+    const ivId = setInterval(() => iv.push(performance.now() - t0), requestedMs);
+    let stop = false;
+    (function chain() {
+      if (stop) return;
+      to.push(performance.now() - t0);
+      setTimeout(chain, requestedMs);
+    })();
+
+    // A Worker has its own event loop -- the usual suggested escape hatch.
+    const src = `let t0=performance.now();setInterval(()=>postMessage(performance.now()-t0), ${requestedMs});`;
+    const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    w.onmessage = (e) => wk.push(e.data);
+
+    // requestVideoFrameCallback fires per presented frame; it is the one clock
+    // that is tied to playback rather than to the page's timers.
+    let rvfcOn = !!v.requestVideoFrameCallback;
+    if (rvfcOn) {
+      const step = () => { rvfc.push(performance.now() - t0); if (!stop) v.requestVideoFrameCallback(step); };
+      v.requestVideoFrameCallback(step);
+    }
+
+    await new Promise((r) => setTimeout(r, durationMs));
+    stop = true; clearInterval(ivId); w.terminate();
+
+    return {
+      requestedMs, durationMs,
+      visibilityState: document.visibilityState,
+      audible: !v.muted && !v.paused,
+      setInterval: timerStats(iv),
+      setTimeoutChain: timerStats(to),
+      worker: timerStats(wk),
+      rvfc: rvfcOn ? timerStats(rvfc) : { unsupported: true },
+    };
+  },
+});
+window.__ready = true;
+</script>

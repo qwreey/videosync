@@ -1,0 +1,54 @@
+{
+  "chromium": "Chrome/151.0.7922.173",
+  "watchMs": 45000,
+  "cases": [
+    {
+      "mode": "progressive",
+      "audible": true,
+      "wallMs": 45002,
+      "ctBefore": 2.41,
+      "ctAfter": 47.42,
+      "advancedS": 45.01,
+      "playbackRatioAchieved": 1,
+      "readyStateAfter": 4,
+      "pausedAfter": false,
+      "bufferedAheadAfter": 2.34
+    },
+    {
+      "mode": "progressive",
+      "audible": false,
+      "wallMs": 45002,
+      "ctBefore": 2.46,
+      "ctAfter": 47.47,
+      "advancedS": 45.01,
+      "playbackRatioAchieved": 1,
+      "readyStateAfter": 4,
+      "pausedAfter": false,
+      "bufferedAheadAfter": 2.31
+    },
+    {
+      "mode": "hls",
+      "audible": true,
+      "wallMs": 45000,
+      "ctBefore": 2.41,
+      "ctAfter": 47.42,
+      "advancedS": 45.01,
+      "playbackRatioAchieved": 1,
+      "readyStateAfter": 4,
+      "pausedAfter": false,
+      "bufferedAheadAfter": 10.6
+    },
+    {
+      "mode": "hls",
+      "audible": false,
+      "wallMs": 45001,
+      "ctBefore": 2.46,
+      "ctAfter": 47.47,
+      "advancedS": 45.01,
+      "playbackRatioAchieved": 1,
+      "readyStateAfter": 4,
+      "pausedAfter": false,
+      "bufferedAheadAfter": 10.54
+    }
+  ]
+}

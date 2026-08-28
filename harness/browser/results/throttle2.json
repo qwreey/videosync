@@ -1,0 +1,252 @@
+[
+  {
+    "label": "headful-xvfb",
+    "headful": true,
+    "audible": true,
+    "chromium": "Chrome/151.0.7922.173",
+    "cases": [
+      {
+        "phase": "visible",
+        "requestedMs": 100,
+        "durationMs": 6000,
+        "visibilityState": "visible",
+        "audible": true,
+        "setInterval": {
+          "n": 59,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "setTimeoutChain": {
+          "n": 59,
+          "minMs": 100,
+          "medMs": 100.1,
+          "maxMs": 100.2
+        },
+        "worker": {
+          "n": 58,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 149,
+          "minMs": 16.2,
+          "medMs": 33.8,
+          "maxMs": 51
+        }
+      },
+      {
+        "phase": "hidden-immediate",
+        "requestedMs": 100,
+        "durationMs": 6000,
+        "visibilityState": "hidden",
+        "audible": true,
+        "setInterval": {
+          "n": 59,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "setTimeoutChain": {
+          "n": 59,
+          "minMs": 99.9,
+          "medMs": 100.1,
+          "maxMs": 100.2
+        },
+        "worker": {
+          "n": 58,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 0
+        }
+      },
+      {
+        "phase": "hidden-after-70s",
+        "requestedMs": 100,
+        "durationMs": 10000,
+        "visibilityState": "hidden",
+        "audible": true,
+        "setInterval": {
+          "n": 99,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "setTimeoutChain": {
+          "n": 99,
+          "minMs": 100,
+          "medMs": 100.1,
+          "maxMs": 100.2
+        },
+        "worker": {
+          "n": 98,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 0
+        }
+      }
+    ],
+    "playing": {
+      "ct": 3.090235,
+      "paused": false,
+      "rs": 4,
+      "ns": 2,
+      "ahead": 10.921714,
+      "ranges": [
+        [
+          0.08,
+          14.012
+        ]
+      ],
+      "rate": 1,
+      "muted": false
+    },
+    "afterHidden": {
+      "ct": 95.915204,
+      "paused": false,
+      "rs": 4,
+      "ns": 2,
+      "ahead": 10.094205000000002,
+      "ranges": [
+        [
+          0.08,
+          106.009
+        ]
+      ],
+      "rate": 1,
+      "muted": false
+    }
+  },
+  {
+    "label": "headful-xvfb",
+    "headful": true,
+    "audible": false,
+    "chromium": "Chrome/151.0.7922.173",
+    "cases": [
+      {
+        "phase": "visible",
+        "requestedMs": 100,
+        "durationMs": 6000,
+        "visibilityState": "visible",
+        "audible": false,
+        "setInterval": {
+          "n": 59,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "setTimeoutChain": {
+          "n": 59,
+          "minMs": 100,
+          "medMs": 100.1,
+          "maxMs": 100.2
+        },
+        "worker": {
+          "n": 58,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 149,
+          "minMs": 16.3,
+          "medMs": 33.8,
+          "maxMs": 51
+        }
+      },
+      {
+        "phase": "hidden-immediate",
+        "requestedMs": 100,
+        "durationMs": 6000,
+        "visibilityState": "hidden",
+        "audible": false,
+        "setInterval": {
+          "n": 5,
+          "minMs": 999.9,
+          "medMs": 1000,
+          "maxMs": 1000.1
+        },
+        "setTimeoutChain": {
+          "n": 6,
+          "minMs": 1000,
+          "medMs": 1000,
+          "maxMs": 1056
+        },
+        "worker": {
+          "n": 59,
+          "minMs": 99.9,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 0
+        }
+      },
+      {
+        "phase": "hidden-after-70s",
+        "requestedMs": 100,
+        "durationMs": 10000,
+        "visibilityState": "hidden",
+        "audible": false,
+        "setInterval": {
+          "n": 10,
+          "minMs": 999.9,
+          "medMs": 1000,
+          "maxMs": 1000.1
+        },
+        "setTimeoutChain": {
+          "n": 10,
+          "minMs": 993.6,
+          "medMs": 1000,
+          "maxMs": 1000.1
+        },
+        "worker": {
+          "n": 108,
+          "minMs": 99.8,
+          "medMs": 100,
+          "maxMs": 100.1
+        },
+        "rvfc": {
+          "n": 0
+        }
+      }
+    ],
+    "playing": {
+      "ct": 3.142349,
+      "paused": false,
+      "rs": 4,
+      "ns": 2,
+      "ahead": 10.8696,
+      "ranges": [
+        [
+          0.08,
+          14.012
+        ]
+      ],
+      "rate": 1,
+      "muted": true
+    },
+    "afterHidden": {
+      "ct": 9.14956,
+      "paused": true,
+      "rs": 4,
+      "ns": 2,
+      "ahead": 10.853137000000002,
+      "ranges": [
+        [
+          0.08,
+          20.003
+        ]
+      ],
+      "rate": 1,
+      "muted": true
+    }
+  }
+]
