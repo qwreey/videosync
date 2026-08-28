@@ -47,7 +47,12 @@ type Tunables struct {
 	// RampMinSlope (ms/s) separates a *ramp* (ongoing rate mismatch, fixable
 	// by nudging) from a *settled step* (a stall already happened, the gap is
 	// now constant and nudging would take forever).
-	RampMinSlope    float64
+	RampMinSlope float64
+	// RampMaxSlope (ms/s) is the upper bound of a *plausible* rate mismatch.
+	// A 1% playback-rate error is 10 ms/s; a buffering stall is ~1000 ms/s.
+	// Anything above this is a discontinuity in progress, not a rate problem,
+	// and nudging it just delays the seek that is actually needed.
+	RampMaxSlope    float64
 	MinReadyState   int
 	MinBufferedS    float64
 	SeekThresholdMs int64
@@ -62,6 +67,7 @@ func DefaultTunables() Tunables {
 		RateMax:          1.10,
 		NudgeCloseMs:     8000,
 		RampMinSlope:     1.0,
+		RampMaxSlope:     100.0,
 		MinReadyState:    3,
 		MinBufferedS:     1.0,
 		SeekThresholdMs:  1000,
@@ -164,7 +170,7 @@ func (StepRampCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 		return Decision{Action: ActionNone, Why: "closing"}
 	}
 	// Diverging with a real slope: a rate mismatch. Nudge fixes the cause.
-	if absF(r.SlopeMsPerS) >= t.RampMinSlope {
+	if sl := absF(r.SlopeMsPerS); sl >= t.RampMinSlope && sl <= t.RampMaxSlope {
 		return Decision{Action: ActionNudge, Rate: nudgeRate(res, t), Why: "ramp"}
 	}
 	// Persistent gap that is not moving: a step that already happened.

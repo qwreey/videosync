@@ -15,17 +15,44 @@ type Server struct {
 
 	pings map[string]int64 // client -> observed RTT, for the command delay
 	gated map[string]int64 // client -> server time it started gating
+	corr  map[string]*corrState
 
 	// metrics
 	SeeksIssued      int
 	NudgesIssued     int
 	UnnecessarySeeks int // seek issued while the residual was already closing
 	GatesOpened      int
+	SeeksSuppressed  int // blocked by the cooldown or the failed-seek detector
+	BiasLearned      int // clients whose clock bias we gave up on and absorbed
 }
+
+// corrState tracks whether our corrections are actually working on one client.
+// Motivation: docs/POC-FINDINGS.md section 2 -- under one-way latency
+// asymmetry the clock offset is biased, the residual never closes, and a
+// tight deadband turns into thousands of useless seeks. No reference
+// implementation detects this.
+type corrState struct {
+	lastSeekAt     int64
+	residualAtSeek int64
+	failedSeeks    int
+	biasMs         int64 // learned clock-estimate bias, subtracted from reports
+}
+
+const (
+	// seekCooldownMs is the floor between two seeks for the same client. On
+	// its own this bounds the storm; it does not fix the cause.
+	seekCooldownMs = 2000
+	// failedSeeksBeforeBias: after this many seeks that did not move the
+	// residual, stop blaming the player and blame our own clock estimate.
+	failedSeeksBeforeBias = 3
+	// seekImprovementFrac: a seek "worked" if it cut the residual by at least
+	// this fraction.
+	seekImprovementFrac = 0.5
+)
 
 func NewServer(c vsync.Corrector, t vsync.Tunables, start vsync.Anchor) *Server {
 	return &Server{anchor: start, corrector: c, tun: t,
-		pings: map[string]int64{}, gated: map[string]int64{}}
+		pings: map[string]int64{}, gated: map[string]int64{}, corr: map[string]*corrState{}}
 }
 
 func (s *Server) Anchor() vsync.Anchor { return s.anchor }
@@ -87,17 +114,53 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 	case MsgReport:
 		r := v.R
 		s.pings[r.ClientID] = now - r.AtServerMs + 0 // crude one-way estimate
-		d := s.corrector.Decide(r, s.anchor, now, s.tun)
+
+		cs := s.corr[r.ClientID]
+		if cs == nil {
+			cs = &corrState{}
+			s.corr[r.ClientID] = cs
+		}
+
+		// Judge the *effective* residual: what remains after subtracting the
+		// bias we have learned about this client's clock estimate.
+		eff := r
+		eff.ResidualMs = r.ResidualMs - cs.biasMs
+
+		// Did the last seek accomplish anything? If we seeked and the residual
+		// is essentially unchanged, the fault is not the player's position --
+		// it is our own idea of where the client should be.
+		if cs.lastSeekAt > 0 && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
+			improved := absI(eff.ResidualMs) <= int64(float64(absI(cs.residualAtSeek))*seekImprovementFrac)
+			if improved {
+				cs.failedSeeks = 0
+			} else {
+				cs.failedSeeks++
+				if cs.failedSeeks >= failedSeeksBeforeBias {
+					// Absorb it. A residual that survives repeated seeks IS the
+					// clock bias, and it is the only way to observe a one-way
+					// latency asymmetry that min-RTT cannot see.
+					cs.biasMs += eff.ResidualMs
+					cs.failedSeeks = 0
+					s.BiasLearned++
+					eff.ResidualMs = r.ResidualMs - cs.biasMs
+				}
+			}
+			cs.lastSeekAt = 0
+		}
+
+		d := s.corrector.Decide(eff, s.anchor, now, s.tun)
 		switch d.Action {
 		case vsync.ActionSeek:
+			if now-cs.lastSeekAt < seekCooldownMs && cs.lastSeekAt > 0 {
+				s.SeeksSuppressed++
+				break
+			}
 			s.SeeksIssued++
-			// Would this seek have been unnecessary? If the residual was
-			// already closing and within nudge range, the client would have
-			// recovered on its own. This is the metric that separates the
-			// two strategies.
-			if r.Closing() && absI(r.ResidualMs) < s.tun.NudgeMaxResidual {
+			if eff.Closing() && absI(eff.ResidualMs) < s.tun.NudgeMaxResidual {
 				s.UnnecessarySeeks++
 			}
+			cs.lastSeekAt = now
+			cs.residualAtSeek = eff.ResidualMs
 			net.Send(now, r.ClientID, "server", r.ClientID, false,
 				MsgCorrect{Mode: "seek", TargetMs: d.TargetMs, When: now, Why: d.Why})
 		case vsync.ActionNudge:

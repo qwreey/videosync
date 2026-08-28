@@ -36,6 +36,19 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
+			// Stalls longer than SEEK_THRESHOLD (1 s). Without stall
+			// inference the detector reads each one as a backward user seek
+			// and broadcasts it, dragging the room back.
+			Name: "long-stalls", Seed: 7, DurationMs: 120000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good,
+					Stalls: [][2]int64{{20000, 24000}, {55000, 58500}, {90000, 96000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh,
+					Stalls: [][2]int64{{40000, 43000}}},
+			},
+		},
+		{
 			Name: "one-slow-client", Seed: 3, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -82,6 +95,27 @@ func scenarios() []sim.Scenario {
 	}
 }
 
+// controlRun re-runs the stall scenario with the stall guard disabled, to
+// demonstrate that the guard is load-bearing rather than decorative.
+func controlRun(tun vsync.Tunables) {
+	fmt.Println("CONTROL: same scenario, stall inference DISABLED (= syncplay's behaviour)")
+	for _, sc := range scenarios() {
+		if sc.Name != "long-stalls" && sc.Name != "transient-hiccup" {
+			continue
+		}
+		off := sc
+		off.Clients = append([]sim.ClientProfile(nil), sc.Clients...)
+		for i := range off.Clients {
+			off.Clients[i].NoStallInference = true
+		}
+		on := sim.Run(sc, vsync.ThresholdCorrector{}, tun)
+		res := sim.Run(off, vsync.ThresholdCorrector{}, tun)
+		fmt.Printf("  %-18s stall-guard ON  -> misdetections %d\n", sc.Name, on.Misdetections)
+		fmt.Printf("  %-18s stall-guard OFF -> misdetections %d\n", "", res.Misdetections)
+	}
+	fmt.Println()
+}
+
 func main() {
 	tun := vsync.DefaultTunables()
 	correctors := []vsync.Corrector{
@@ -92,20 +126,23 @@ func main() {
 	}
 	names := []string{"threshold-500", "threshold-2000", "derivative", "step-ramp"}
 
-	fmt.Printf("%-22s %-16s %8s %8s %8s %7s %7s %7s %7s\n",
-		"scenario", "strategy", "maxDiv", "p95Div", "meanDiv", "seeks", "waste", "nudges", "gates")
-	fmt.Println(strings.Repeat("-", 110))
+	fmt.Printf("%-20s %-15s %8s %8s %8s %6s %6s %6s %6s %6s %5s\n",
+		"scenario", "strategy", "maxDiv", "p95Div", "meanDiv",
+		"seeks", "suppr", "nudges", "gates", "bias", "MISD")
+	fmt.Println(strings.Repeat("-", 118))
 
 	for _, sc := range scenarios() {
 		for i, c := range correctors {
 			r := sim.Run(sc, c, tun)
-			fmt.Printf("%-22s %-16s %8.0f %8.0f %8.0f %7d %7d %7d %7d\n",
+			fmt.Printf("%-20s %-15s %8.0f %8.0f %8.0f %6d %6d %6d %6d %6d %5d\n",
 				sc.Name, names[i], r.MaxDivergenceMs, r.P95DivergenceMs, r.MeanDivergenceMs,
-				r.SeeksIssued, r.UnnecessarySeeks, r.NudgesIssued, r.GatesOpened)
+				r.SeeksIssued, r.SeeksSuppressed, r.NudgesIssued, r.GatesOpened,
+				r.BiasLearned, r.Misdetections)
 			if len(r.ConvergeMs) > 0 {
-				fmt.Printf("%-22s %-16s   converge after commands: %v ms\n", "", "", r.ConvergeMs)
+				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
 			}
 		}
 		fmt.Println()
 	}
+	controlRun(tun)
 }

@@ -111,3 +111,101 @@ Background-tab timer throttling, real MSE seek latency and buffered-range stalls
 rejection, and whether `playbackRate` nudging is even safe on the players we target.
 The harness has no `setInterval` clamp and its seeks are instantaneous; **a green run here is not
 evidence about a browser.**
+
+---
+
+# Round 2 — after the fixes
+
+Full output: `docs/poc-run-2.txt`. Three changes: stall inference in the client detector,
+a failed-correction detector with clock-bias learning on the server, and a `RampMaxSlope` bound
+so a stall is not mistaken for a rate mismatch.
+
+## 5. The stall-as-seek bug is real, and it is proven not assumed
+
+A buffering stall reports `paused === false` while `currentTime` freezes. A detector that
+dead-reckons the expected position (as syncplay does — `client.py:521-531` adds elapsed time
+whenever `not self._playerPaused`, with **no buffering guard**) sees the gap grow past
+`SEEK_THRESHOLD` and classifies it as a **backward user seek**, then broadcasts it and drags the
+whole room back.
+
+The harness now runs a control with the guard disabled:
+
+```
+CONTROL: stall inference DISABLED (= syncplay's behaviour)
+  transient-hiccup   guard ON -> 0 misdetections   guard OFF -> 0
+  long-stalls        guard ON -> 0 misdetections   guard OFF -> 13
+```
+
+13 spurious room-wide rewinds in 120 s from three stalls. `transient-hiccup` shows 0 either way
+because its stalls are under 1 s — below `SEEK_THRESHOLD`, so they never trip the test. That is the
+honest boundary of the finding: **only stalls longer than the seek threshold misdetect.**
+
+The guard is two-part, and both parts are needed because `readyState` is not always reliable:
+`readyState < HAVE_FUTURE_DATA`, **or** position frozen while `paused` is false — the signature is
+exactly "not paused but not advancing". While suspected, the seek test is skipped and the reference
+position is held; on resume it is re-baselined rather than judged.
+
+**This makes stall inference load-bearing, not decorative.** Any client implementation that omits
+it will drag the room backward on every buffer.
+
+## 6. The seek storm is fixed — but the fix arrives too late
+
+`latency-asymmetry`, threshold-500: **2598 seeks -> 6 seeks** (64 suppressed by cooldown, 2 clock
+biases learned). The mechanism: track the residual before and after each seek; if N consecutive
+seeks fail to cut it by half, stop blaming the player and absorb the residual as a learned bias in
+our own clock estimate. It is the only way to observe a one-way asymmetry that min-RTT cannot see.
+
+But divergence did **not** improve — mean stays 1184 ms for threshold-500 and step-ramp, while
+`derivative` (which never seeks here) gets 320 ms. The reason matters:
+
+> **Seeking on a biased clock estimate actively creates divergence that was not there.** All three
+> clients were playing at exactly 1.0x and perfectly aligned; the only thing that moved them apart
+> was our own corrections firing on a bad estimate. The six seeks that ran before the bias was
+> learned did the damage, and learning the bias afterwards does not undo it.
+
+**Implied requirement, not yet implemented:** do not issue seeks until the clock estimate is
+trusted — require a minimum number of min-RTT samples and a stable `bestRTT` before corrections
+are allowed, and prefer nudging while the estimate is still settling. This is cheaper than any
+classifier change and it prevents the damage rather than bounding it.
+
+## 7. Strategy scoreboard, round 2
+
+Mean divergence, seeks in parentheses:
+
+| scenario | threshold-500 | threshold-2000 | derivative | step-ramp |
+|---|---|---|---|---|
+| steady/rate-drift | **445** (3) | 1080 (0) | 764 (0) | 447 (3) |
+| transient-hiccup | **26** (3) | 549 (1) | 461 (0) | **26** (3) |
+| long-stalls | **72** (4) | **72** (4) | 593 (3) | **72** (4) |
+| one-slow-client | 331 (3) | 515 (1) | 390 (1) | **326** (2) |
+| clock-skew | 360 (0) | 360 (0) | 360 (0) | 360 (0) |
+| latency-asymmetry | 1184 (6) | **0** (0) | 320 (0) | 1184 (6) |
+| command-storm | 5360 (19) | 5305 (11) | 4541 (7) | **4390** (19) |
+
+The `RampMaxSlope` bound was what closed the gap: a stall produces a slope near 1000 ms/s while a
+1 % rate error produces 10 ms/s, so bounding "ramp" from above stops the classifier from nudging
+its way through a discontinuity it should have seeked. **`step-ramp` now matches or beats
+`threshold-500` on divergence in every scenario except `latency-asymmetry`, where they tie.**
+
+`derivative` remains retired — it is best only in `latency-asymmetry`, and only by the accident of
+never seeking.
+
+## 8. Adopt
+
+1. **Stall inference in the detector** — mandatory, proven load-bearing (§5).
+2. **`StepRampCorrector`** — now defensible on divergence, not just on seek count (§7).
+3. **Failed-correction detector + clock-bias learning** — bounds the storm (§6).
+4. **NEW: gate corrections on clock-estimate confidence** (§6) — prevents the damage instead of
+   bounding it. Not yet implemented; do this before Risk B.
+
+## 9. Still not evidence about a browser
+
+`clock-skew` remains non-discriminating across all four strategies — min-RTT absorbs a constant
+skew cleanly, so the scenario tests the clock sync (which passes) and not the correctors.
+`command-storm`'s `maxDiv` is the seek transition itself; `converge` (0–1100 ms across all
+strategies, including the deliberately conflicting commands 50 ms apart) is the meaningful number
+there, and the no-host arrival-order serialization held with no flapping.
+
+The harness still has no `setInterval` clamp and its seeks are instantaneous. Background-tab
+throttling, MSE seek latency, buffered-range stalls, autoplay rejection, and whether
+`playbackRate` nudging is safe at all on the target players remain untested.

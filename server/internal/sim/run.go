@@ -39,6 +39,12 @@ type Result struct {
 	UnnecessarySeeks int
 	NudgesIssued     int
 	GatesOpened      int
+	SeeksSuppressed  int
+	BiasLearned      int
+	// Misdetections counts stalls the client's detector mistook for user
+	// seeks. Any value > 0 means the room would have been dragged backward by
+	// someone's buffering -- the bug syncplay ships.
+	Misdetections int
 
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
@@ -162,7 +168,11 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		Scenario: sc.Name, Corrector: corr.Name(),
 		SeeksIssued: srv.SeeksIssued, UnnecessarySeeks: srv.UnnecessarySeeks,
 		NudgesIssued: srv.NudgesIssued, GatesOpened: srv.GatesOpened,
+		SeeksSuppressed: srv.SeeksSuppressed, BiasLearned: srv.BiasLearned,
 		ConvergeMs: converge,
+	}
+	for _, id := range order {
+		res.Misdetections += clients[id].Misdetections
 	}
 	if len(divergences) > 0 {
 		sorted := append([]float64(nil), divergences...)

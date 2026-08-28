@@ -18,6 +18,11 @@ type ClientProfile struct {
 	// Stalls are [start, end) windows in server time where the player buffers.
 	Stalls [][2]int64
 	Link   Link
+	// NoStallInference disables the stall guard, reproducing what syncplay
+	// ships (client.py:521-531 dead-reckons whenever paused is false, with no
+	// buffering guard). Used as a control: a Misdetections count of 0 proves
+	// nothing unless the same scenario produces a non-zero count without it.
+	NoStallInference bool
 }
 
 // Client is a simulated player plus the client half of the sync protocol.
@@ -43,10 +48,21 @@ type Client struct {
 	residualHist   []sample
 	pending        []MsgState // scheduled commands not yet due
 
+	// stall inference -- the client cannot call stalled(); it must work this
+	// out from what a real <video> exposes: readyState, and the fact that
+	// currentTime stops advancing while paused is still false.
+	stallSuspected bool
+	lastEvalPos    float64
+	haveEvalPos    bool
+
 	// counters the harness reads
 	SeeksApplied  int
 	NudgesApplied int
+	// SeekDetections counts genuine user-seek detections. Any increment during
+	// a buffering stall is a MISDETECTION -- the bug syncplay ships
+	// (client.py:521-531 dead-reckons with no buffering guard).
 	SeekDetections int
+	Misdetections  int
 }
 
 type sample struct {
@@ -113,8 +129,8 @@ func (c *Client) onTimeReply(m MsgTimeReply, serverMs int64) {
 	}
 }
 
-// Evaluate is the high-rate local loop: two-diff detection, residual, slope.
-// Returns a report if the client should speak up.
+// Evaluate is the high-rate local loop: stall inference, two-diff detection,
+// residual, slope. Returns a report if the client should speak up.
 func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.Report, bool) {
 	if !c.haveOffset {
 		return vsync.Report{}, false
@@ -122,16 +138,39 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	est := c.serverNowEst(serverMs)
 	expected := float64(c.anchor.Expected(est))
 
-	// --- two-diff seek detection (docs/PROTOCOL.md 4) ---
+	// --- stall inference (docs/PROTOCOL.md 4) -------------------------------
+	// A buffering stall reports paused == false while currentTime freezes.
+	// That signature is what separates it from a user seek; without it the
+	// two-diff test misclassifies every stall as a backward seek and
+	// broadcasts it to the room.
+	wasStalled := c.stallSuspected
+	frozen := c.haveEvalPos && !c.paused && (c.posMs-c.lastEvalPos) < float64(evalIntervalMs)*0.5
+	c.stallSuspected = !c.P.NoStallInference && (c.readyState < t.MinReadyState || frozen)
+	c.lastEvalPos = c.posMs
+	c.haveEvalPos = true
+
+	// --- two-diff seek detection --------------------------------------------
 	playerDiff := math.Abs(c.posMs - c.lastKnownPos)
 	roomDiff := math.Abs(c.posMs - expected)
-	// lastKnownPos is dead-reckoned forward exactly as the real client would.
-	if !c.paused && !c.stalled(serverMs) {
-		c.lastKnownPos += float64(evalIntervalMs) * c.P.IntrinsicRate * c.appliedRate
-	}
-	if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
-		c.SeekDetections++
+	if c.stallSuspected {
+		// Frozen playback is not a seek. Hold the reference point so the gap
+		// does not accumulate into a false positive, and let the readiness
+		// gate deal with the divergence instead.
 		c.lastKnownPos = c.posMs
+	} else {
+		if wasStalled {
+			// Just resumed: re-baseline rather than judging the stall gap.
+			c.lastKnownPos = c.posMs
+		} else if !c.paused {
+			c.lastKnownPos += float64(evalIntervalMs) * c.P.IntrinsicRate * c.appliedRate
+		}
+		if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
+			c.SeekDetections++
+			if c.stalled(serverMs) {
+				c.Misdetections++ // ground truth, for the harness only
+			}
+			c.lastKnownPos = c.posMs
+		}
 	}
 
 	res := c.posMs - expected

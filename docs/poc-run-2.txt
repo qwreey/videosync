@@ -1,0 +1,47 @@
+scenario             strategy          maxDiv   p95Div  meanDiv  seeks  suppr nudges  gates   bias  MISD
+----------------------------------------------------------------------------------------------------------------------
+steady/rate-drift    threshold-500        918      810      445      3      2      0      0      0     0
+steady/rate-drift    threshold-2000      2160     2052     1080      0      0      0      0      0     0
+steady/rate-drift    derivative          1006     1000      764      0      0    236      0      0     0
+steady/rate-drift    step-ramp            939      857      447      3      0     18      0      0     0
+
+transient-hiccup     threshold-500        930       30       26      3      0      0      3      0     0
+transient-hiccup     threshold-2000      2300     1400      549      1      0      0      3      0     0
+transient-hiccup     derivative          1399      954      461      0      0     85      3      0     0
+transient-hiccup     step-ramp            930       30       26      3      0      0      3      0     0
+
+long-stalls          threshold-500       6020       80       72      4      4      0      4      0     0
+long-stalls          threshold-2000      6020       80       72      4      4      0      4      0     0
+long-stalls          derivative          6030     2445      593      3      2     28      4      0     0
+long-stalls          step-ramp           6020       80       72      4      4      0      4      0     0
+
+one-slow-client      threshold-500       4303      517      331      3     12      0      1      0     0
+one-slow-client      threshold-2000      4303     1021      515      1      4      0      1      0     0
+one-slow-client      derivative          4303      542      390      1      4     91      1      0     0
+one-slow-client      step-ramp           4303      537      326      2      5     34      1      0     0
+
+clock-skew           threshold-500        720      684      360      0      0      0      0      0     0
+clock-skew           threshold-2000       720      684      360      0      0      0      0      0     0
+clock-skew           derivative           720      684      360      0      0      0      0      0     0
+clock-skew           step-ramp            720      684      360      0      0      0      0      0     0
+
+latency-asymmetry    threshold-500       1210     1210     1184      6     64      0      0      2     0
+latency-asymmetry    threshold-2000         0        0        0      0      0      0      0      0     0
+latency-asymmetry    derivative           331      331      320      0      0     13      0      0     0
+latency-asymmetry    step-ramp           1210     1210     1184      6     42      0      0      2     0
+
+command-storm        threshold-500     273940    24725     5360     19     76      0      0      2     0
+                                       converge: [0 400 1100 0 150 1000] ms
+command-storm        threshold-2000    272150    24605     5305     11     20      0      0      0     0
+                                       converge: [0 0 800 0 150 1000] ms
+command-storm        derivative        272303    24220     4541      7     14    176      0      0     0
+                                       converge: [0 700 900 0 50 800] ms
+command-storm        step-ramp         272235    21830     4390     19     72      3      0      2     0
+                                       converge: [0 500 1000 0 50 900] ms
+
+CONTROL: same scenario, stall inference DISABLED (= syncplay's behaviour)
+  transient-hiccup   stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 0
+  long-stalls        stall-guard ON  -> misdetections 0
+                     stall-guard OFF -> misdetections 13
+
