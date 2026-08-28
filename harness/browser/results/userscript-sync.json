@@ -22,12 +22,12 @@
     {
       "name": "two browsers joined one room",
       "ok": true,
-      "detail": "MzYbBUq50VTrBPHV4zVjiQ"
+      "detail": "Px9O3rpaSpZ3XDB7SaU_mw"
     },
     {
       "name": "the clock settled from real round trips",
       "ok": true,
-      "detail": "bestRTT 0.6000003814697266 ms"
+      "detail": "bestRTT 0.19999980926513672 ms"
     },
     {
       "name": "a play by one member started both",
@@ -36,7 +36,7 @@
     {
       "name": "the two players stayed together",
       "ok": true,
-      "detail": "20 ms apart (sampling skew 1 ms), a=23.940s b=23.920s"
+      "detail": "19 ms apart (sampling skew 1 ms), a=23.935s b=23.916s"
     },
     {
       "name": "the sender scheduled its own command against the ack",
@@ -78,18 +78,18 @@
     {
       "name": "no correction storm",
       "ok": true,
-      "detail": "seeks a=1 b=1, nudges a=4 b=5"
+      "detail": "seeks a=1 b=1, nudges a=6 b=5"
     }
   ],
   "measurements": {
     "rateNudge": {
       "requested": 1.1,
       "held": 1.1,
-      "advancedS": 3.276,
+      "advancedS": 3.277,
       "impliedRate": 1.092
     },
-    "loopbackRttMs": 0.6000003814697266,
-    "playbackGapMs": 20.2,
+    "loopbackRttMs": 0.19999980926513672,
+    "playbackGapMs": 18.9,
     "samplingSkewMs": 1,
     "senderAcks": 2,
     "stats": {
@@ -98,14 +98,15 @@
         "statesApplied": 3,
         "acksApplied": 5,
         "correctionsSeek": 1,
-        "correctionsNudge": 4,
+        "correctionsNudge": 6,
         "nudgesUnsupported": 0,
         "reportsSent": 21,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,
         "echoesSuppressed": 0,
-        "badFrames": 0
+        "badFrames": 0,
+        "skippedOffMedia": 0
       },
       "b": {
         "cmdsSent": 0,
@@ -119,7 +120,8 @@
         "reconnects": 0,
         "lateApplies": 0,
         "echoesSuppressed": 0,
-        "badFrames": 0
+        "badFrames": 0,
+        "skippedOffMedia": 0
       }
     }
   }

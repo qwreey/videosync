@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
 import type { EngineConfig, EngineEvents } from '../src/engine/engine.ts';
 import type { Anchor } from '../src/engine/clock.ts';
+import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, FakeTransport, VirtualTime, flush } from './fakes.ts';
 import type { FakePlayerOptions } from './fakes.ts';
 
@@ -490,5 +491,137 @@ describe('the wire contract', () => {
       }
     }
     assert.ok(checked > 10, `only ${checked} integer fields were exercised`);
+  });
+});
+
+describe('the element being replaced under us', () => {
+  /** A harness whose adapter is swappable, as a single-page app requires. */
+  function swapHarness() {
+    const vt = new VirtualTime();
+    const swap = new SwappableAdapter();
+    const first = new FakePlayer(vt, { paused: false, positionS: 300 });
+    swap.setTarget(first);
+    const tr = new FakeTransport();
+    tr.autoAnswerTime(OFFSET);
+    const engine = new SyncEngine(
+      {
+        adapter: swap, transport: tr, now: () => vt.now,
+        setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false,
+      },
+      { ...CFG, mediaKey: 'yt:one' },
+    );
+    return { vt, swap, first, tr, engine };
+  }
+
+  async function join(h: ReturnType<typeof swapHarness>, mediaKey = 'yt:one'): Promise<void> {
+    h.engine.start();
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 300_000, atServerMs: OFFSET, paused: false, mediaKey },
+      members: [], serverMs: h.vt.now + OFFSET, mediaKey,
+    });
+    await h.vt.advance(1000);
+  }
+
+  it('does not broadcast a router swap as a user seek', async () => {
+    // The replacement element is somewhere else entirely -- here at 400 s,
+    // because the site restored a "continue watching" position. Without a
+    // reset the next evaluation sees a jump that is large in BOTH diffs, so the
+    // two-diff test calls it a user seek and the whole room follows it into a
+    // video nobody else is watching.
+    //
+    // Note the direction. A swap to an element at 0 is absorbed for free: a
+    // BACKWARD jump makes `posMs - lastEvalPos` negative, the stall guard reads
+    // that as frozen playback and re-baselines. Only the forward case reaches
+    // the two-diff test, which is exactly why it needed a test of its own.
+    const h = swapHarness();
+    await join(h);
+    const before = h.tr.sentOf('cmd').length;
+
+    h.swap.setTarget(new FakePlayer(h.vt, { paused: false, positionS: 400 }));
+    await h.vt.advance(3000);
+
+    const sent = h.tr.sentOf('cmd').slice(before);
+    assert.deepEqual(sent, [], `the swap produced commands: ${JSON.stringify(sent)}`);
+  });
+
+  it('the backward case is absorbed by the stall guard', async () => {
+    // Documented rather than assumed: this is why the bug above only shows up
+    // in one direction, and it would be easy to "fix" the stall guard in a way
+    // that quietly opened the second half of the hole.
+    const h = swapHarness();
+    await join(h);
+    const before = h.tr.sentOf('cmd').length;
+    h.swap.setTarget(new FakePlayer(h.vt, { paused: false, positionS: 0 }));
+    await h.vt.advance(3000);
+    assert.deepEqual(h.tr.sentOf('cmd').slice(before), []);
+  });
+
+  it('puts the new element where the room is, when it is the same media', async () => {
+    const h = swapHarness();
+    await join(h);
+    const next = new FakePlayer(h.vt, { paused: false, positionS: 0 });
+    h.swap.setTarget(next);
+    await h.vt.advance(500);
+    assert.ok(Math.abs(next.readState().positionS - 301) < 1.5,
+      `new element left at ${next.readState().positionS}s while the room is at ~301s`);
+  });
+
+  it('leaves a DIFFERENT video alone, and stops steering the room', async () => {
+    // Snapping someone's next episode to the previous one's timestamp is worse
+    // than doing nothing, and a member on other media must not command a room
+    // whose timeline theirs has nothing to do with.
+    const h = swapHarness();
+    await join(h);
+    const before = h.tr.sentOf('cmd').length;
+
+    h.engine.setLocalMediaKey('yt:two');
+    const next = new FakePlayer(h.vt, { paused: false, positionS: 0 });
+    h.swap.setTarget(next);
+    await h.vt.advance(3000);
+
+    assert.equal(h.engine.followingRoom, false);
+    assert.ok(next.readState().positionS < 5, `the other video was yanked to ${next.readState().positionS}s`);
+    assert.deepEqual(h.tr.sentOf('cmd').slice(before), []);
+
+    // A member watching something else is absent, not behind: reporting
+    // otherwise makes the server correct them against a foreign timeline.
+    const hb = h.tr.sentOf('hb').at(-1)!;
+    assert.equal(hb.suspended, true);
+  });
+
+  it('ignores room transitions while on different media', async () => {
+    const h = swapHarness();
+    await join(h);
+    h.engine.setLocalMediaKey('yt:two');
+    const next = new FakePlayer(h.vt, { paused: false, positionS: 10 });
+    h.swap.setTarget(next);
+    await h.vt.advance(500);
+
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 900_000, atServerMs: when, paused: true, mediaKey: 'yt:one' },
+      by: 'other', kind: 'seek',
+    });
+    await h.vt.advance(500);
+    assert.ok(next.readState().positionS < 15, `seeked to ${next.readState().positionS}s on foreign media`);
+    assert.equal(h.engine.stats.skippedOffMedia, 1);
+    // The anchor is still tracked, so rejoining the room's media resumes cleanly.
+    assert.equal(h.engine.currentAnchor.positionMs, 900_000);
+  });
+
+  it('announces the CURRENT media when it reconnects', async () => {
+    // Reconnecting after a navigation must not tell the server we are still on
+    // the video we joined with.
+    const h = swapHarness();
+    await join(h);
+    h.engine.setLocalMediaKey('yt:two');
+    h.tr.drop('link died');
+    await h.vt.advance(2000);
+    h.tr.open();
+    await h.vt.advance(100);
+    assert.equal(h.tr.sentOf('hello').at(-1)!.mediaKey, 'yt:two');
   });
 });

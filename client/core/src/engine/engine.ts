@@ -120,6 +120,8 @@ export interface EngineStats {
   echoesSuppressed: number;
   /** Frames the server refused as malformed. Any value above zero is our bug. */
   badFrames: number;
+  /** Transitions not applied because this member is watching something else. */
+  skippedOffMedia: number;
 }
 
 export class SyncEngine {
@@ -130,6 +132,7 @@ export class SyncEngine {
     cmdsSent: 0, statesApplied: 0, acksApplied: 0, correctionsSeek: 0,
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
+    skippedOffMedia: 0,
   };
 
   private readonly d: EngineDeps;
@@ -140,6 +143,12 @@ export class SyncEngine {
   private members: readonly MemberInfo[] = [];
   private anchor: Anchor = { positionMs: 0, atServerMs: 0, paused: true, mediaKey: '' };
   private lastAppliedSeq = 0;
+  /**
+   * What THIS member is watching right now, which is not always what the room
+   * is watching. Kept separate from `cfg.mediaKey` because a single-page router
+   * can change it mid-session without a reload.
+   */
+  private localMediaKey: string;
 
   private pending: Scheduled[] = [];
   private applyTimer = 0;
@@ -169,11 +178,49 @@ export class SyncEngine {
     this.d = deps;
     this.cfg = cfg;
     this.ev = events;
+    this.localMediaKey = cfg.mediaKey;
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
       evalIntervalMs: cfg.evalIntervalMs,
       reportThresholdMs: cfg.reportThresholdMs,
     });
+    // A single-page router replaces the element, and the new one starts at 0.
+    // Without this the next evaluation sees a 300 s backward jump that is large
+    // in BOTH diffs, calls it a user seek, and drags the whole room to the
+    // start of a video nobody else is watching.
+    deps.adapter.on('elementreplaced', () => {
+      this.detector.reset();
+      // If we are still on the room's media, put the new element where the
+      // room is. If we are not, leave it alone -- snapping someone's next
+      // episode to the old one's timestamp is worse than doing nothing.
+      if (this.status === 'joined' && this.onRoomMedia()) {
+        void this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused);
+      }
+    });
+  }
+
+  /**
+   * Tell the engine what this member is now watching. The room does not follow
+   * -- that takes a `media` command, which somebody has to choose.
+   */
+  setLocalMediaKey(key: string): void {
+    if (key === this.localMediaKey) return;
+    this.localMediaKey = key;
+    this.detector.reset();
+  }
+
+  /**
+   * Whether we are watching what the room is watching.
+   *
+   * A member on different media cannot follow the room and must not steer it:
+   * their position is measured against a different timeline, so every command
+   * they send and every residual they report is meaningless to everyone else.
+   * Empty on either side means "not established yet", which is not a
+   * disagreement.
+   */
+  private onRoomMedia(): boolean {
+    if (!this.localMediaKey || !this.anchor.mediaKey) return true;
+    return this.localMediaKey === this.anchor.mediaKey;
   }
 
   // --- lifecycle ------------------------------------------------------------
@@ -210,7 +257,10 @@ export class SyncEngine {
     this.setStatus('joining');
     this.d.transport.send({
       t: 'hello', room: this.cfg.room, secret: this.cfg.secret,
-      name: this.cfg.name, mediaKey: this.cfg.mediaKey,
+      name: this.cfg.name,
+      // The CURRENT media, not the one we joined with: a reconnect after a
+      // navigation would otherwise announce the wrong thing.
+      mediaKey: this.localMediaKey,
     });
     // Rapid probes first: nothing may be scheduled against an unsettled offset.
     for (let i = 0; i < this.cfg.connectProbes; i++) {
@@ -388,6 +438,13 @@ export class SyncEngine {
     this.anchor = p.anchor;
     this.ev.onAnchor?.(p.anchor);
 
+    // Track the room's state, but do not move a player that is showing
+    // different media: the room's position means nothing on our timeline.
+    if (!this.onRoomMedia()) {
+      this.stats.skippedOffMedia++;
+      return;
+    }
+
     // If `when` has already passed -- the normal case on a slow link -- the
     // room has moved on since. Aim at where it is NOW, never at where it was
     // when the command was emitted. (The server-side twin of this bug made
@@ -486,7 +543,8 @@ export class SyncEngine {
     const expected = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
     const { observation, report } = this.detector.evaluate(state, expected, now);
 
-    if (!this.applyingRemote && !this.autoplayBlocked) {
+    const onRoomMedia = this.onRoomMedia();
+    if (!this.applyingRemote && !this.autoplayBlocked && onRoomMedia) {
       if (observation.kind === 'seek') {
         this.send('seek', observation.positionS * 1000);
       } else if (observation.kind === 'playstate') {
@@ -503,6 +561,10 @@ export class SyncEngine {
     }
 
     if (!report) return;
+    // Watching something else is the same fact to the server as a suspended tab
+    // or a refused autoplay: this member cannot follow the room and no
+    // correction can change that. Absent, not behind.
+    const absent = report.suspended || this.autoplayBlocked || !onRoomMedia;
     const dueHeartbeat = now - this.lastHbAt >= this.cfg.hbIntervalMs;
     const anomaly =
       Math.abs(report.residualMs) >= this.cfg.reportThresholdMs ||
@@ -527,7 +589,7 @@ export class SyncEngine {
       // browser has taken playback away from this member and no correction can
       // give it back. Both mean absent, not behind -- do not gate the room for
       // them and do not seek them in circles.
-      suspended: report.suspended || this.autoplayBlocked,
+      suspended: absent,
     };
     this.d.transport.send(hb);
     this.stats.reportsSent++;
@@ -565,6 +627,9 @@ export class SyncEngine {
   get currentAnchor(): Anchor { return this.anchor; }
   get appliedSeq(): number { return this.lastAppliedSeq; }
   get blocked(): boolean { return this.autoplayBlocked; }
+  get mediaKey(): string { return this.localMediaKey; }
+  /** True when this member is watching what the room is watching. */
+  get followingRoom(): boolean { return this.onRoomMedia(); }
   /** Where the room should be right now, or null before the clock settles. */
   expectedMs(): number | null {
     return this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;

@@ -62,6 +62,9 @@ const watcher = new PageWatcher({
     const key = normalizeMediaKey(href) ?? '';
     if (key !== mediaKey) {
       mediaKey = key;
+      // The engine has to know before its next evaluation, or it will judge the
+      // new element's position against the old video's timeline.
+      engine?.setLocalMediaKey(key);
       onMediaChanged();
     }
     refreshStatus();
