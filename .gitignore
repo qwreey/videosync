@@ -1,0 +1,39 @@
+# Reference clones (research only, not part of this project)
+refs/
+
+# Research scratch
+*.log
+tmp/
+.cache/
+
+# Node
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# Go
+bin/
+vendor/
+*.exe
+*.test
+*.out
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Extension build output
+web-ext-artifacts/
+*.zip
+*.crx
+*.xpi
