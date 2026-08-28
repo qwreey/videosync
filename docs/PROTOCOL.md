@@ -228,11 +228,32 @@ gate and the room resumes without them.
 Sent on **change only**: one frame per report per member would be the room's report rate times its
 size. A suspended member is never in `waitingOn` — they are absent, not buffering (§4).
 
-> **Implementation status: announce-only.** The server tracks the waiting set, opens and closes it
-> correctly, expires it on `GATE_TIMEOUT`, and releases it when a member leaves — but nothing yet
-> *holds the room*. `OnCmd` does not consult the gate, and no client acts on the frame. The
-> mechanism this section describes is therefore half-built: it says who it would wait for and then
-> does not wait. See `docs/STATE.md`.
+`waiting` and `waitingOn` are **different facts**: `waitingOn` is who is not ready (worth showing
+in the UI whenever it is non-empty), `waiting` is whether a command is actually being held.
+
+### What is held, and how
+
+Only **`play`** is held, and the server holds *the command*, not the players. The gate acts before
+the anchor moves; since the anchor is the only truth, a held `play` simply never happened. That
+means **the gate needs no cooperation from any client** — there is nothing to obey and nothing that
+can get stuck if a client ignores the frame. When the last blocker becomes ready, the held command
+takes the ordinary path: a fresh `seq`, a fresh `when`, an `ack` to its original sender.
+
+- `media` needs no gate: it lands paused by construction, so the `play` after it is the one that
+  waits.
+- `pause` and `seek` are never held — making the room unresponsive exactly when somebody wants to
+  stop it is the wrong failure.
+- At most **one** held command; a later command supersedes it. A queue would let a member who is
+  slow to buffer replay a stale burst of user intent at the room minutes later.
+- `GATE_TIMEOUT` runs from when the **member** entered the gate, not from when the command was
+  held, and the waiver **latches** until they report ready — otherwise a member who never recovers
+  holds the room forever in `GATE_TIMEOUT`-sized increments.
+
+Measured (`docs/POC-FINDINGS.md` §38): without the hold, a member who cannot buffer is skipped past
+**14 470 ms** of media and pays a rebuffering out-of-buffer seek; with it, nothing is skipped and
+everyone waits 16 s. The gate does not make anything faster — it converts one member's loss into
+everyone's wait. `anchorErr` cannot see this (it excludes a stalled client by construction), which
+is why `SkippedMs` exists.
 
 ## 7. Chat & rooms
 

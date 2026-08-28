@@ -27,6 +27,9 @@ type Scenario struct {
 	StartPaused bool
 	// NoStaleResend is a control: see Server.NoStaleResend.
 	NoStaleResend bool
+	// GateDisabled is a control: announce the readiness gate but never hold a
+	// command for it. "Gating is better" is an assertion until this is run.
+	GateDisabled bool
 }
 
 // Result is what we compare strategies on.
@@ -58,6 +61,17 @@ type Result struct {
 	SeeksSuppressed  int
 	BiasLearned      int
 	StaleResends     int
+	// CmdsHeld counts commands the readiness gate delayed, GateHoldMs the
+	// total time they spent held. Both are costs, not achievements: the gate
+	// buys alignment by making somebody wait.
+	CmdsHeld   int
+	GateHoldMs int64
+	// SkippedMs is media the room skipped past for its members: the sum of
+	// forward displacement imposed by server-ordered seeks. It is the cost the
+	// gate exists to prevent and the reason anchorErr alone cannot score it --
+	// anchorErr excludes a stalled client, so leaving someone behind and then
+	// yanking them forward looks like a good run.
+	SkippedMs float64
 	// Seeks split by what they actually cost: an in-buffer seek is ~free, an
 	// out-of-buffer seek costs a segment fetch AND rebuffers for it.
 	InBufferSeeks    int
@@ -98,6 +112,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	start := vsync.Anchor{PositionMs: sc.StartPos, AtServerMs: 0, Paused: sc.StartPaused, MediaKey: "m"}
 	srv := NewServer(corr, tun, start)
 	srv.NoStaleResend = sc.NoStaleResend
+	srv.GateDisabled = sc.GateDisabled
 	for _, id := range order {
 		srv.Join(0, id, id)
 	}
@@ -244,6 +259,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		NudgesIssued: srv.NudgesIssued, GatesOpened: srv.GatesOpened,
 		SeeksSuppressed: srv.SeeksSuppressed, BiasLearned: srv.BiasLearned,
 		StaleResends:           srv.StaleResends,
+		CmdsHeld:               srv.CmdsHeld,
+		GateHoldMs:             srv.GateHoldMs,
 		RoomPausedBySuspension: roomPausedBySuspension,
 		ConvergeMs:             converge,
 	}
@@ -254,6 +271,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		res.InBufferSeeks += c.InBufferSeeks
 		res.OutOfBufferSeeks += c.OutOfBufferSeeks
 		res.RateTimeMs += c.RateTimeMs
+		res.SkippedMs += c.SkippedMs
 	}
 	if len(divergences) > 0 {
 		sorted := append([]float64(nil), divergences...)

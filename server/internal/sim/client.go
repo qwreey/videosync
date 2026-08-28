@@ -62,6 +62,10 @@ type Client struct {
 	readyState  int
 	bufferedS   float64
 
+	// SkippedMs is the total forward displacement server corrections imposed:
+	// media this member was skipped past without watching.
+	SkippedMs float64
+
 	// --- clock estimate ---
 	estOffsetMs  int64 // add to client clock to get server clock
 	bestRTT      int64
@@ -444,6 +448,14 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 				c.OutOfBufferSeeks++
 				c.seekStallUntil = serverMs + c.segFetchMs()
 				c.bufEndS = target / 1000
+			}
+			// A forward correction is content this member never saw. That is
+			// the cost the readiness gate exists to prevent, and no other
+			// metric here captures it: anchorErr excludes a stalled client by
+			// construction, so a room that simply left someone behind and then
+			// yanked them forward scores *well* on it.
+			if target > c.posMs {
+				c.SkippedMs += target - c.posMs
 			}
 			c.posMs = target
 			c.lastKnownPos = c.posMs

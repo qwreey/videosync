@@ -124,6 +124,19 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
+			// The readiness gate's own scenario. The room is paused, one member
+			// cannot buffer for the first 25 s, and somebody presses play at
+			// 10 s. Without the gate the room starts without them and they
+			// spend the stall falling behind; with it the play waits.
+			Name: "slow-to-buffer", Seed: 51, DurationMs: 90000, StartPos: 0, StartPaused: true,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh, Stalls: [][2]int64{{0, 25000}}},
+			},
+			Commands: []sim.Command{{AtMs: 10000, ClientID: "a", Kind: "play"}},
+		},
+		{
 			Name: "command-storm", Seed: 6, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -160,6 +173,30 @@ func controlRun(tun vsync.Tunables) {
 		res := sim.Run(off, vsync.ThresholdCorrector{}, tun)
 		fmt.Printf("  %-18s stall-guard ON  -> misdetections %d\n", sc.Name, on.Misdetections)
 		fmt.Printf("  %-18s stall-guard OFF -> misdetections %d\n", "", res.Misdetections)
+	}
+	fmt.Println()
+
+	// The readiness gate is the one piece of the design that was shipped as a
+	// notification before it was ever measured. Its benefit cannot show up in
+	// anchorErr -- that metric excludes a stalled client -- so score it on the
+	// media its members were skipped past, and charge it for the delay it
+	// imposes.
+	fmt.Println("CONTROL: slow-to-buffer, readiness gate ON vs OFF")
+	for _, sc := range scenarios() {
+		if sc.Name != "slow-to-buffer" {
+			continue
+		}
+		off := sc
+		off.GateDisabled = true
+		for _, c := range []struct {
+			label string
+			sc    sim.Scenario
+		}{{"gate ON ", sc}, {"gate OFF", off}} {
+			r := sim.Run(c.sc, &vsync.ServoCorrector{}, tun)
+			fmt.Printf("  %-8s anchorErr %4.0f ms   skipped %6.0f ms   out-of-buffer seeks %d"+
+				"   held %d cmd for %d ms\n",
+				c.label, r.MeanAnchorErrMs, r.SkippedMs, r.OutOfBufferSeeks, r.CmdsHeld, r.GateHoldMs)
+		}
 	}
 	fmt.Println()
 }

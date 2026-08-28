@@ -416,3 +416,75 @@ func TestLateJoinerConverges(t *testing.T) {
 	t.Logf("with a joiner at t=30s: mean anchor err %.0f ms, p95 %.0f ms, in/out seeks %d/%d",
 		r.MeanAnchorErrMs, r.P95AnchorErrMs, r.InBufferSeeks, r.OutOfBufferSeeks)
 }
+
+// gateScenario: the room is paused, one member cannot buffer for 25 s, and
+// somebody presses play at 10 s.
+func gateScenario(stallEnd int64, disabled bool) Scenario {
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	meh := Link{UpMs: 80, DownMs: 80, JitterMs: 30}
+	return Scenario{
+		Name: "slow-to-buffer", Seed: 51, DurationMs: 90000, StartPaused: true,
+		GateDisabled: disabled,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: good},
+			{ID: "c", IntrinsicRate: 1.0, Link: meh, Stalls: [][2]int64{{0, stallEnd}}},
+		},
+		Commands: []Command{{AtMs: 10000, ClientID: "a", Kind: "play"}},
+	}
+}
+
+// The readiness gate's benefit cannot be seen in anchorErr: that metric
+// excludes a stalled client by construction, so a room that starts without
+// somebody and later yanks them forward scores *well* on it. The cost the gate
+// prevents is media its members never saw.
+func TestGateStopsTheRoomSkippingPastASlowMember(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	on := Run(gateScenario(25000, false), &vsync.ServoCorrector{}, tun)
+	if on.SkippedMs != 0 {
+		t.Errorf("gate on: %v ms of media was skipped past a member", on.SkippedMs)
+	}
+	if on.CmdsHeld != 1 {
+		t.Errorf("gate on: held %d commands, want 1", on.CmdsHeld)
+	}
+	// The gate is not free and the test says what it costs, so a future change
+	// that makes it cheap by making it useless is visible.
+	if on.GateHoldMs < 10000 {
+		t.Errorf("gate on: held for only %d ms; the stall lasted 25 s", on.GateHoldMs)
+	}
+
+	// The control: without the hold, the same scenario skips the slow member
+	// past a large chunk of the media.
+	off := Run(gateScenario(25000, true), &vsync.ServoCorrector{}, tun)
+	if off.SkippedMs < 5000 {
+		t.Errorf("control skipped only %v ms -- the scenario no longer reproduces "+
+			"what the gate is for", off.SkippedMs)
+	}
+	if off.CmdsHeld != 0 {
+		t.Errorf("control held %d commands with the gate disabled", off.CmdsHeld)
+	}
+}
+
+// Anti-hang. Jellyfin's Waiting state has no timeout, so one member who never
+// becomes ready stops the room forever. GATE_TIMEOUT drops them and the room
+// continues without them.
+func TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	// The stall outlasts the run, so the member is never ready.
+	r := Run(gateScenario(90000, false), &vsync.ServoCorrector{}, tun)
+	if r.CmdsHeld != 1 {
+		t.Fatalf("held %d commands, want 1", r.CmdsHeld)
+	}
+	// GATE_TIMEOUT is per MEMBER, not per held command: it runs from when that
+	// member entered the gate (~t=0 here, as soon as they first reported
+	// buffering), not from when the play arrived at t=10 s. So the play is
+	// released at ~30 s and was held for ~20 s. Getting this backwards would
+	// mean a member could re-enter the gate and restart the clock forever.
+	if r.GateHoldMs < 12000 || r.GateHoldMs > 32000 {
+		t.Errorf("gate held for %d ms; want release ~20 s in (GATE_TIMEOUT 30 s "+
+			"measured from when the member started buffering at ~t=0)", r.GateHoldMs)
+	}
+	if r.GateHoldMs >= 79000 {
+		t.Error("the room was held for the rest of the run: the anti-hang timeout did not fire")
+	}
+}

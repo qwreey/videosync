@@ -305,29 +305,119 @@ func TestAnUpToDateClientIsJudgedNotResent(t *testing.T) {
 
 // --- the readiness gate -----------------------------------------------------
 
-func TestGateOpensOnBufferingAndClosesOnRecovery(t *testing.T) {
+func TestBufferingIsAnnouncedWithoutHoldingTheRoom(t *testing.T) {
+	// `waitingOn` is who is not ready; `waiting` is whether the room is
+	// actually being held. They are different facts. Mid-playback buffering is
+	// worth showing in the UI, but stopping the room for it turns one member's
+	// 200 ms rebuffer into a room-wide stutter -- correcting that one member is
+	// what the judge-don't-aggregate design is for.
 	f := start(t, nil)
 	id, secret := f.createRoom("yt:abc")
 	a, _, _ := f.dial(id, secret, "a", "yt:abc")
 	b, _, _ := f.dial(id, secret, "b", "yt:abc")
 	a.await("members")
 
-	// b is buffering: paused == false, readyState < 3, buffer draining.
 	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 2; r.BufferedAheadS = 0 }))
 	g := a.await("gate")
-	if g["waiting"] != true {
-		t.Fatalf("gate = %v, want waiting", g)
-	}
 	on, _ := g["waitingOn"].([]any)
 	if len(on) != 1 || on[0] != b.id {
 		t.Fatalf("waitingOn = %v, want [%s]", g["waitingOn"], b.id)
 	}
+	if g["waiting"] != false {
+		t.Fatalf("the room is held even though no command is pending: %v", g)
+	}
 
 	b.send(hb(0, 0, nil))
 	g = a.await("gate")
-	if g["waiting"] != false {
-		t.Fatalf("gate did not close: %v", g)
+	if on, _ := g["waitingOn"].([]any); len(on) != 0 {
+		t.Fatalf("gate did not clear: %v", g)
 	}
+}
+
+func TestPlayIsHeldUntilEveryoneIsReady(t *testing.T) {
+	// The gate acts BEFORE the anchor moves, so it needs no cooperation from
+	// any client: there is nothing to obey and nothing that can get stuck.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	g := a.await("gate")
+	if g["waiting"] != true {
+		t.Fatalf("play was not held: %v", g)
+	}
+	// Nothing transitioned: no ack for the sender, no broadcast for anyone.
+	a.quiet(300*time.Millisecond, "ack", "state")
+
+	b.send(hb(0, 0, nil)) // ready
+	ack := a.await("ack")
+	if ack["reqId"] != "p1" {
+		t.Fatalf("released ack is for %v, want the held command", ack["reqId"])
+	}
+	st := b.await("state")
+	if num(ack, "when") != num(st, "when") || st["kind"] != "play" {
+		t.Fatalf("released command did not take the normal path: ack=%v state=%v", ack, st)
+	}
+	anchor, _ := st["anchor"].(map[string]any)
+	if anchor["paused"] != false {
+		t.Fatalf("released play left the room paused: %v", anchor)
+	}
+}
+
+func TestOnlyPlayIsHeld(t *testing.T) {
+	// pause and seek go through while a member buffers: they are not the
+	// transitions where being unready is fatal, and holding them would make
+	// the room unresponsive exactly when someone wants to stop it.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+
+	a.send(room.Cmd{ReqID: "s1", Kind: "seek", PositionMs: 5000})
+	if ack := a.await("ack"); ack["reqId"] != "s1" {
+		t.Fatalf("seek was held: %v", ack)
+	}
+	a.send(room.Cmd{ReqID: "p1", Kind: "pause"})
+	if ack := a.await("ack"); ack["reqId"] != "p1" {
+		t.Fatalf("pause was held: %v", ack)
+	}
+}
+
+func TestALaterCommandSupersedesAHeldOne(t *testing.T) {
+	// Holding a queue would let a member who is slow to buffer replay a stale
+	// burst of user intent at the room minutes later.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	a.await("gate")
+	a.send(room.Cmd{ReqID: "s1", Kind: "seek", PositionMs: 9000})
+	if ack := a.await("ack"); ack["reqId"] != "s1" {
+		t.Fatalf("ack = %v, want the seek", ack)
+	}
+	// Drain b's copy of the seek before asserting on silence, and check the
+	// held play consumed no seq: the seek is still the room's first command.
+	if st := b.await("state"); num(st, "seq") != 1 || st["kind"] != "seek" {
+		t.Fatalf("state = %v, want the seek at seq 1", st)
+	}
+
+	// b becomes ready: the superseded play must NOT fire now.
+	b.send(hb(1, 0, nil))
+	a.quiet(400*time.Millisecond, "ack")
+	b.quiet(100*time.Millisecond, "state")
 }
 
 func TestGateIsNotReannouncedOnEveryHeartbeat(t *testing.T) {
@@ -358,14 +448,17 @@ func TestAMemberWhoLeavesWhileBufferingReleasesTheGate(t *testing.T) {
 	a.await("members")
 
 	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
 	if g := a.await("gate"); g["waiting"] != true {
-		t.Fatal("gate never opened")
+		t.Fatal("the play was not held")
 	}
 	b.sock.Close(ws.CloseGoingAway, "")
 
-	g := a.await("gate")
-	if g["waiting"] != false {
-		t.Fatalf("gate still held after the member left: %v", g)
+	// The held play must fire, not sit there forever waiting for someone who
+	// is no longer in the room.
+	if ack := a.await("ack"); ack["reqId"] != "p1" {
+		t.Fatalf("ack = %v, want the released play", ack)
 	}
 }
 
@@ -386,6 +479,12 @@ func TestASuspendedMemberDoesNotHoldTheRoom(t *testing.T) {
 	}))
 	a.quiet(300*time.Millisecond, "gate")
 	b.quiet(100*time.Millisecond, "correct")
+
+	// And a play is not held for them either.
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	if ack := a.await("ack"); ack["reqId"] != "p1" {
+		t.Fatalf("a suspended member held the room: %v", ack)
+	}
 }
 
 // --- rooms, secrets, membership ---------------------------------------------

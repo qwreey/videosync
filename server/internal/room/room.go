@@ -2,6 +2,7 @@ package room
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	vsync "github.com/qwreey/videosync/server/internal/sync"
@@ -41,7 +42,12 @@ type Member struct {
 
 	gated   bool
 	gatedAt int64
-	corr    corrState
+	// gateWaived: this member timed out of the gate and is excluded from it
+	// until they report ready again. Without the latch the timeout flaps --
+	// the next report would just reopen the gate at a fresh gatedAt and the
+	// room would never resume.
+	gateWaived bool
+	corr       corrState
 }
 
 // corrState tracks whether our corrections are actually working on one client.
@@ -106,6 +112,21 @@ type Room struct {
 	SeeksSuppressed  int // blocked by the cooldown or the failed-seek detector
 	BiasLearned      int // clients whose clock bias we gave up on and absorbed
 	GateFrames       int // Gate broadcasts actually put on the wire
+	GatesWaived      int // members dropped from the gate by GATE_TIMEOUT
+	CmdsHeld         int // commands the gate held before applying
+	GateHoldMs       int64
+
+	// GateDisabled turns the hold off, as a control: the gate is still
+	// announced but never delays anything. Without a measured comparison
+	// "gating is better" is an assertion, and a member who is chronically slow
+	// to buffer could make the gate worse than no gate at all.
+	GateDisabled bool
+
+	// held is the one command the readiness gate is holding, if any. At most
+	// one: any later command supersedes it, because holding a queue would let
+	// a member who is slow to buffer replay a stale burst of user intent at
+	// the room minutes later.
+	held *heldCmd
 
 	// gateSig is the last announced gated set, so a Gate frame goes out only
 	// when the set CHANGES. Re-announcing it on every heartbeat would put a
@@ -113,10 +134,21 @@ type Room struct {
 	gateSig string
 }
 
+// heldCmd is a command the gate is holding until the room is ready for it.
+type heldCmd struct {
+	by      string
+	cmd     Cmd
+	sinceMs int64
+}
+
 func New(id string, c vsync.Corrector, t vsync.Tunables, start vsync.Anchor, sink Sink) *Room {
 	return &Room{
 		ID: id, anchor: start, corrector: c, tun: t, sink: sink,
 		members: map[string]*Member{},
+		// Seed the signature with "nobody waiting, nothing held" so the first
+		// report in a healthy room does not broadcast a gate frame announcing
+		// that nothing is wrong.
+		gateSig: "false|",
 	}
 }
 
@@ -166,7 +198,9 @@ func (r *Room) Leave(now int64, id string) {
 	if f, ok := r.corrector.(Forgetter); ok {
 		f.Forget(id)
 	}
-	// The departing member may have been the only one the room was waiting for.
+	// Jellyfin's anti-hang rule: a member who leaves while buffering counts as
+	// ready, so a dropped connection cannot freeze the room.
+	r.releaseGate(now)
 	r.announceGate()
 }
 
@@ -253,6 +287,39 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 		m.PositionMs = 0
 	}
 
+	// --- the readiness gate, section 6 -------------------------------------------
+	//
+	// Only `play` is held. Starting playback that somebody cannot follow is the
+	// transition where being unready is actually fatal; mid-playback buffering
+	// is handled by correcting that one member, which is what the whole
+	// judge-don't-aggregate design is for. Gating every transition -- what
+	// Jellyfin does -- turns one member's 200 ms rebuffer into a room-wide
+	// stutter. `media` needs no gate because it lands paused by construction,
+	// so the `play` that follows is the one that waits.
+	//
+	// Note what this does NOT require: any cooperation from the client. The
+	// gate acts BEFORE the anchor moves, and the anchor is the only truth, so
+	// there is nothing for a client to obey and nothing that can get stuck if
+	// it does not.
+	if m.Kind == "play" && !r.GateDisabled && len(r.Gated()) > 0 {
+		r.held = &heldCmd{by: id, cmd: m, sinceMs: now}
+		r.CmdsHeld++
+		r.announceGate()
+		return
+	}
+	// Any other command supersedes whatever was held: the user changed their
+	// mind, and replaying stale intent minutes later would be worse than
+	// dropping it.
+	r.held = nil
+
+	r.apply(now, id, m)
+	r.announceGate()
+}
+
+// apply performs a command that has already been validated and cleared by the
+// gate. Split out of OnCmd so a held command takes exactly the same path when
+// it is finally released.
+func (r *Room) apply(now int64, id string, m Cmd) {
 	r.seq++
 	when := now + r.CmdDelay()
 	switch m.Kind {
@@ -293,8 +360,11 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		return
 	}
 	// The gate can open or close anywhere below, including on the stale-resend
-	// path, so the announcement is deferred rather than repeated.
-	defer r.announceGate()
+	// path, so releasing and announcing are deferred rather than repeated.
+	defer func() {
+		r.releaseGate(now)
+		r.announceGate()
+	}()
 
 	rep := in.Report
 	// Identity comes from the connection, never from a field the sender fills.
@@ -378,17 +448,19 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		r.NudgesIssued++
 		r.send(id, Correct{Mode: "nudge", Rate: d.Rate, When: now, Why: d.Why})
 	case vsync.ActionGate:
-		if !m.gated {
+		if !m.gated && !m.gateWaived {
 			m.gated, m.gatedAt = true, now
 			r.GatesOpened++
 		}
 		// Anti-hang: a member stuck buffering past the timeout is dropped from
-		// the gate and the room continues without them.
-		if now-m.gatedAt > GateTimeoutMs {
-			m.gated = false
+		// the gate and the room continues without them. The waiver latches --
+		// see Member.gateWaived.
+		if m.gated && now-m.gatedAt > GateTimeoutMs {
+			m.gated, m.gateWaived = false, true
+			r.GatesWaived++
 		}
 	default:
-		m.gated = false
+		m.gated, m.gateWaived = false, false
 		// Only clear the rate when the client is genuinely back in tolerance.
 		// Clearing it while a nudge is still closing the gap cancels the
 		// correction that is working.
@@ -408,13 +480,17 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 // still buffering is dropped from the gate and the room resumes without them.
 func (r *Room) announceGate() {
 	ids := r.Gated()
-	sig := strings.Join(ids, ",")
+	held := r.held != nil
+	// `waiting` means the room is actually being held; `waitingOn` is who is
+	// not ready. They are different facts: a member buffering mid-playback is
+	// worth showing in the UI without stopping anybody.
+	sig := strconv.FormatBool(held) + "|" + strings.Join(ids, ",")
 	if sig == r.gateSig {
 		return
 	}
 	r.gateSig = sig
 	r.GateFrames++
-	r.Broadcast("", Gate{Waiting: len(ids) > 0, WaitingOn: ids, Reason: "buffering"})
+	r.Broadcast("", Gate{Waiting: held, WaitingOn: ids, Reason: "buffering"})
 }
 
 // Tick is the room's own timer: it expires readiness gates held by members who
@@ -424,9 +500,13 @@ func (r *Room) Tick(now int64) {
 	for _, id := range r.ids {
 		m := r.members[id]
 		if m.gated && now-m.gatedAt > GateTimeoutMs {
-			m.gated = false
+			m.gated, m.gateWaived = false, true
+			r.GatesWaived++
 		}
 	}
+	// A member who buffers and then stops reporting entirely would otherwise
+	// hold a `play` forever; the timeout above is what makes that finite.
+	r.releaseGate(now)
 	r.announceGate()
 }
 
@@ -439,6 +519,23 @@ func (r *Room) OnChat(now int64, id string, in ChatIn) {
 	}
 	r.Broadcast("", ChatOut{From: id, Name: m.Name, Text: in.Text, ServerMs: now})
 }
+
+// releaseGate applies the held command once nobody is holding the room back.
+// Called from every place a member can become ready or disappear.
+func (r *Room) releaseGate(now int64) {
+	if r.held == nil || len(r.Gated()) > 0 {
+		return
+	}
+	h := r.held
+	r.held = nil
+	r.GateHoldMs += now - h.sinceMs
+	// The originator is still the originator: they get the ack, everyone else
+	// gets the broadcast, exactly as if the command had arrived now.
+	r.apply(now, h.by, h.cmd)
+}
+
+// Held reports whether the gate is currently holding a command.
+func (r *Room) Held() bool { return r.held != nil }
 
 // Gated returns the ids currently held by the readiness gate, in stable order.
 func (r *Room) Gated() []string {

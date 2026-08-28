@@ -11,9 +11,9 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Risk A — does the algorithm converge? | **done** — `server/internal/sim`, 8 rounds in `docs/POC-FINDINGS.md` |
 | Risk B — does it survive a real browser? | **partly done** — `harness/browser/`, `docs/BROWSER-FINDINGS.md` |
 | Client core (adapter, detector, clock) | **done and browser-validated** — `client/core/` |
-| Sync server (Go, WebSocket, rooms) | **done except the readiness gate** — `server/cmd/videosyncd` |
-| Readiness gate — *enforcement* | **not started** ← next |
-| Userscript shim | not started |
+| Sync server (Go, WebSocket, rooms) | **done** — `server/cmd/videosyncd` |
+| Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
+| Userscript shim | **not started** ← next |
 | Extension shim | not started (deliberately last) |
 
 ## What exists and works
@@ -44,28 +44,27 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 
 ## The next task, concretely
 
-**Make the readiness gate actually gate.** Today it is announce-only: the server tracks the waiting
-set, opens and closes it correctly, expires it on `GATE_TIMEOUT` and releases it when a member
-leaves — but `OnCmd` never consults it and no client acts on the frame. The server says who it
-would wait for and then does not wait. `docs/PROTOCOL.md` §6 carries the same warning.
+**The userscript shim** (`client/userscript/`). It is the cheaper of the two shipping targets and
+carries no MV3 service-worker risk, so it validates the adapter layer at the lowest cost — it is
+also a shipping target in its own right (D5), not a spike.
 
-1. Decide what "hold" means against the anchor. The room is a pure function of
-   `{positionMs, atServerMs, paused}`; holding is a `paused` transition the *server* originates,
-   which means a `seq` and a `state` broadcast with `by:"server"`, and a matching resume. Anything
-   that stops playback without moving the anchor puts every member into a residual the corrector
-   will then try to "fix".
-2. Decide when it fires. Jellyfin gates on *every* transition; that turns one member's 200 ms
-   rebuffer into a room-wide stutter. The measured alternative is to gate only a `play` or a
-   `media` (the transitions where being unready is fatal) and let the corrector handle mid-playback
-   buffering, which it already does well.
-3. Make the sim's client model act on `gate` — it currently ignores the frame — and measure. The
-   gate's *effect* is completely unmeasured; it is the one piece of the design with no number
-   attached to it. Add a scenario where one member is chronically slow to buffer, and check the
-   gate does not make the room worse than not gating at all.
-4. Then wire it into the real server behind the same `room.Room` methods.
+1. A Tampermonkey bundle that pulls in `client/core` (adapter, detector, clock) and adds the
+   protocol client: `hello`, min-RTT `time` sampling, scheduled application of `state`/`ack` at
+   `when`, `hb` reporting, and applying `correct`.
+2. Point it at a local `videosyncd` and a local page first (`harness/browser/page.html` already
+   serves a real `<video>` with a controllable stall), then at YouTube, then at Laftel.
+3. **Measure `playbackRate` on both providers while you are there** — it is the open question the
+   whole servo design leans on, and the userscript is the cheapest place to answer it.
+4. Only then the extension.
 
-After that: the userscript shim (cheaper of the two shipping targets, no MV3 service-worker risk),
-then the extension.
+Two things the client must get right that the server cannot enforce:
+
+- **Schedule against `ack.when` exactly like `state.when`.** The sender of a command is excluded
+  from the broadcast, not from the scheduling. Getting this wrong is invisible to the sender and
+  costs `CMD_DELAY` of divergence for everyone else.
+- **Never let `applyingRemote` be load-bearing.** Echo suppression is structural (the two-diff
+  test); the flag is a backstop only. syncwatch shipped a load-bearing timeout flag and it
+  deadlocks silently.
 
 ## Open questions that block things
 
@@ -78,8 +77,6 @@ then the extension.
 
 ## Known gaps in what is built
 
-- **The readiness gate does not gate** (above). This is the only place where a doc describes a
-  mechanism the code only half implements, and `PROTOCOL.md` §6 says so too.
 - **Client identity does not survive a reconnect.** The server mints a fresh client id per
   connection, so a member who drops and returns is a new member: `Forget` discards their servo
   state and learned clock bias, and they reappear in the roster under a new id. The harness's

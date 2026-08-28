@@ -741,3 +741,98 @@ reconnect / suspension all exist as scenarios. **Background throttling deliberat
 §4 of the browser findings measured that an audible tab is exempt, and §5 that a muted hidden one
 is paused outright rather than throttled, so the "1 Hz eval loop" scenario turned out to describe
 a state that does not occur. That gap closed by being measured away rather than by being modelled.
+
+## 38. Round 9 — the readiness gate, finally measured
+
+The gate was the one piece of the design that had a spec, a frame type and a
+constant, and no number. `MsgGate` existed in the harness and was never
+constructed; §6 of `PROTOCOL.md` described Jellyfin's `Waiting` state and our
+`GATE_TIMEOUT` addition, and nothing implemented either. It shipped as a
+notification before it was ever a mechanism.
+
+### The metric had to be invented before the gate could be scored
+
+`anchorErr` cannot see what the gate is for. It **excludes a stalled client by
+construction** — a client that is legitimately buffering is not counted against
+the strategy. So a room that starts without a slow member, lets them fall 14 s
+behind, then yanks them forward with a seek, scores *well* on it. Every existing
+metric had the same blind spot: seeks are counted but a seek that skips content
+costs the same as one that does not, and inter-client spread was already retired
+for rewarding inaction (§24).
+
+Added `SkippedMs`: the total **forward** displacement server corrections imposed
+on a member. That is media they never saw. It is the only quantity here that
+measures the thing a watch-party is for.
+
+### `slow-to-buffer`, gate on vs off
+
+Room paused, one member cannot buffer for the first 25 s, somebody presses play
+at 10 s. `ServoCorrector` in both runs.
+
+| | anchorErr | **skipped** | out-of-buffer seeks | commands held |
+|---|---|---|---|---|
+| gate **ON** | 10 ms | **0 ms** | 0 | 1, for 16 060 ms |
+| gate **OFF** | 65 ms | **14 470 ms** | 1 | — |
+
+Without the gate the slow member is skipped past **14.5 seconds of media** and
+pays a rebuffering out-of-buffer seek to get there. With it, nobody misses
+anything and everybody waits 16 s. That is the trade, stated honestly: the gate
+does not make anything faster, it converts one member's loss into everyone's
+wait.
+
+Note how close the two `anchorErr` figures are (10 vs 65 ms). Ranking the gate
+on the primary metric would have concluded it does almost nothing.
+
+### Design consequences the measurement forced
+
+1. **Hold the command, do not stop the players.** The gate acts *before* the
+   anchor moves. The anchor is the only truth, so a held `play` simply never
+   happens — which means the gate needs **no cooperation from any client**.
+   There is nothing to obey, nothing to time out, and nothing that can get stuck
+   if a client ignores the frame. The first sketch had the server pause the room
+   and resume it, which puts every member into a residual the corrector then
+   tries to "fix".
+
+2. **Only `play` is held.** Gating every transition, which is what Jellyfin
+   does, turns one member's 200 ms rebuffer into a room-wide stutter.
+   Mid-playback buffering is already handled by correcting that one member —
+   the whole judge-don't-aggregate design. `media` needs no gate either: it
+   lands paused by construction, so the `play` after it is the one that waits.
+   `pause` and `seek` are never held; making the room unresponsive exactly when
+   somebody wants to stop it is the wrong failure.
+
+3. **`waiting` and `waitingOn` are different facts.** `waitingOn` is who is not
+   ready — worth showing in the UI whenever it is non-empty. `waiting` is
+   whether a command is actually being held. Conflating them either hides the
+   buffering indicator or stops the room for it.
+
+4. **The timeout waiver must latch.** The first version cleared `gated` when
+   `now - gatedAt > GATE_TIMEOUT` and the member's next report re-opened the
+   gate at a fresh `gatedAt`. A member who never recovers would hold the room
+   forever in 30 s increments. `gateWaived` latches until they report ready.
+
+5. **At most one held command; a later one supersedes it.** A queue would let a
+   member who is slow to buffer replay a stale burst of user intent at the room
+   minutes later.
+
+6. **The gate is announced on change only.** One frame per report per member is
+   the room's report rate times its size.
+
+### What the timeout actually measures from
+
+`GATE_TIMEOUT` runs from when the **member** entered the gate, not from when the
+command was held. In `slow-to-buffer` the member starts buffering at t≈0 and the
+play arrives at t=10 s, so the play is released at ~30 s having been held for
+~20 s. Pinned in `TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers`,
+because the natural misreading (restart the clock per command) is exactly the
+one that never terminates.
+
+### Harness note
+
+Adding the gate broadcast re-rolled every scenario's jitter draws, because gate
+frames are real downlink traffic. Absolute numbers shifted by a few percent
+across the table; `servo` moved least (long-stalls 52 → 52, one-slow 100 → 100).
+Seeding the gate signature with "nothing held, nobody waiting" removed a
+spurious frame at the first report of every healthy room and brought the diff
+back to a single line — `reconnect`'s gate count halving, which is the waiver
+latch no longer double-counting one continuous buffering episode.
