@@ -31,9 +31,22 @@ type Result struct {
 	Scenario  string
 	Corrector string
 
-	MaxDivergenceMs float64
-	P95DivergenceMs float64
+	// Inter-client spread. Kept for continuity with earlier rounds, but it
+	// REWARDS INACTION: in a scenario where clients start aligned at 1.0x, a
+	// strategy that does nothing scores a perfect 0. It cannot distinguish
+	// "correctly did nothing" from "was never tested", and it cannot see the
+	// whole room drifting away from the anchor together.
+	MaxDivergenceMs  float64
+	P95DivergenceMs  float64
 	MeanDivergenceMs float64
+
+	// Anchor error is |clientPos - anchor.Expected(TRUE server time)| -- the
+	// quantity a corrector is actually minimising, measured against the real
+	// clock rather than any client's estimate of it. This is the primary
+	// metric. Blanked for 4 s after each command, when nobody is meant to be
+	// in position yet; ConvergeMs covers the transition.
+	MeanAnchorErrMs float64
+	P95AnchorErrMs  float64
 
 	SeeksIssued      int
 	UnnecessarySeeks int
@@ -72,6 +85,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	}
 
 	var divergences []float64
+	var anchorErrs []float64
+	lastCmdAt := int64(-1 << 40)
 	cmdIdx := 0
 	type pendingConv struct{ at int64 }
 	var awaiting []pendingConv
@@ -93,6 +108,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			net.Send(now, cm.ClientID, cm.ClientID, "server", true,
 				MsgCmd{ClientID: cm.ClientID, ReqID: cmdIdx, Kind: cm.Kind, PositionMs: cm.PositionMs})
 			awaiting = append(awaiting, pendingConv{at: now})
+			lastCmdAt = now
 			cmdIdx++
 		}
 
@@ -130,6 +146,16 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 					continue // legitimately behind; that is the gate's job
 				}
 				live = append(live, c.Pos())
+			}
+			if now-lastCmdAt > 4000 {
+				exp := float64(srv.Anchor().Expected(now))
+				for _, id := range order {
+					c := clients[id]
+					if c.stalled(now) || !c.haveOffset {
+						continue
+					}
+					anchorErrs = append(anchorErrs, math.Abs(c.Pos()-exp))
+				}
 			}
 			if len(live) >= 2 {
 				mn, mx := live[0], live[0]
@@ -184,6 +210,16 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			sum += v
 		}
 		res.MeanDivergenceMs = sum / float64(len(divergences))
+	}
+	if len(anchorErrs) > 0 {
+		sorted := append([]float64(nil), anchorErrs...)
+		sort.Float64s(sorted)
+		res.P95AnchorErrMs = sorted[int(float64(len(sorted))*0.95)]
+		var sum float64
+		for _, v := range anchorErrs {
+			sum += v
+		}
+		res.MeanAnchorErrMs = sum / float64(len(anchorErrs))
 	}
 	return res
 }

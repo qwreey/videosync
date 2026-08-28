@@ -1,6 +1,8 @@
 package sim
 
 import (
+	"sort"
+
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
 
@@ -107,7 +109,15 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 			s.anchor = s.anchor.Reanchor(v.PositionMs, when, s.anchor.Paused)
 		}
 		st := MsgState{Seq: s.seq, When: when, EmittedAt: now, Anchor: s.anchor, By: v.ClientID, Kind: v.Kind}
+		// Sorted, not map order: Go randomises map iteration, so the send order
+		// varied run to run, which perturbed the network queue's tie-break and
+		// the jitter draws. The harness was not actually deterministic.
+		ids := make([]string, 0, len(clients))
 		for id := range clients {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
 			if id == v.ClientID {
 				// Sender is excluded from the broadcast but MUST get the ack,
 				// or its lastAppliedSeq never advances (SYNTHESIS 5 amendment).
@@ -151,7 +161,19 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 					// Absorb it. A residual that survives repeated seeks IS the
 					// clock bias, and it is the only way to observe a one-way
 					// latency asymmetry that min-RTT cannot see.
-					cs.biasMs += eff.ResidualMs
+					// Bound the learned bias by the client's own uncertainty.
+					// Unbounded, a *lost* correction message is
+					// indistinguishable from a biased clock, and the learner
+					// will absorb a genuine multi-second step as "bias" and
+					// strand that client for the rest of the session. The
+					// principled bound is the one the timebase analysis
+					// derived: a laundered/undetectable offset satisfies
+					// |B| <= R_min/2, which is exactly UncertaintyMs.
+					bound := r.UncertaintyMs
+					if bound <= 0 {
+						bound = s.tun.ToleranceMs
+					}
+					cs.biasMs = vsync.ClampI(cs.biasMs+eff.ResidualMs, -bound, bound)
 					cs.failedSeeks = 0
 					s.BiasLearned++
 					eff.ResidualMs = r.ResidualMs - cs.biasMs

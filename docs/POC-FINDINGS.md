@@ -450,3 +450,118 @@ failing test rather than passing unnoticed.
 - Every `command-storm` figure before round 5 measured the §20 bug.
 - Round 2 §6's failed-seek detector and bias learning are now known to be blind to the dominant
   asymmetry path, on top of already being unexercised elsewhere (round 3 §14).
+
+---
+
+# Round 6 — control-theoretic correctors, ported and re-measured
+
+An independent review proposed control-loop correctors and reported beating the baseline in 10 of
+11 scenarios. Its work was developed in a worktree branched at round 2 — **before** the seek-target
+fix (§15), the `ack.When` fix (§20), and confidence gating existed. Its code was ported onto the
+current HEAD and re-measured. Full output: `docs/poc-run-6.txt`.
+
+## 23. Primary metric changed: `anchorErr`, not inter-client spread
+
+The review's most valuable contribution is methodological, and it invalidates part of how earlier
+rounds were scored.
+
+**`MeanDivergenceMs` is inter-client spread, and it rewards inaction.** In `latency-asymmetry` all
+clients start aligned at exactly 1.0x, so a strategy that does nothing scores a perfect **0** —
+which is exactly how `threshold-2000` "won" that row in rounds 3-5. Spread cannot distinguish
+"correctly did nothing" from "was never tested", and it cannot see the whole room drifting away
+from the anchor together.
+
+Replaced as primary by **`anchorErr = |clientPos - anchor.Expected(TRUE server time)|`**, sampled
+at 10 Hz against the real clock rather than any client's estimate of it, blanked for 4 s after each
+command. Spread is retained for continuity but must not be ranked on.
+
+Under the honest metric `threshold-2000`'s free win disappears: `latency-asymmetry` 0 spread but
+**10 ms anchorErr**, and `steady/rate-drift` 364/1011.
+
+## 24. The observability argument is correct and the predictions hold
+
+The review's organizing claim:
+
+```
+res(t)      = pos(t) - anchor.Expected(clientClock(t) + estOffset)
+d/dt res(t) = effectiveRate - 1          for any constant offset error b
+```
+
+**Phase is unobservable up to the clock bias; the slope is not.** Every prediction that follows
+from it reproduced on the fixed harness:
+
+- **PLL (integrator on phase)** — best in class when the clock is clean: `steady/rate-drift`
+  **4/9 ms** vs the baseline's 160/455, a 40x improvement, and `clock-skew` **4/9** vs 124/333.
+  And it walks straight into the §6 trap under asymmetry: **374/599**. An integrator's job is to
+  eliminate a constant offset, including a fictitious one.
+- **FLL (integrates slope only)** — perfectly bias-immune (`latency-asymmetry` **10/10**) and
+  catastrophic on steps (`long-stalls` **2666/13466**, `transient-hiccup` 437/2290). It cannot
+  close a phase offset by construction. Necessary, not sufficient.
+
+## 25. But the headline win does not replicate
+
+`HybridCorrector` was reported as beating `StepRampCorrector` in 10 of 11 scenarios. On the fixed
+harness it does not. Anchor error, mean/p95 ms:
+
+| scenario | threshold-500 | step-ramp+conf | pll | fll | hybrid |
+|---|---|---|---|---|---|
+| steady/rate-drift | 160/455 | 163/472 | **4/9** | 24/42 | 41/65 |
+| transient-hiccup | **12/15** | **12/15** | 34/185 | 437/2290 | **12/15** |
+| long-stalls | **18/15** | **18/15** | 117/32 | 2666/13466 | 954/7490 |
+| one-slow-client | **77/345** | 82/469 | 145/79 | 1077/4390 | 465/3679 |
+| clock-skew | 124/333 | 124/333 | **4/9** | 103/287 | 262/1279 |
+| latency-asymmetry | 390/595 | **10/10** | 374/599 | **10/10** | 16/25 |
+| asymmetry+cmds | 389/600 | 295/600 | 373/605 | **294/595** | **294/595** |
+| command-storm | 14/25 | 14/25 | 13/46 | **11/35** | 16/35 |
+
+`hybrid` loses badly on `long-stalls` (954 vs 18), `one-slow-client` (465 vs 77) and `clock-skew`
+(262 vs 124).
+
+**The explanation is the baseline it was measured against.** Its worktree predates the seek-target
+and `ack.When` fixes, both of which improved the hard-seek strategies substantially (§15: hiccup
+26→5, stalls 72→20; §20: command-storm 4743→32). It beat a handicapped opponent. This is the second
+time in this project that a result turned out to be about the harness rather than the strategy, and
+it argues for re-running any comparison after a harness fix, not just the affected row.
+
+## 26. `ConfidenceGated` does not compose with continuous controllers
+
+`pll+conf` scores **373/598** on `latency-asymmetry` — indistinguishable from bare `pll` at
+374/599. The gating did nothing.
+
+The decorator works by widening `Tunables.ToleranceMs` to the client's uncertainty. That only has
+an effect on a corrector that **consults the dead-band**. A continuous controller acts on every
+sample by construction and never reads it, so the decorator is a no-op for it.
+
+This is a structural limit, not a tuning problem: for a control law, confidence has to enter the
+**law itself** — the phase branch gated on evidence that the offset is real — rather than being
+wrapped around it. `hybrid` does this internally, which is why it gets 16/25 on that row while
+`pll` gets 374. Worth stating because `ConfidenceGated` was adopted in round 3 as if it were
+universal.
+
+## 27. Also ported
+
+- **The harness was not deterministic.** The broadcast loop iterated a Go map, whose order is
+  randomised, perturbing the network queue tie-break and the jitter draws. Now sorted. Every number
+  before round 6 carries this noise.
+- **Bias learning is unsound unbounded.** A lost correction message is indistinguishable from a
+  biased clock, so the learner could absorb a genuine multi-second step and strand a client.
+  Bounded — using the principled bound from the timebase analysis rather than an arbitrary
+  constant: `|B| <= UncertaintyMs`, since an undetectable offset cannot exceed the error bound.
+- **No corrector reads `LastAppliedSeq`** (verified). A client on a stale anchor reports
+  `residual = 0` while being arbitrarily far out of position — the same blindness as §21, by a
+  different route. The field is on the wire for exactly this and is unused.
+
+## 28. Where this leaves the strategy choice
+
+**No strategy dominates.** `threshold-500` and `step-ramp+conf` are best or tied on five rows;
+`pll` is dramatically best on the two clean-clock rows and dangerous on the biased ones; `fll` is
+the only law that is bias-immune by construction and it cannot handle steps at all.
+
+The shape this suggests — untested, and the obvious next experiment — is to stop treating this as
+one law: **discrete logic for steps** (stalls, seeks, commands: the baseline's seek/gate path,
+which is now very good) **plus a frequency-only loop for continuous drift** (the FLL term, which is
+bias-immune), with **no phase integrator at all**. That is close to `hybrid` but takes step handling
+from the baseline instead of gating it off, which is precisely where `hybrid` loses.
+
+Before running that comparison the harness gaps from §19 should be closed — seeks are still free,
+so every seek-based strategy is scored on a benefit with no price attached.

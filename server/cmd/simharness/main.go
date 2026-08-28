@@ -135,26 +135,33 @@ func controlRun(tun vsync.Tunables) {
 func main() {
 	tun := vsync.DefaultTunables()
 	correctors := []vsync.Corrector{
-		vsync.ThresholdCorrector{},                                       // what all 9 references do
-		vsync.ThresholdCorrector{HardSeekMs: 2000},                       // cytube/SyncTube-style wide deadband
-		vsync.StepRampCorrector{},                                        // ours, v2
-		vsync.ConfidenceGated{Inner: vsync.ThresholdCorrector{}},         // baseline + confidence gating
-		vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}},          // ours, v3
+		vsync.ThresholdCorrector{},                              // what all 9 references do
+		vsync.ThresholdCorrector{HardSeekMs: 2000},              // cytube/SyncTube-style wide deadband
+		vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}}, // ours, v3
+		&vsync.PLLCorrector{},                                   // phase-locked loop
+		&vsync.FLLCorrector{},                                   // frequency-locked loop (bias-immune)
+		&vsync.HybridCorrector{},                                // FLL-aided PLL
+		vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}},  // hybrid + confidence gating
+		vsync.ConfidenceGated{Inner: &vsync.PLLCorrector{}},     // PLL, bias-gated
 	}
-	names := []string{"threshold-500", "threshold-2000", "step-ramp", "thresh+conf", "step-ramp+conf"}
+	names := []string{"threshold-500", "threshold-2000", "step-ramp+conf",
+		"pll", "fll", "hybrid", "hybrid+conf", "pll+conf"}
 
-	fmt.Printf("%-20s %-15s %8s %8s %8s %6s %6s %6s %6s %6s %5s\n",
-		"scenario", "strategy", "maxDiv", "p95Div", "meanDiv",
-		"seeks", "suppr", "nudges", "gates", "bias", "MISD")
-	fmt.Println(strings.Repeat("-", 118))
+	// anchorErr is the PRIMARY metric: error against the true server clock.
+	// meanDiv (inter-client spread) is kept for continuity but rewards
+	// inaction -- a strategy that does nothing scores 0 when clients start
+	// aligned. Do not rank on it.
+	fmt.Printf("%-20s %-16s %9s %9s %8s %6s %6s %6s %5s\n",
+		"scenario", "strategy", "anchorErr", "p95Anchor", "meanDiv",
+		"seeks", "nudges", "gates", "MISD")
+	fmt.Println(strings.Repeat("-", 104))
 
 	for _, sc := range scenarios() {
 		for i, c := range correctors {
 			r := sim.Run(sc, c, tun)
-			fmt.Printf("%-20s %-15s %8.0f %8.0f %8.0f %6d %6d %6d %6d %6d %5d\n",
-				sc.Name, names[i], r.MaxDivergenceMs, r.P95DivergenceMs, r.MeanDivergenceMs,
-				r.SeeksIssued, r.SeeksSuppressed, r.NudgesIssued, r.GatesOpened,
-				r.BiasLearned, r.Misdetections)
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %8.0f %6d %6d %6d %5d\n",
+				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs, r.MeanDivergenceMs,
+				r.SeeksIssued, r.NudgesIssued, r.GatesOpened, r.Misdetections)
 			if len(r.ConvergeMs) > 0 {
 				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
 			}
