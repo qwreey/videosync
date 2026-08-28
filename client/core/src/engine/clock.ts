@@ -46,6 +46,22 @@ export class ServerClock {
   get uncertaintyMs(): number { return this.rttMs / 2; }
 
   serverNow(clientNow: number): number { return clientNow + this.offsetMs; }
+
+  /** The inverse: when our own clock will read a given server instant. This is
+   *  what a scheduled command's `when` has to be converted through. */
+  clientTime(serverMs: number): number { return serverMs - this.offsetMs; }
+
+  /**
+   * Throw the estimate away. A reconnect gets a new socket, possibly a new
+   * route; the old offset was measured against a path that no longer exists,
+   * and keeping it would let a stale bias survive the one event that could
+   * have cleared it.
+   */
+  reset(): void {
+    this.offsetMs = 0;
+    this.bestRttMs = Number.POSITIVE_INFINITY;
+    this.samples = 0;
+  }
 }
 
 /** The room's position is a pure function of the anchor and server time. */

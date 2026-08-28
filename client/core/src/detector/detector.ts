@@ -161,11 +161,32 @@ export class SeekDetector {
     return { observation, report };
   }
 
-  /** Call when the room applied a correction, so we do not judge our own jump. */
-  rebaseline(positionS: number): void {
+  /**
+   * Call after applying anything the room told us to do, so we do not judge our
+   * own jump.
+   *
+   * `paused` matters as much as the position. The two-diff test makes a
+   * server-driven *seek* structurally unbroadcastable, but a server-driven
+   * *pause* has no such protection: the next evaluation would see
+   * `lastPaused !== s.paused` and report user intent. Passing the new pause
+   * state closes that hole structurally rather than leaving it to the
+   * `applyingRemote` timeout flag, which is a backstop and must never be
+   * load-bearing (syncwatch ships one and it deadlocks silently).
+   */
+  rebaseline(positionS: number, paused?: boolean): void {
     this.lastKnownPos = positionS * 1000;
     this.lastEvalPos = this.lastKnownPos;
     this.haveLastKnown = true;
+    this.history = [];
+    if (paused !== undefined) this.lastPaused = paused;
+  }
+
+  /** Forget everything measured against a connection that no longer exists. */
+  reset(): void {
+    this.haveLastKnown = false;
+    this.haveEvalPos = false;
+    this.lastPaused = null;
+    this.stallSuspected = false;
     this.history = [];
   }
 

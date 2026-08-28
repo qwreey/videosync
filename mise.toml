@@ -27,6 +27,11 @@ run = "go run ./cmd/simharness"
 description = "Run all tests (Go simulation + TS client core)"
 run = ["cd {{config_root}}/server && go test ./...", "cd {{config_root}}/client/core && npm test"]
 
+[tasks.test-e2e]
+description = "Run the TS client against a real videosyncd (builds the binary)"
+dir = "{{config_root}}/client/core"
+run = "npm run test:e2e"
+
 [tasks.probe]
 description = "Run the Risk-B browser probes in the pinned container"
 dir = "{{config_root}}/harness/browser"

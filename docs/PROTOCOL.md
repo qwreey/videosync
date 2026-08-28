@@ -3,6 +3,14 @@
 Derived from `research/SYNTHESIS.md`. Section refs below point there. Transport: one WebSocket per
 client, JSON frames, `{"t": "<type>", ...}`. Keep this file and SYNTHESIS consistent.
 
+> **Every millisecond field is an integer.** The server parses them into `int64`, so a fractional
+> value is rejected outright — and rejected *quietly*: the session stays joined and only the
+> mechanism that needed that frame stops working. `performance.now()` is fractional, so a browser
+> client must round every timestamp it puts on the wire. This cost one debugging session: the
+> client sent `{"t":"time","t0":874.47}`, every clock probe came back `bad_frame`, the offset never
+> settled, and therefore no correction ever fired. Nothing failed. See §4's field table for the
+> same failure mode applied to omitted fields.
+
 ## Roles
 
 The server is the **timebase owner and the judge**. It is *not* an aggregator: client position
