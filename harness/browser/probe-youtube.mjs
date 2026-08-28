@@ -11,18 +11,16 @@
  *      bias-immune; if the provider fights it, that provider needs a measured
  *      seek-only path and the strategy comparison has to be redone.
  *   2. Does writing `currentTime` stick, or does the player fight it?
- *   3. Does the page CSP block a WebSocket to a self-hosted server?
- *   4. Do `pickVideo` and `normalizeMediaKey` do the right thing on a real
+ *   3. Do `pickVideo` and `normalizeMediaKey` do the right thing on a real
  *      SPA page with several <video> elements?
  *
+ * The CSP and mixed-content questions are probe-csp.mjs's, not this one's.
+ *
  * What it deliberately does NOT answer, and the writeup must say so:
- *   - It injects into the MAIN world, so the CSP result is the PESSIMISTIC
- *     case. Tampermonkey with `@grant` runs in the userscript sandbox, which
- *     has its own CSP; if the socket connects here it certainly connects there.
- *     The reverse does not follow.
+ *   - It injects into the MAIN world via CDP, not through Tampermonkey.
  *   - No two-account room, no ads, no Laftel (needs a session).
  */
-import { spawn } from 'node:child_process';
+
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -34,31 +32,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // disappearance would silently invalidate this measurement.
 const VIDEO_ID = process.env.VIDEO_ID || 'aqz-KE-bpKQ';
 const URL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
-const SYNC_PORT = 8788;
 
 const results = { url: URL, checks: [], measurements: {}, notes: [] };
+// Flushed after every line. A probe that hangs -- and this one talks to the
+// public internet -- must still leave behind everything it had already learned,
+// or the doc ends up citing an artifact from an older, failed run.
+function flushResults() {
+  mkdirSync('results', { recursive: true });
+  writeFileSync('results/youtube.json', JSON.stringify(results, null, 2));
+}
 function check(name, ok, detail) {
   results.checks.push({ name, ok: !!ok, detail });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
+  flushResults();
 }
 function note(name, value) {
   results.measurements[name] = value;
   console.log(`----  ${name}: ${typeof value === 'object' ? JSON.stringify(value) : value}`);
+  flushResults();
 }
 
 const bundle = join(process.cwd(), 'dist', 'videosync.user.js');
 if (!existsSync(bundle)) {
   console.error(`no bundle at ${bundle}; build client/userscript first`);
   process.exit(2);
-}
-const bin = join(process.cwd(), 'dist', 'videosyncd');
-let server = null;
-if (existsSync(bin)) {
-  server = spawn(bin, ['-addr', `127.0.0.1:${SYNC_PORT}`], { stdio: 'ignore' });
-  for (let i = 0; i < 40; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${SYNC_PORT}/healthz`)).ok) break; } catch {}
-    await sleep(100);
-  }
 }
 
 // Reachability first: a network failure must not be reported as a YouTube
@@ -68,7 +65,6 @@ try {
   console.log(`youtube reachable (${r.status})`);
 } catch (e) {
   console.log(`SKIP: youtube is not reachable from this container: ${e.message}`);
-  server?.kill();
   process.exit(0);
 }
 
@@ -166,33 +162,13 @@ try {
   check('a currentTime write sticks and playback continues from it',
     seeked.positionS > 119 && seeked.positionS < 135, `landed at ${seeked.positionS.toFixed(2)}s`);
 
-  // --- Q3: does the page CSP block the socket? -----------------------------
-  if (server) {
-    const cors = await s.eval(`
-      fetch('http://127.0.0.1:${SYNC_PORT}/api/rooms', { method: 'POST', body: '{}' })
-        .then(r => r.json()).then(j => ({ ok: true, roomId: j.roomId }), e => ({ ok: false, err: String(e) }))`);
-    check('a cross-origin room create from youtube.com works', cors.ok, cors.ok ? '' : cors.err);
-
-    const ws = await s.eval(`
-      new Promise((res) => {
-        let w;
-        try { w = new WebSocket('ws://127.0.0.1:${SYNC_PORT}/ws'); }
-        catch (e) { return res({ ok: false, stage: 'construct', err: String(e) }); }
-        const t = setTimeout(() => res({ ok: false, stage: 'timeout' }), 8000);
-        w.onopen = () => { clearTimeout(t); w.close(); res({ ok: true }); };
-        w.onerror = () => { clearTimeout(t); res({ ok: false, stage: 'error' }); };
-      })`);
-    results.notes.push(
-      'The WebSocket result above is from the MAIN world, i.e. under the page CSP. ' +
-      'Tampermonkey with @grant runs in the userscript sandbox and is strictly less ' +
-      'restricted, so a pass here implies a pass there; a failure here does not imply ' +
-      'a failure there.');
-    check('a WebSocket to a self-hosted server opens under youtube.com CSP (pessimistic case)',
-      ws.ok, ws.ok ? '' : `blocked at ${ws.stage}`);
-  } else {
-    results.notes.push('videosyncd was not staged in dist/, so the CSP and CORS questions were not asked.');
-    console.log('SKIP: no videosyncd binary; CSP/CORS questions not asked');
-  }
+  // The CSP / mixed-content questions live in probe-csp.mjs. They were here
+  // once, and the fetch had no timeout: this probe then MEASURED that such a
+  // call never settles from an https page, so `s.eval` with awaitPromise hung
+  // forever and the run never reached its `finally`. The artifact on disk was
+  // from the previous, failed run while the doc cited it for numbers it did not
+  // contain. Never await a page promise this probe's own subject matter says
+  // may never resolve.
 
   // --- what the adapter reports about a real provider -----------------------
   note('capabilities', await s.eval('window.VideoSync.adapter.capabilities'));
@@ -205,11 +181,9 @@ try {
 } finally {
   s?.close();
   await b.close();
-  server?.kill();
 }
 
-mkdirSync('results', { recursive: true });
-writeFileSync('results/youtube.json', JSON.stringify(results, null, 2));
+flushResults();
 const bad = results.checks.filter((c) => !c.ok);
 console.log(`\n${results.checks.length - bad.length}/${results.checks.length} checks passed`);
 for (const n of results.notes) console.log(`NOTE: ${n}`);

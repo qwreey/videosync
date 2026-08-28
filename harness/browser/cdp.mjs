@@ -33,8 +33,27 @@ export async function launch({ port = 9333, extraFlags = [], headful = false } =
       const r = await fetch(`http://127.0.0.1:${port}/json/version`);
       if (r.ok) {
         const v = await r.json();
-        return { proc, port, profile, version: v['Browser'],
-                 close: async () => { proc.kill('SIGKILL'); await rm(profile, { recursive: true, force: true }); } };
+        return {
+          proc, port, profile, version: v['Browser'],
+          // Chrome keeps writing to its profile for a moment after SIGKILL, so
+          // removing it immediately races and throws ENOTEMPTY -- after every
+          // measurement is already taken, which turned a clean run into a
+          // non-zero exit and looked like the probe had failed. Wait for the
+          // process to actually go, then remove, then give up quietly: a
+          // leftover temp directory is not worth failing a run over.
+          close: async () => {
+            proc.kill('SIGKILL');
+            await new Promise((res) => {
+              if (proc.exitCode !== null || proc.signalCode !== null) return res();
+              proc.once('exit', res);
+              setTimeout(res, 2000);
+            });
+            for (let attempt = 0; attempt < 5; attempt++) {
+              try { await rm(profile, { recursive: true, force: true }); return; } catch {}
+              await sleep(200);
+            }
+          },
+        };
       }
     } catch {}
     await sleep(100);

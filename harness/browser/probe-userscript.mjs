@@ -99,20 +99,35 @@ try {
   // asking for 1.1.)
   await a.s.eval("window.page.userSeek(2)");
   await a.s.eval('window.page.userPlay()');
-  await sleep(400);
+  // Wait until it is genuinely advancing before starting the window. Measuring
+  // from the instant play() resolves includes the start-up stall and reads a
+  // rate of 1.01 for a player that is faithfully doing 1.1 -- which is a
+  // measurement bug, not a provider finding, and it flaked exactly that way
+  // once.
+  await a.s.eval(`(async () => {
+    for (let i = 0; i < 60; i++) {
+      const a1 = window.page.el().ct;
+      await new Promise(r => setTimeout(r, 200));
+      const a2 = window.page.el().ct;
+      if (!window.page.el().paused && window.page.el().rs >= 3 && a2 - a1 > 0.15) return true;
+    }
+    return false;
+  })()`);
+  const rateWindowMs = 5000;
   const rateBefore = await a.s.eval('window.page.el()');
   await a.s.eval('window.VideoSync.adapter.setRate(1.1)');
-  await sleep(3000);
+  await sleep(rateWindowMs);
   const rateAfter = await a.s.eval('window.page.el()');
   const advanced = rateAfter.ct - rateBefore.ct;
+  const implied = advanced / (rateWindowMs / 1000);
   results.measurements.rateNudge = {
     requested: 1.1, held: +rateAfter.rate.toFixed(4),
-    advancedS: +advanced.toFixed(3), impliedRate: +(advanced / 3).toFixed(3),
+    windowMs: rateWindowMs, advancedS: +advanced.toFixed(3), impliedRate: +implied.toFixed(3),
   };
   check('playbackRate is honoured and holds on a real MSE player',
-    Math.abs(rateAfter.rate - 1.1) < 0.001 && advanced > 3.15,
-    `rate stayed ${rateAfter.rate}, advanced ${advanced.toFixed(2)}s in 3s ` +
-    `(implied ${(advanced / 3).toFixed(3)}x)`);
+    Math.abs(rateAfter.rate - 1.1) < 0.001 && implied > 1.05,
+    `rate stayed ${rateAfter.rate}, advanced ${advanced.toFixed(2)}s in ${rateWindowMs / 1000}s ` +
+    `(implied ${implied.toFixed(3)}x)`);
   await a.s.eval('window.VideoSync.adapter.setRate(1)');
   await a.s.eval('window.page.userPause()');
 
@@ -173,9 +188,19 @@ try {
 
   // --- a real user seek propagates ------------------------------------------
   await a.s.eval('window.page.userSeek(60)');
-  await b.s.waitFor('Math.abs(window.page.el().ct - 60) < 3', { timeoutMs: 8000 });
+  let dragOk = true;
+  try {
+    // Generous: b's seek lands outside its buffer, so it pays a segment fetch
+    // before `seeked` resolves (BROWSER-FINDINGS §2).
+    await b.s.waitFor('Math.abs(window.page.el().ct - 60) < 3', { timeoutMs: 20000 });
+  } catch {
+    dragOk = false;
+  }
   const eb2 = await b.s.eval('window.page.el()');
-  check('a scrubber drag on one element moved the other', true, `b at ${eb2.ct.toFixed(2)}s`);
+  const sbDrag = await b.s.eval('window.VideoSync.status()');
+  check('a scrubber drag on one element moved the other', dragOk,
+    `b at ${eb2.ct.toFixed(2)}s rs=${eb2.rs} seq=${sbDrag.seq} (a sent ` +
+    `${(await a.s.eval('window.VideoSync.status().stats')).cmdsSent} commands)`);
 
   // --- the readiness gate, over the real wire -------------------------------
   await a.s.eval('window.page.userPause()');

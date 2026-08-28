@@ -17,12 +17,12 @@
     {
       "name": "playbackRate is honoured and holds on a real MSE player",
       "ok": true,
-      "detail": "rate stayed 1.1, advanced 3.28s in 3s (implied 1.092x)"
+      "detail": "rate stayed 1.1, advanced 5.47s in 5s (implied 1.094x)"
     },
     {
       "name": "two browsers joined one room",
       "ok": true,
-      "detail": "Px9O3rpaSpZ3XDB7SaU_mw"
+      "detail": "jPHVfplKKbRq7S0S4VXpTw"
     },
     {
       "name": "the clock settled from real round trips",
@@ -36,7 +36,7 @@
     {
       "name": "the two players stayed together",
       "ok": true,
-      "detail": "19 ms apart (sampling skew 1 ms), a=23.935s b=23.916s"
+      "detail": "27 ms apart (sampling skew 1 ms), a=23.943s b=23.916s"
     },
     {
       "name": "the sender scheduled its own command against the ack",
@@ -55,7 +55,7 @@
     {
       "name": "a scrubber drag on one element moved the other",
       "ok": true,
-      "detail": "b at 60.00s"
+      "detail": "b at 60.00s rs=4 seq=4 (a sent 4 commands)"
     },
     {
       "name": "the room saw the buffering member",
@@ -78,18 +78,19 @@
     {
       "name": "no correction storm",
       "ok": true,
-      "detail": "seeks a=1 b=1, nudges a=6 b=5"
+      "detail": "seeks a=1 b=1, nudges a=4 b=5"
     }
   ],
   "measurements": {
     "rateNudge": {
       "requested": 1.1,
       "held": 1.1,
-      "advancedS": 3.277,
-      "impliedRate": 1.092
+      "windowMs": 5000,
+      "advancedS": 5.47,
+      "impliedRate": 1.094
     },
     "loopbackRttMs": 0.19999980926513672,
-    "playbackGapMs": 18.9,
+    "playbackGapMs": 26.5,
     "samplingSkewMs": 1,
     "senderAcks": 2,
     "stats": {
@@ -98,7 +99,7 @@
         "statesApplied": 3,
         "acksApplied": 5,
         "correctionsSeek": 1,
-        "correctionsNudge": 6,
+        "correctionsNudge": 4,
         "nudgesUnsupported": 0,
         "reportsSent": 21,
         "timeSamples": 8,

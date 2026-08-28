@@ -8,17 +8,69 @@
     },
     {
       "name": "the userscript survived the page",
-      "ok": false
+      "ok": true,
+      "detail": ""
     },
     {
-      "name": "probe ran to completion",
-      "ok": false,
-      "detail": "page threw: TypeError: Cannot read properties of undefined (reading 'mediaKey')\n    at <anonymous>:1:18"
+      "name": "mediaKey is the video id, not the URL",
+      "ok": true
+    },
+    {
+      "name": "it picked the player element, not a preview",
+      "ok": true
+    },
+    {
+      "name": "play() was accepted",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the element is actually advancing",
+      "ok": true
+    },
+    {
+      "name": "YouTube does not reset playbackRate",
+      "ok": true,
+      "detail": "asked 1.1, held 1.1 after 10 s, advanced 10.98s (implied 1.098x)"
+    },
+    {
+      "name": "the rate actually changed playback speed",
+      "ok": true,
+      "detail": "10.98s of media in 10 s of wall clock"
+    },
+    {
+      "name": "a currentTime write sticks and playback continues from it",
+      "ok": true,
+      "detail": "landed at 122.43s"
     }
   ],
   "measurements": {
     "videoElements": 1,
-    "finalUrl": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+    "mediaKey": "yt:aqz-KE-bpKQ",
+    "afterPlay": {
+      "positionS": 3.95,
+      "paused": false,
+      "readyState": 4
+    },
+    "playbackRate": {
+      "requested": 1.1,
+      "immediately": 1.1,
+      "after10s": 1.1,
+      "advancedS": 10.98,
+      "impliedRate": 1.098
+    },
+    "afterSeek": {
+      "positionS": 122.43,
+      "readyState": 4
+    },
+    "capabilities": {
+      "supportsDirectSeek": true,
+      "supportsDirectPlayPause": true,
+      "supportsPlaybackRateNudge": true,
+      "supportsAdDetection": false,
+      "volatileVideoElement": false
+    },
+    "bufferedAheadS": 15.83
   },
   "notes": []
 }

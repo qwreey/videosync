@@ -191,8 +191,8 @@ not a claim that backgrounding does not matter.
 
 | what | measured |
 |---|---|
-| two players after 4 s of synced playback | **20 ms apart** (CDP sampling skew 1 ms) |
-| loopback `bestRTT` through the real clock exchange | 0.6 ms |
+| two players after 4 s of synced playback | **20–50 ms apart** across runs (CDP sampling skew 1 ms) |
+| loopback `bestRTT` through the real clock exchange | 0.1–0.6 ms |
 | a pause on the element itself reaching the other browser | yes, and **0 commands** echoed back |
 | a scrubber drag propagating | yes, other browser landed at 60.00 s |
 | the readiness gate holding a `play` for a starved member | held; released on recovery |
@@ -201,14 +201,20 @@ not a claim that backgrounding does not matter.
 ### `playbackRate` is safe on a real MSE player — the servo's premise holds
 
 The open question the whole servo design leans on. Asked for **1.1**; the
-element **held exactly 1.1** and advanced **3.276 s in 3.0 s of wall clock**
-(implied 1.092×) on hls.js/MSE with audio, with no rate reset and no audio
+element **held exactly 1.1** and advanced **5.47 s in 5.0 s of wall clock**
+(implied 1.094×) on hls.js/MSE with audio, with no rate reset and no audio
 dropout.
 
-Measured **before joining a room**, deliberately. The first version of this
-probe measured it while joined and read `0.994` for a requested `1.1` — the
-servo was nudging the rate at the same time. It was measuring the corrector,
-not the player.
+Two things about *how* it is measured, both of which produced a wrong number
+first:
+
+- **Before joining a room.** The first version measured it while joined and read
+  `0.994` for a requested `1.1` — the servo was nudging the rate at the same
+  time. It was measuring the corrector, not the player.
+- **After playback is confirmed to be advancing.** Starting the window when
+  `play()` resolves includes the start-up stall; one run read `1.013` for a
+  player that was faithfully doing 1.1. The probe now waits until `currentTime`
+  is actually moving and measures over 5 s.
 
 > Scope: this answers the *MSE-level* question, which is the one the design
 > depends on. YouTube and Laftel wrap their own player logic around the element
