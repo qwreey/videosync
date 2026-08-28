@@ -216,6 +216,68 @@ One code path decides "is this user intent worth broadcasting", fed by two sourc
 §4: layer 2's `applyingRemote` flag stops being load-bearing and becomes a secondary backstop —
 which is what we want after seeing what happens when a timeout flag is the only defence.
 
+---
+
+## 4c. What the server does with position reports — aggregate, or judge?
+
+Three references aggregate client position reports into a room position. They disagree on the
+function, and the choice is a **product decision, not a technical one**.
+
+| Reference | Aggregation | Effect on the room |
+|---|---|---|
+| syncplay | `min()` over watchers (`server.py:597-607`, ordering at `834-838`) | room follows the **slowest** client; nobody misses content, one bad connection drags everyone back |
+| watchparty | `calculateMedian()` for >2 participants, **`Math.max()` for <=2** (`App.tsx:1954-1959`) | outlier-robust with a crowd; **policy silently inverts in a 2-person room** — the laggard gets pulled forward and skips content |
+| jellyfin | none — server anchor is truth; reports only decide who is out of tolerance (`MaxPlaybackOffset = 500ms`, `Group.cs:103`) | room is deterministic; reports judge clients, never move the room |
+
+### Decision: judge, do not aggregate
+
+Feeding reports back into the room position creates a **feedback loop** — room position depends on
+client reports, client positions depend on the room. Syncplay demonstrably fights this loop with
+accumulated guards (`age > 1` staleness gate at `server.py:597`, `rewindOnDesync` config,
+`DO_NOT_RESET_POSITION_THRESHOLD`), and its `min()` key is a non-total ordering that relies on
+CPython's tie-break behaviour (`server.py:834-838`).
+
+It also directly contradicts D3: with a server anchor plus scheduled commands, an aggregated room
+position is a **second source of truth**.
+
+**So: position reports decide (a) who needs correcting and (b) whether the readiness gate fires.
+They never decide where the room is.** The anchor does. This keeps "server seeks whoever can't keep
+up" — it only drops the "compute a centralised value" step.
+
+Note for our own UX policy: watchparty's 2-person `Math.max()` fallback means small rooms behave
+opposite to large ones. If we ever want slowest-client-wins semantics, it must be an explicit
+room setting, not an emergent consequence of participant count.
+
+### The trend signal — no reference has this
+
+**All nine references threshold on absolute offset only. None looks at the derivative.** That is a
+real gap, because seeking is expensive, visible, and on MSE players risks stalling outside the
+buffered range (§7).
+
+The derivative should choose **which correction to apply**, not merely whether to correct:
+
+| Observation | Interpretation | Action |
+|---|---|---|
+| 800 ms behind, gap **closing** | transient hiccup, self-recovering | do nothing |
+| 400 ms behind, gap **widening** | effective playback-rate mismatch | `playbackRate` nudge (§3) |
+| large step discontinuity | genuine seek, or ad insertion | hard seek |
+| persistently unable to keep up | buffering | readiness gate (§6), not a seek |
+
+This unifies §3's three-band drift correction and §6's readiness gate into **one classifier** whose
+input is (offset, d(offset)/dt) instead of two independent threshold mechanisms.
+
+### Why the trend is computable, despite 1 Hz reports being noisy
+
+The obvious objection: N clients reporting position at 1 Hz, each carrying its own RTT error, is
+too noisy a signal to differentiate server-side.
+
+**The server does not have to reconstruct it.** Per §1 each client already knows its own offset
+from the server clock precisely. So each client computes **its own drift and slope locally, at high
+frequency, with zero network noise**, and reports the *residual and trend* rather than a raw
+position. The server aggregates a small meaningful signal instead of denoising a large one.
+
+Move the computation to the client; leave the server with the judgement.
+
 ## 6. Buffering / readiness → Jellyfin's Waiting state, with Syncplay's instinct
 
 Jellyfin makes it a **dedicated state**, not a flag on Playing/Paused: per-member `IsBuffering`,
