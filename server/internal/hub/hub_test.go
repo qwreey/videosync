@@ -750,3 +750,62 @@ func TestHealthz(t *testing.T) {
 		t.Fatalf("healthz = %+v", out)
 	}
 }
+
+func TestAMediaCommandRepointsTheRoom(t *testing.T) {
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	a.send(room.Cmd{ReqID: "m1", Kind: "media", MediaKey: "laftel:42", PositionMs: 0})
+	st := b.await("state")
+	anchor, _ := st["anchor"].(map[string]any)
+	if anchor["mediaKey"] != "laftel:42" {
+		t.Fatalf("anchor mediaKey = %v", anchor["mediaKey"])
+	}
+	// Nobody has loaded the new media yet, so the room must not be running.
+	if anchor["paused"] != true {
+		t.Fatalf("new media started unpaused: %v", anchor)
+	}
+	ack := a.await("ack")
+	if num(ack, "seq") != num(st, "seq") {
+		t.Fatal("media command did not go through the same ordering as any other")
+	}
+	// A joiner now sees the new media, not the one the room was created with.
+	c, welcome, err := f.dial(id, secret, "c", "laftel:42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if welcome["mediaKey"] != "laftel:42" {
+		t.Fatalf("welcome mediaKey = %v", welcome["mediaKey"])
+	}
+	c.quiet(200*time.Millisecond, "media.mismatch")
+}
+
+func TestAnUnknownCommandKindTakesNoSeq(t *testing.T) {
+	// Falling through the switch used to burn a seq and broadcast a State that
+	// changed nothing -- which still advances every client's lastAppliedSeq,
+	// so the room would quietly agree it had transitioned to the same place.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	a.send(room.Cmd{ReqID: "bad", Kind: "teleport", PositionMs: 5})
+	if e := a.await("error"); e["code"] != "bad_kind" {
+		t.Fatalf("error code = %v", e["code"])
+	}
+	a.send(room.Cmd{ReqID: "bad2", Kind: "media"}) // no mediaKey
+	if e := a.await("error"); e["code"] != "bad_cmd" {
+		t.Fatalf("error code = %v", e["code"])
+	}
+	b.quiet(300*time.Millisecond, "state")
+
+	// The next real command is still seq 1: nothing was consumed.
+	a.send(room.Cmd{ReqID: "ok", Kind: "pause"})
+	if s := num(a.await("ack"), "seq"); s != 1 {
+		t.Fatalf("seq = %v after two rejected commands, want 1", s)
+	}
+}

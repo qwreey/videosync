@@ -40,11 +40,25 @@ Sample every 5 s, plus 5 rapid samples on connect. `serverNow = clientNow + offs
 ## 2. Join
 
 Client → `{"t":"hello","room":"<id>","secret":"<join secret>","name":"...","mediaKey":"..."}`
-Server → `{"t":"welcome","you":"<clientId>","seq":<n>,"anchor":{...},"members":[...],"serverMs":<n>}`
+Server → `{"t":"welcome","you":"<clientId>","seq":<n>,"anchor":{...},"members":[...],"serverMs":<n>,"mediaKey":"..."}`
+
+`hello` **must be the first frame**; anything else closes the connection. A second `hello` on a
+joined socket is answered with `error{code:"already_joined"}` rather than re-joining.
 
 `mediaKey` is the normalized media identity (provider + content id), not the raw URL — query params and
-tracking junk must not fork a room. Mismatch ⇒ server replies `{"t":"media.mismatch", ...}` and the
-client shows "everyone else is watching X".
+tracking junk must not fork a room. If the room has no media yet, the first member's `mediaKey`
+names it. Otherwise a mismatch ⇒ server sends `{"t":"media.mismatch","roomMediaKey":"...",
+"yours":"..."}` and the client shows "everyone else is watching X". **It is a notice, not a
+refusal** — the joiner is in the room and can see its state; forcing them out would make the
+common case (arriving before anyone has opened the video) unjoinable.
+
+Join is refused with `{"t":"error","code":"join_refused"}` for both an unknown room and a wrong
+secret — deliberately the same message, so an unauthenticated peer cannot probe which room ids
+exist. A full room is refused with `code:"room_full"`.
+
+Membership changes are broadcast:
+`{"t":"members","members":[{"id","name","suspended","ready"}],"joined":"<id>"|"left":"<id>"}`.
+The joiner gets the roster in its `welcome` instead, so it is excluded from that broadcast.
 
 ## 3. Commands (§2, §5)
 
@@ -74,6 +88,14 @@ cap is handled by the readiness gate, not by stretching the delay.
 
 Clients discard any `state` with `seq <= lastAppliedSeq`.
 
+A `kind` the server does not implement, or a `media` command with no `mediaKey`, is refused with
+`{"t":"error","code":"bad_kind"|"bad_cmd"}` **before a `seq` is taken**. Letting it fall through
+would burn a seq and broadcast a `state` that changed nothing — which still advances every client's
+`lastAppliedSeq`, so the room would quietly agree it had transitioned to the same place.
+
+`kind:"media"` replaces the anchor outright — position, pause state and identity all change at once
+— and lands **paused**, because nobody has loaded the new media yet.
+
 ## 4. Local detection and reporting (§4b, §4c)
 
 Three layers, because they answer different questions:
@@ -98,17 +120,24 @@ directly.** One decision path, two input sources.
 
 ### Browser-initiated pause is not user intent
 
-Chrome **pauses a muted video when its tab is hidden**, firing a real `pause` event, and fires
-`play` again when the tab is shown (measured: `docs/BROWSER-FINDINGS.md` §5). Broadcast naively,
-one member switching tabs pauses the whole room, and switching back resumes it.
+Chrome **pauses a hidden tab whose playback has never been audible**, firing a real `pause` event,
+and fires `play` again when the tab is shown (measured across four conditions:
+`docs/BROWSER-FINDINGS.md` §5). Broadcast naively, one member switching tabs pauses the whole room,
+and switching back resumes it.
 
 > A `pause` while `document.hidden`, on a playback that has **never been audible**, with
 > `readyState >= 3` and a full buffer, is browser suspension. Never broadcast it; mark the member
 > **suspended** and suppress the paired `play` on re-show.
 
-The trigger is "never made a sound", not "currently muted" — measured across four conditions
-(`docs/BROWSER-FINDINGS.md` §5). `document.hidden` alone is not enough either: media keys deliver
-genuine user pauses to hidden tabs.
+The trigger is "this playback has never made a sound", **not** "is currently muted" — measured
+across four conditions (`docs/BROWSER-FINDINGS.md` §5). A tab that was audible is exempt for its
+lifetime, and the exemption survives reloading the element.
+
+> The earlier version of this section said "hidden **and muted**". That was measured to be wrong,
+> and the wrong rule would have suppressed genuine user pauses in the audible-then-muted case. It is
+> on the do-not-reintroduce list in `docs/STATE.md`.
+
+`document.hidden` alone is not enough either: media keys deliver genuine user pauses to hidden tabs.
 
 A suspended member is **absent, not buffering**: the §6 readiness gate must not hold the room for
 them. Distinguish by the observable state — buffering is `paused === false`, `readyState < 3`,
@@ -157,7 +186,7 @@ offset only** (§4c).
 | `\|res\| >= 3s`, target **inside** `video.buffered` | real divergence, cheap to fix | hard seek | server → `correct` |
 | `\|res\| >= 3s`, target **outside** `video.buffered` | seek would rebuffer (measured: costs one segment fetch, ~150-400 ms of `readyState < 3`) | prefer nudge; seek only if the gap exceeds what nudging can close | server → `correct` |
 | `readyState < 3` or `bufferedAheadS < 1` | buffering | readiness gate | server → `gate` |
-| `suspended` | tab hidden + muted; the browser paused it | nothing — the member is **absent**, not behind | — |
+| `suspended` | tab hidden, playback never audible; the browser paused it | nothing — the member is **absent**, not behind | — |
 
 Server → `{"t":"correct","mode":"seek","targetPositionMs":<n>,"when":<serverMs>,"seq":<current>}`
 **Unicast. Does not change the anchor and does not consume a `seq`** — it is a judgement about one
@@ -196,13 +225,61 @@ leaves while buffering counts as ready**, so a dropped connection cannot freeze 
 what Jellyfin lacks — a `GATE_TIMEOUT` after which a still-buffering member is dropped from the
 gate and the room resumes without them.
 
+Sent on **change only**: one frame per report per member would be the room's report rate times its
+size. A suspended member is never in `waitingOn` — they are absent, not buffering (§4).
+
+> **Implementation status: announce-only.** The server tracks the waiting set, opens and closes it
+> correctly, expires it on `GATE_TIMEOUT`, and releases it when a member leaves — but nothing yet
+> *holds the room*. `OnCmd` does not consult the gate, and no client acts on the frame. The
+> mechanism this section describes is therefore half-built: it says who it would wait for and then
+> does not wait. See `docs/STATE.md`.
+
 ## 7. Chat & rooms
 
-`{"t":"chat","text":"..."}` → broadcast with `from` and server timestamp. Server-side per-member
-rate limiting (§13) — anti-accident, not anti-malice.
+Client → `{"t":"chat","text":"..."}`
+Server → `{"t":"chat","from":"<clientId>","name":"...","text":"...","serverMs":<n>}` to everyone,
+**including the sender** — only room *state* is echo-suppressed. `from`, `name` and `serverMs` are
+stamped server-side; the frame carries nothing else the sender controls. Text is truncated at
+`MAX_CHAT_LEN` on a rune boundary (a split rune would make the text frame invalid UTF-8, which
+RFC 6455 forbids).
 
 Rooms: >=128-bit CSPRNG id, rotatable join secret (the no-host replacement for "kick"), in-memory,
 idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control this design has.
+
+Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"..."}` returns
+`{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`.
+
+Rotation:
+
+Client → `{"t":"rotate"}` — **any member may send it.**
+Server → `{"t":"secret","secret":"<new>","rotated":"<clientId>"}` to every current member.
+
+Rotation does **not** eject anyone; nothing in a host-less design can. It invalidates the forwarded
+link: existing sessions continue, anyone reconnecting with the old secret is refused. You rotate,
+then re-share with the people you meant to include.
+
+### Rate limiting (§13.3)
+
+cytube's algorithm — a free burst, then one event per `1000/sustained` ms, reset after `cooldown`
+of silence — on **four separate buckets**, because the frame types have completely different
+natural rates and starving the clock bucket would degrade the timebase itself.
+
+| bucket | burst | sustained | cooldown | on refusal |
+|---|---|---|---|---|
+| `cmd` / `rotate` | 10 | 5/s | 4 s | `error{code:"rate_limited"}` |
+| `chat` | 4 | 1/s | 4 s | `error{code:"rate_limited"}` |
+| `hb` | 40 | 20/s | 2 s | dropped silently — a report is advisory, and answering would add traffic |
+| `time` | 10 | 2/s | 10 s | dropped silently |
+
+### Errors
+
+`{"t":"error","code":"<stable machine-readable>","msg":"<for humans>"}`. Codes in use:
+`join_refused`, `room_full`, `already_joined`, `bad_frame`, `bad_kind`, `bad_cmd`, `rate_limited`.
+
+An unknown frame type is answered with `bad_frame` and the connection **stays open** — a client
+from a newer build must not be able to kill its own session by sending something we have not heard
+of. The decoder accepts client-originated types only: a `state`, `ack` or `correct` arriving from a
+client is `bad_frame`, because either would move room state without passing the per-room mutex.
 
 ## Constants (v0 — all tunable, all to be validated by the sim harness)
 
@@ -221,6 +298,9 @@ idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control th
 | `RAMP_MAX_SLOPE` | 100 ms/s | above this the slope is a discontinuity, not a rate error |
 | `SEEK_COOLDOWN` | 2000 ms | floor between two seeks for one client |
 | `MIN_CLOCK_SAMPLES` | 3 | no position correction before the estimate settles |
+| `MAX_CHAT_LEN` | 320 bytes | chat truncation (cytube's value) |
+| `ROOM_IDLE_TTL` | 3 min | room deleted this long after its last member leaves |
+| `OUTBOX_DEPTH` | 64 frames | a member further behind than this is disconnected |
 
 ## Open, not yet settled
 

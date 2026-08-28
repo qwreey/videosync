@@ -234,6 +234,25 @@ func (r *Room) OnTime(now int64, id string, m TimeReq) {
 // OnCmd serialises one user command: assign seq, move the anchor, schedule the
 // transition into the future so every member transitions at the same instant.
 func (r *Room) OnCmd(now int64, id string, m Cmd) {
+	// Validate BEFORE taking a seq. A kind we do not understand used to fall
+	// through the switch, burn a seq and broadcast a State that changed
+	// nothing -- which still advances every client's lastAppliedSeq, so the
+	// room would quietly agree it had transitioned to the same place.
+	switch m.Kind {
+	case "pause", "play", "seek":
+	case "media":
+		if m.MediaKey == "" {
+			r.send(id, Error{Code: "bad_cmd", Msg: "media command needs a mediaKey"})
+			return
+		}
+	default:
+		r.send(id, Error{Code: "bad_kind", Msg: "unknown command kind " + m.Kind})
+		return
+	}
+	if m.PositionMs < 0 {
+		m.PositionMs = 0
+	}
+
 	r.seq++
 	when := now + r.CmdDelay()
 	switch m.Kind {
@@ -246,8 +265,12 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 	case "seek":
 		r.anchor = r.anchor.Reanchor(m.PositionMs, when, r.anchor.Paused)
 	case "media":
+		// A new media resets the timebase completely: position, pause state and
+		// identity all change at once, so nothing carries over from the old one.
+		// It starts paused -- nobody has loaded it yet, and the readiness gate
+		// is the mechanism that decides when the room may start.
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
-			Paused: r.anchor.Paused, MediaKey: m.MediaKey}
+			Paused: true, MediaKey: m.MediaKey}
 	}
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}
 	for _, mid := range r.ids {
