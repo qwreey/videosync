@@ -124,7 +124,12 @@ buffer, with a `pause` event.
   "bufferedAheadS": 12.4,
   "lastAppliedSeq": 91 }
 ```
-`lastAppliedSeq` is what lets the server spot a client stuck on stale state — free to include.
+`lastAppliedSeq` is what lets the server spot a client stuck on stale state. **The server MUST act
+on it**: when a report's `lastAppliedSeq` lags the current `seq`, resend the state instead of
+judging the report. A client on a stale anchor measures its residual *against that stale anchor* and
+so reports ≈ 0 while being arbitrarily out of position — measured at 115 603 ms mean error without
+the resend and 250 ms with it (POC-FINDINGS §34). This is three lines and reads a field already on
+the wire.
 `slopeMsPerS` is computed **client-side at high frequency with zero network noise**; the server
 must never try to differentiate 1 Hz reports itself (§4c).
 
@@ -149,10 +154,35 @@ offset only** (§4c).
 | `\|res\| >= 3s`, target **inside** `video.buffered` | real divergence, cheap to fix | hard seek | server → `correct` |
 | `\|res\| >= 3s`, target **outside** `video.buffered` | seek would rebuffer (measured: costs one segment fetch, ~150-400 ms of `readyState < 3`) | prefer nudge; seek only if the gap exceeds what nudging can close | server → `correct` |
 | `readyState < 3` or `bufferedAheadS < 1` | buffering | readiness gate | server → `gate` |
+| `suspended` | tab hidden + muted; the browser paused it | nothing — the member is **absent**, not behind | — |
 
 Server → `{"t":"correct","mode":"seek","targetPositionMs":<n>,"when":<serverMs>,"seq":<current>}`
 **Unicast. Does not change the anchor and does not consume a `seq`** — it is a judgement about one
 client, not a room state change. This is the distinction that keeps the feedback loop out (§4c).
+
+### Which correction, and what it costs
+
+Measured in a real browser (`docs/BROWSER-FINDINGS.md` §2): **an in-buffer seek costs ~20 ms at any
+network speed; an out-of-buffer seek costs one full segment fetch (150-400 ms) and rebuffers for
+that whole time**, leaving the client further out of position than it started.
+
+So the choice is about price, not magnitude:
+
+| situation | correction |
+|---|---|
+| target inside `video.buffered`, error above the band | **seek** — it is free |
+| target outside, error above `NUDGE_MAX_RESIDUAL` | **seek anyway** — the ±10 % rate clamp closes only 100 ms/s, so a 15 s gap would take 150 s |
+| otherwise | **rate** |
+
+`ServoCorrector` (`server/internal/sync/corrector_servo.go`) implements this together with the
+timebase constraints:
+
+- the **frequency** term integrates `d(residual)/dt`, which is bias-immune (`= rate - 1` for any
+  constant offset error), and freezes above `RAMP_MAX_SLOPE` so a stall's ~1000 ms/s slope is not
+  mistaken for a rate error;
+- the **phase** term is proportional and dead-banded at `max(TOLERANCE, uncertainty)` — never an
+  integrator, because §1's bias and §3's laundering mean phase cannot be resolved finer than
+  `uncertainty`, so an integrator would chase a target that does not exist.
 
 ## 6. Readiness gate (§6)
 
@@ -185,11 +215,22 @@ idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control th
 | `EVAL_INTERVAL` | 100 ms | local evaluation loop |
 | `TIME_SYNC_INTERVAL` | 5000 ms | clock resync |
 | `GATE_TIMEOUT` | 30000 ms | drop a stuck member from the gate |
+| `RAMP_MAX_SLOPE` | 100 ms/s | above this the slope is a discontinuity, not a rate error |
+| `SEEK_COOLDOWN` | 2000 ms | floor between two seeks for one client |
+| `MIN_CLOCK_SAMPLES` | 3 | no position correction before the estimate settles |
 
 ## Open, not yet settled
 
-- Background-tab throttling clamps `EVAL_INTERVAL` to ~1 Hz. Web Worker timers are the candidate
-  fix but workers are also throttled in some configurations — **verify, do not assume** (Risk B).
-- One-way latency asymmetry (see §1 note).
-- Whether `playbackRate` nudging is safe on the MSE players we target — per-adapter capability flag
-  until measured.
+- **Whether `playbackRate` nudging is safe on the MSE players we target.** The servo design leans on
+  it heavily. Per-adapter capability flag until measured on a real provider.
+- One-way latency asymmetry (see §1 note). Bounded and disclosed, not fixable.
+
+### Settled by measurement, kept here so they are not re-derived
+
+- **Background-tab throttling**: an *audible* hidden tab is not throttled at all; a *muted* hidden
+  tab is clamped to 1 Hz **and paused outright by the browser**, so the feared "1 Hz eval loop"
+  describes a state that does not occur. `Worker` timers are never throttled
+  (`docs/BROWSER-FINDINGS.md` §4).
+- **Seek cost**: in-buffer free, out-of-buffer one segment fetch (§2 there).
+- **Stall signature**: `paused === false`, `readyState` 4→2, draining buffer, `waiting` event —
+  confirmed on a real MSE player (§1 there).
