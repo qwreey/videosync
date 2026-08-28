@@ -1,0 +1,24 @@
+{
+  "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+  "checks": [
+    {
+      "name": "landed on the watch page, not a consent wall",
+      "ok": true,
+      "detail": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+    },
+    {
+      "name": "the userscript survived the page",
+      "ok": false
+    },
+    {
+      "name": "probe ran to completion",
+      "ok": false,
+      "detail": "page threw: TypeError: Cannot read properties of undefined (reading 'mediaKey')\n    at <anonymous>:1:18"
+    }
+  ],
+  "measurements": {
+    "videoElements": 1,
+    "finalUrl": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+  },
+  "notes": []
+}

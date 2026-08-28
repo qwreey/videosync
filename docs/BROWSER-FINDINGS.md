@@ -238,6 +238,74 @@ the detector is watching. Suppressing a rate the client is already holding
 it was lost) took the same session to **4 and 5 nudges**, with the two players
 still 20 ms apart.
 
+## 8. YouTube, for real (`probe-youtube.mjs`, `probe-csp.mjs`)
+
+One public page, driven the way the shipping userscript drives it. No account,
+no download, no capture — if this were not allowed, neither would the product be.
+
+### `playbackRate` is safe on YouTube. The servo's premise holds.
+
+This was the largest open question in the project: the servo's frequency term is
+half the correction law and it is the half that is immune to clock bias. If
+YouTube's own player code reset the rate, that provider would need a measured
+seek-only path and the whole strategy comparison would have to be redone.
+
+| | |
+|---|---|
+| requested | **1.1** |
+| immediately after | 1.1 |
+| **after 10 s** | **1.1** |
+| media advanced in 10 s of wall clock | **10.98 s** (implied **1.098×**) |
+
+Ten seconds and not one, deliberately: a player that resets on its own timer —
+a stats ping, a quality switch — would look fine at t+1 s.
+
+### Writing `currentTime` sticks
+
+Seek to 120 s, wait 2.5 s: element at **122.44 s**, `readyState` 4. YouTube does
+not fight a raw DOM seek the way Netflix is reported to.
+
+### The generic layer needed no YouTube-specific code
+
+- `normalizeMediaKey` → `yt:aqz-KE-bpKQ` (the id, not the URL).
+- `pickVideo` selected the player element on the real watch page.
+- `Html5Adapter.play()` was accepted and the element advanced.
+
+So D1's "YouTube via the generic adapter" holds, with no per-site adapter.
+
+### The deployment constraint nobody would guess: **TLS is mandatory**
+
+From an **https** page, a script can reach neither `http://` nor `ws://` on a
+self-hosted server. Both are blocked as mixed content. Measured both ways in
+one run:
+
+| page | `fetch http://…/api/rooms` | `new WebSocket('ws://…')` |
+|---|---|---|
+| `http://127.0.0.1:8899` (our own test page) | **works** | **opens** |
+| `https://www.youtube.com` | **blocked** | **blocked** |
+
+The blocked cases never settle — no rejection, no error event, nothing that
+names CSP or mixed content. It looks exactly like a server that is down.
+
+Note the rule that does *not* save you: `http://localhost` being "potentially
+trustworthy" governs whether that page **is** a secure context. It does not
+exempt it from mixed-content blocking as a *subresource* of an https page.
+
+Consequences, all now in the code:
+- `videosyncd` takes `-tls-cert`/`-tls-key`, and **warns at startup** when
+  running plaintext that no real provider can reach it.
+- The userscript refuses an `http://` server from an https page up front, with
+  the reason, instead of letting the request hang.
+- `client/userscript/README.md` leads with it.
+
+### What this run does NOT cover
+
+- **No Tampermonkey.** The bundle was injected into the MAIN world via CDP, so
+  the CSP question was asked from the *pessimistic* side. `@grant` puts the real
+  script in the userscript sandbox, which is strictly less restricted.
+- No Laftel (needs a session), no ads, no two-account room, no live SPA
+  navigation between videos.
+
 ## 6. Reproducing
 
 Everything runs in the pinned container — the host's package state is not
@@ -261,7 +329,9 @@ first, because the container has no Go toolchain and does not build the client:
 ```
 cd server && go build -o ../harness/browser/dist/videosyncd ./cmd/videosyncd
 cd ../client/userscript && npm run build && cp dist/videosync.user.js ../../harness/browser/dist/
-cd ../../harness/browser && ./run.sh node probe-userscript.mjs
+cd ../../harness/browser && ./run.sh node probe-userscript.mjs      # the whole stack, two browsers (§7)
+./run.sh node probe-youtube.mjs         # the real YouTube player (§8)
+./run.sh node probe-csp.mjs             # mixed content, http vs https page (§8)
 ```
 
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).

@@ -102,6 +102,24 @@ function refreshStatus(): void {
 
 // --- room lifecycle ---------------------------------------------------------
 
+/**
+ * Refuse a plaintext server from an https page, with the reason.
+ *
+ * Measured (docs/BROWSER-FINDINGS.md §8): from an https page, both `fetch` to
+ * `http://` and `new WebSocket('ws://...')` are blocked as mixed content, and
+ * the localhost exemption that exists for secure *contexts* does not apply.
+ * The failure has no useful error -- the request simply never settles -- so
+ * catching it here is the difference between one clear sentence and an evening.
+ */
+function mixedContentProblem(serverUrl: string): string | null {
+  if (location.protocol !== 'https:') return null;
+  let u: URL;
+  try { u = new URL(serverUrl); } catch { return null; }
+  if (u.protocol !== 'http:') return null;
+  return '이 페이지는 https라서 http 서버에는 연결할 수 없어요 (브라우저가 막아요). ' +
+    '서버에 TLS를 붙이거나(-tls-cert/-tls-key), TLS를 종단하는 리버스 프록시 뒤에 두세요.';
+}
+
 function wsUrl(serverUrl: string): string {
   const u = new URL('/ws', serverUrl);
   u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -110,6 +128,8 @@ function wsUrl(serverUrl: string): string {
 
 async function createRoom(serverUrl: string, name: string): Promise<void> {
   if (!serverUrl) { panel.setStatus('서버 주소를 입력해주세요.', 'err'); return; }
+  const mixed = mixedContentProblem(serverUrl);
+  if (mixed) { panel.setStatus(mixed, 'err'); return; }
   panel.setStatus('방을 만드는 중…');
   try {
     const res = await fetch(new URL('/api/rooms', serverUrl).toString(), {
@@ -124,10 +144,7 @@ async function createRoom(serverUrl: string, name: string): Promise<void> {
     // A userscript reaching a self-hosted server is exactly where mixed content
     // and CSP bite, so say which one it probably is rather than "failed".
     panel.setStatus(
-      `방을 만들지 못했어요: ${(e as Error).message}. ` +
-      (location.protocol === 'https:' && serverUrl.startsWith('http:')
-        ? 'https 페이지에서 http 서버는 브라우저가 막아요 — 서버에 TLS를 붙여주세요.'
-        : '서버가 켜져 있는지, 주소가 맞는지 확인해주세요.'),
+      `방을 만들지 못했어요: ${(e as Error).message}. 서버가 켜져 있는지, 주소가 맞는지 확인해주세요.`,
       'err',
     );
   }
@@ -135,6 +152,8 @@ async function createRoom(serverUrl: string, name: string): Promise<void> {
 
 function join(serverUrl: string, roomId: string, secret: string, name: string): void {
   if (!serverUrl || !roomId || !secret) { panel.setStatus('서버 주소, 방 ID, 비밀키가 모두 필요해요.', 'err'); return; }
+  const mixed = mixedContentProblem(serverUrl);
+  if (mixed) { panel.setStatus(mixed, 'err'); return; }
   leave();
   save('server', serverUrl); save('room', roomId); save('secret', secret); save('name', name);
 

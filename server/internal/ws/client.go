@@ -3,6 +3,7 @@ package ws
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -20,18 +21,46 @@ import (
 // (and eventually the harness) drive a real videosyncd. It is deliberately
 // minimal: no redirects, no TLS options beyond the default, no extensions.
 func Dial(rawURL string, hdr http.Header) (*Conn, error) {
+	return DialTLS(rawURL, hdr, nil)
+}
+
+// DialTLS is Dial with an explicit TLS config, used for `wss://`. A nil config
+// means the platform defaults.
+func DialTLS(rawURL string, hdr http.Header, cfg *tls.Config) (*Conn, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
-	if u.Scheme != "ws" && u.Scheme != "http" {
-		return nil, fmt.Errorf("ws: unsupported scheme %q (this dialer is plaintext only)", u.Scheme)
+	var secure bool
+	switch u.Scheme {
+	case "ws", "http":
+	case "wss", "https":
+		secure = true
+	default:
+		return nil, fmt.Errorf("ws: unsupported scheme %q", u.Scheme)
 	}
 	host := u.Host
 	if u.Port() == "" {
-		host = net.JoinHostPort(host, "80")
+		if secure {
+			host = net.JoinHostPort(host, "443")
+		} else {
+			host = net.JoinHostPort(host, "80")
+		}
 	}
-	raw, err := net.DialTimeout("tcp", host, 10*time.Second)
+	var raw net.Conn
+	if secure {
+		c := cfg
+		if c == nil {
+			c = &tls.Config{}
+		}
+		if c.ServerName == "" {
+			c = c.Clone()
+			c.ServerName = u.Hostname()
+		}
+		raw, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", host, c)
+	} else {
+		raw, err = net.DialTimeout("tcp", host, 10*time.Second)
+	}
 	if err != nil {
 		return nil, err
 	}

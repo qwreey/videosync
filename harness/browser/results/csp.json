@@ -1,0 +1,25 @@
+{
+  "checks": [
+    {
+      "name": "http page: cross-origin POST /api/rooms",
+      "ok": true,
+      "detail": "http://127.0.0.1:8899 -> iBVEKfwx7HXFBsZxwDzVow"
+    },
+    {
+      "name": "http page: ws:// to the sync server",
+      "ok": true,
+      "detail": "http://127.0.0.1:8899 -> open"
+    },
+    {
+      "name": "https page (youtube.com): cross-origin POST /api/rooms",
+      "ok": false,
+      "detail": "https://www.youtube.com -> timeout"
+    },
+    {
+      "name": "https page (youtube.com): ws:// to the sync server",
+      "ok": false,
+      "detail": "https://www.youtube.com -> timeout"
+    }
+  ],
+  "notes": []
+}

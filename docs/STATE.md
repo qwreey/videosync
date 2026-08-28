@@ -14,7 +14,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Sync server (Go, WebSocket, rooms) | **done** — `server/cmd/videosyncd` |
 | Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
 | Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
-| Live provider smoke test (YouTube, Laftel) | **not started** ← next |
+| Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
+| Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
 | Extension shim | not started (deliberately last) |
 
 ## What exists and works
@@ -77,13 +78,16 @@ because it is the highest platform risk and the userscript already ships.
 
 ## Open questions that block things
 
-- **Is `playbackRate` nudging safe on the providers we target?** **Half answered.** At the MSE
-  level it is confirmed: asked for 1.1 on hls.js with audio, the element held exactly 1.1 and
-  advanced 3.276 s in 3.0 s (BROWSER-FINDINGS §7). What is still open is whether YouTube's and
-  Laftel's own player code resets it. If either does, that provider's
-  `supportsPlaybackRateNudge` goes false and needs a measured seek-only path.
+- ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube.** hls.js held 1.1
+  exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.98 s of media in 10 s of
+  wall clock (§8). Writing `currentTime` sticks on YouTube too. **Laftel is still unmeasured** and
+  needs a session.
 - **Laftel** rests on one blog post plus the generic-adapter assumption. Needs a live smoke test
-  with a real session.
+  with a real session — the one open provider question, and it needs the user's account.
+- **Tampermonkey itself is unverified.** Everything measured on YouTube injected the bundle into
+  the main world via CDP. That is the pessimistic side of the CSP question (a pass there implies a
+  pass in the sandbox), but the `@grant` sandbox, `GM_setValue`, and the panel's behaviour inside a
+  real extension have never been run.
 - **Firefox MV3 holding a WebSocket** — unverified, different lifetime model from Chrome.
 
 ## Known gaps in what is built

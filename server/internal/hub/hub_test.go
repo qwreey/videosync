@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -56,6 +58,8 @@ func (f *fixture) createRoom(mediaKey string) (id, secret string) {
 	}
 	return out.RoomID, out.Secret
 }
+
+type client_ = client
 
 type client struct {
 	t    *testing.T
@@ -1008,5 +1012,48 @@ func TestCrossOriginIsRestrictedWhenAnAllowlistIsSet(t *testing.T) {
 	defer bad.Body.Close()
 	if got := bad.Header.Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("disallowed origin got %q", got)
+	}
+}
+
+func TestServesOverTLS(t *testing.T) {
+	// Not a nicety: measured in a real browser (BROWSER-FINDINGS §8), a script
+	// on an https page cannot reach an http server AT ALL -- neither `fetch`
+	// nor `ws://` -- and the localhost exemption for secure *contexts* does not
+	// extend to mixed-content blocking. Every provider we target serves https,
+	// so a plaintext server is unreachable from all of them and TLS is the only
+	// deployable configuration.
+	cfg := DefaultConfig()
+	h := New(cfg, NewClock())
+	srv := httptest.NewTLSServer(h.Handler(DefaultHTTPConfig()))
+	t.Cleanup(func() { srv.Close(); h.Close() })
+
+	// The API over https.
+	client := srv.Client()
+	resp, err := client.Post(srv.URL+"/api/rooms", "application/json", strings.NewReader(`{"mediaKey":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out struct{ RoomID, Secret string }
+	json.NewDecoder(resp.Body).Decode(&out)
+	if out.RoomID == "" {
+		t.Fatal("no room over https")
+	}
+
+	// And the socket over wss, verified against the server's own certificate --
+	// not with verification switched off, which would prove nothing.
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	sock, err := ws.DialTLS(strings.Replace(srv.URL, "https://", "wss://", 1)+"/ws", nil,
+		&tls.Config{RootCAs: pool, ServerName: "example.com"})
+	if err != nil {
+		t.Fatalf("wss dial: %v", err)
+	}
+	defer sock.Close(ws.CloseNormal, "")
+	sock.ReadTimeout = 5 * time.Second
+	c := &client_{t: t, sock: sock}
+	c.send(room.Hello{Room: out.RoomID, Secret: out.Secret, Name: "a", MediaKey: "m"})
+	if m := c.await("welcome"); m["you"] == "" {
+		t.Fatalf("welcome over wss = %v", m)
 	}
 }
