@@ -908,3 +908,37 @@ func TestAnUnknownCommandKindTakesNoSeq(t *testing.T) {
 		t.Fatalf("seq = %v after two rejected commands, want 1", s)
 	}
 }
+
+func TestOnlyTheFirstMemberNamesTheMedia(t *testing.T) {
+	// A member whose adapter has not resolved the page yet joins with an empty
+	// mediaKey. If a later joiner could then set it, the anchor would change
+	// with no seq and no broadcast -- the members already in the room were told
+	// "" in their welcome and would never hear otherwise.
+	f := start(t, nil)
+	id, secret := f.createRoom("")
+	a, wa, err := f.dial(id, secret, "a", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wa["mediaKey"] != "" {
+		t.Fatalf("welcome mediaKey = %v, want empty", wa["mediaKey"])
+	}
+	b, wb, err := f.dial(id, secret, "b", "yt:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wb["mediaKey"] != "" {
+		t.Fatalf("a later joiner set the room's media silently: %v", wb["mediaKey"])
+	}
+	a.await("members")
+	a.quiet(200*time.Millisecond, "media.mismatch", "state")
+
+	// The documented way to fix it: a `media` command, which takes a seq and
+	// reaches everyone.
+	b.send(room.Cmd{ReqID: "m1", Kind: "media", MediaKey: "yt:abc"})
+	st := a.await("state")
+	anchor, _ := st["anchor"].(map[string]any)
+	if anchor["mediaKey"] != "yt:abc" {
+		t.Fatalf("anchor = %v", anchor)
+	}
+}

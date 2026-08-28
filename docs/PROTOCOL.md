@@ -148,14 +148,36 @@ buffer, with a `pause` event.
 
 ```json
 { "t":"hb",
-  "residualMs":     -420,      // signed: localPos - expected(serverNow). negative = behind
-  "slopeMsPerS":    -85,       // d(residual)/dt, least-squares over a 3 s window
-  "positionMs":     123456,
-  "paused":         false,
-  "readyState":     4,
-  "bufferedAheadS": 12.4,
-  "lastAppliedSeq": 91 }
+  "residualMs":      -420,     // signed: localPos - expected(serverNow). negative = behind
+  "slopeMsPerS":     -85,      // d(residual)/dt, least-squares over a 3 s window
+  "positionMs":      123456,
+  "paused":          false,
+  "readyState":      4,
+  "bufferedAheadS":  12.4,
+  "bufferedBehindS": 8.1,
+  "lastAppliedSeq":  91,
+  "atServerMs":      1712345678901,
+  "uncertaintyMs":   30,
+  "rttMs":           60,
+  "clockSamples":    12,
+  "suspended":       false }
 ```
+
+**Every field is load-bearing.** Omitting one does not degrade gracefully — it silently disables a
+mechanism that exists because a measurement demanded it:
+
+| field | what breaks if the client omits it |
+|---|---|
+| `residualMs`, `positionMs`, `paused`, `readyState`, `bufferedAheadS` | the basics; nothing works |
+| `slopeMsPerS` | the servo's frequency term integrates nothing; only the bias-*prone* phase term is left (§4c) |
+| `bufferedBehindS` | `targetBuffered()` is false for every backward target, so the free-backward-seek branch is unreachable and §35's cost rule is half-undone |
+| `lastAppliedSeq` | the stale-anchor resend never fires. 115 603 ms vs 250 ms (POC-FINDINGS §34) |
+| `uncertaintyMs` | the dead-band collapses to `TOLERANCE` and the servo's built-in confidence is inert — the condition where three perfectly aligned clients were pushed 1.2 s apart *by the corrections themselves* (POC-FINDINGS §6) |
+| `rttMs` | `CMD_DELAY` is stuck at its 500 ms floor for the whole room, because it is computed from reported RTTs and nothing else |
+| `clockSamples` | `ConfidenceGated` cannot tell a settled estimate from a fresh one. (Count *completed* exchanges, not accepted ones — a min-RTT counter stops advancing once it converges, which froze the gate shut for whole sessions) |
+| `suspended` | a hidden never-audible tab reports `paused:true, readyState:4`, so it is not gated but **is** judged — the server seeks a member who is not watching (BROWSER-FINDINGS §5) |
+| `atServerMs` | nothing in the shipping path. Only the experimental PLL/FLL correctors read it, to min-filter a one-way delay estimate. Send it; it is cheap and it keeps those comparable |
+
 `lastAppliedSeq` is what lets the server spot a client stuck on stale state. **The server MUST act
 on it**: when a report's `lastAppliedSeq` lags the current `seq`, resend the state instead of
 judging the report. A client on a stale anchor measures its residual *against that stale anchor* and

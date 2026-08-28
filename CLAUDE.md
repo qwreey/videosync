@@ -58,8 +58,15 @@ corrected. Read it before picking up work.
 - **A client on a stale anchor reports `residual == 0`** while arbitrarily out of position, because
   the residual is measured against that same stale anchor. `lastAppliedSeq` is the only signal;
   resend state when it lags. Worth 115 603 ms -> 250 ms.
-- **Rank strategies on `anchorErr`, never on inter-client spread** — spread rewards a strategy that
-  does nothing.
+- **No single metric scores a strategy.** Inter-client spread rewards a strategy that does nothing.
+  `anchorErr` fixes that but **excludes a stalled client by construction**, so a room that leaves a
+  buffering member behind and later yanks them forward scores *well* on it. Use `anchorErr` for
+  alignment and `SkippedMs` (forward displacement imposed on a member = media they never saw) for
+  what the room cost somebody. Ranking the readiness gate on `anchorErr` alone would have concluded
+  it does nothing (10 ms vs 65 ms) while it was preventing 14.5 s of skipped media.
+- **A `hello` never changes room state.** Only the first member's `mediaKey` names the media, and
+  only while the room is empty. Any later change is a `media` command — it takes a `seq` and
+  reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.
 - **In-buffer seeks are ~free; out-of-buffer seeks cost a segment fetch and rebuffer.** The choice
   is about price, not about the size of the error.
 

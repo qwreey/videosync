@@ -63,9 +63,18 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	var extra []room.Msg
 	a := l.room.Anchor()
 	switch {
-	case a.MediaKey == "":
-		// First member decides what the room is watching.
+	case a.MediaKey == "" && len(l.conns) == 1:
+		// Only the FIRST member names the media, and only by joining. Letting
+		// any joiner set it while the key is still empty mutates the anchor
+		// with no seq and no broadcast: the members already in the room were
+		// told "" in their welcome and would never hear otherwise. A member
+		// who arrives before its adapter has resolved the page joins with an
+		// empty key and changes it afterwards with a `media` command, which
+		// takes a seq and reaches everyone.
 		l.room.SetMediaKey(h.MediaKey)
+	case a.MediaKey == "":
+		// The room has no media yet and this is not the first member: nothing
+		// to disagree with, and nothing to announce.
 	case h.MediaKey != "" && h.MediaKey != a.MediaKey:
 		// Not a refusal: the joiner is in the room and can see the state, they
 		// just are not looking at the same thing. mediaKey is the NORMALIZED

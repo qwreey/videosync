@@ -85,6 +85,12 @@ Two things the client must get right that the server cannot enforce:
   carries the current anchor, so there is nothing stale to resend — but here "the harness measures
   what ships" is weaker than it is everywhere else. If session resumption is ever added, that gap
   closes on its own.
+- **A member who has never reported counts as ready.** `Join` sets `ReadyState: 4`, so a `play`
+  fired immediately after somebody joins is not gated even though they have buffered nothing. The
+  alternative deadlocks: a member who never reports at all would hold the room until
+  `GATE_TIMEOUT`. The common case is a friend joining and someone pressing play, so this is a real
+  trade and not an oversight — if it turns out to matter, the fix is a short "joined, not yet
+  heard from" grace state rather than treating silence as unready.
 - **`hub` has no persistence and no clustering.** Deliberate (D2): one process, in-memory, idle
   expiry. Two videosyncd processes do not share rooms.
 
