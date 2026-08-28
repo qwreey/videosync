@@ -361,3 +361,86 @@ func TestConcurrentWritesDoNotInterleave(t *testing.T) {
 		}
 	}
 }
+
+func TestDialerRoundTripsThroughOurOwnServer(t *testing.T) {
+	srv, _ := echoServer(t, nil)
+	c, err := Dial(srv.URL+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(CloseNormal, "")
+	for _, s := range []string{"", "hi", strings.Repeat("x", 200), strings.Repeat("y", 70000)} {
+		if err := c.WriteText([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+		op, got, err := c.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op != OpText || string(got) != s {
+			t.Fatalf("len %d: op=%d got %d bytes", len(s), op, len(got))
+		}
+	}
+}
+
+func TestDialerMasksEveryFrameWithAFreshKey(t *testing.T) {
+	// Masking is the client's obligation and a constant key would defeat its
+	// only purpose. Assert on the bytes, not on our own helper.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	keys := make(chan [4]byte, 4)
+	go func() {
+		nc, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer nc.Close()
+		br := bufio.NewReader(nc)
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			return
+		}
+		io.WriteString(nc, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"+
+			"Connection: Upgrade\r\nSec-WebSocket-Accept: "+
+			AcceptKey(req.Header.Get("Sec-WebSocket-Key"))+"\r\n\r\n")
+		for i := 0; i < 4; i++ {
+			var hdr [2]byte
+			if _, err := io.ReadFull(br, hdr[:]); err != nil {
+				return
+			}
+			if hdr[1]&0x80 == 0 {
+				t.Error("client frame is not masked")
+				return
+			}
+			var k [4]byte
+			io.ReadFull(br, k[:])
+			io.CopyN(io.Discard, br, int64(hdr[1]&0x7F))
+			keys <- k
+		}
+	}()
+	c, err := Dial("ws://"+ln.Addr().String()+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(CloseNormal, "")
+	for i := 0; i < 4; i++ {
+		if err := c.WriteText([]byte("same payload every time")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[[4]byte]bool{}
+	for i := 0; i < 4; i++ {
+		select {
+		case k := <-keys:
+			seen[k] = true
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for frames")
+		}
+	}
+	if len(seen) < 3 {
+		t.Fatalf("only %d distinct mask keys in 4 frames", len(seen))
+	}
+}

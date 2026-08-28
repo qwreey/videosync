@@ -52,6 +52,13 @@ type ChatIn struct {
 	Text string `json:"text"`
 }
 
+// Rotate asks for a new join secret. Any member may send it: rotation is the
+// no-host replacement for "kick" (SYNTHESIS 13.2). Existing members keep their
+// session and are told the new secret; anyone reconnecting with the old one is
+// refused. It does not eject whoever is already connected -- nothing in this
+// design can -- it stops the forwarded link from working.
+type Rotate struct{}
+
 // --- server -> client -------------------------------------------------------
 
 // MemberInfo is what one member looks like to the others.
@@ -149,6 +156,13 @@ type MediaMismatch struct {
 	Yours        string `json:"yours"`
 }
 
+// Secret carries a freshly rotated join secret to the members who are still
+// connected, so they can re-share the room link.
+type Secret struct {
+	Secret  string `json:"secret"`
+	Rotated string `json:"rotated"` // client id that rotated it
+}
+
 // Error is a refusal. Code is stable and machine-readable; Msg is for humans.
 type Error struct {
 	Code string `json:"code"`
@@ -160,6 +174,8 @@ func (TimeReq) Type() string       { return "time" }
 func (Cmd) Type() string           { return "cmd" }
 func (Report) Type() string        { return "hb" }
 func (ChatIn) Type() string        { return "chat" }
+func (Rotate) Type() string        { return "rotate" }
+func (Secret) Type() string        { return "secret" }
 func (Welcome) Type() string       { return "welcome" }
 func (TimeReply) Type() string     { return "time.reply" }
 func (State) Type() string         { return "state" }

@@ -65,6 +65,9 @@ var (
 type Conn struct {
 	raw net.Conn
 	br  *bufio.Reader
+	// client selects the masking rules: RFC 6455 requires client-to-server
+	// frames to be masked and forbids masking server-to-client.
+	client bool
 
 	wmu sync.Mutex
 	// closedOnce guards the close frame, so a close from the reader and one
@@ -244,7 +247,7 @@ func (c *Conn) ReadMessage() (opcode byte, payload []byte, err error) {
 		if c.ReadTimeout > 0 {
 			c.raw.SetReadDeadline(time.Now().Add(c.ReadTimeout))
 		}
-		f, err := c.readFrame(true)
+		f, err := c.readFrame(!c.client)
 		if err != nil {
 			if errors.Is(err, ErrMessageSize) {
 				c.writeClose(CloseMessageTooBig, "message too large")
@@ -317,14 +320,26 @@ func (c *Conn) writeFrameLocked(opcode byte, data []byte) error {
 		binary.BigEndian.PutUint64(hdr[2:], uint64(n))
 		hl = 10
 	}
+	var k [4]byte
+	if c.client {
+		hdr[1] |= 0x80
+		k = maskKey()
+	}
 	if c.WriteTimeout > 0 {
 		c.raw.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
 	}
-	// One Write: two syscalls would let a concurrent close interleave a frame
+	// One Write: two syscalls would let a concurrent writer interleave a frame
 	// between the header and its payload.
-	out := make([]byte, 0, hl+n)
+	out := make([]byte, 0, hl+4+n)
 	out = append(out, hdr[:hl]...)
+	if c.client {
+		out = append(out, k[:]...)
+	}
+	body := len(out)
 	out = append(out, data...)
+	if c.client {
+		maskInPlace(out[body:], k)
+	}
 	_, err := c.raw.Write(out)
 	return err
 }

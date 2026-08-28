@@ -68,6 +68,8 @@ func DecodeClient(b []byte) (room.Msg, error) {
 		m = new(room.Report)
 	case "chat":
 		m = new(room.ChatIn)
+	case "rotate":
+		m = new(room.Rotate)
 	default:
 		return nil, ErrUnknownType{T: d.T}
 	}
@@ -86,6 +88,8 @@ func DecodeClient(b []byte) (room.Msg, error) {
 	case *room.Report:
 		return *v, nil
 	case *room.ChatIn:
+		return *v, nil
+	case *room.Rotate:
 		return *v, nil
 	}
 	return nil, ErrUnknownType{T: d.T}

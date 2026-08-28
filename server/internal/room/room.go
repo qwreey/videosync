@@ -127,6 +127,11 @@ func (r *Room) Member(id string) *Member { return r.members[id] }
 func (r *Room) Size() int                { return len(r.members) }
 func (r *Room) SetSink(s Sink)           { r.sink = s }
 
+// SetMediaKey names what the room is watching. Only meaningful before anyone
+// has committed to a media: changing it afterwards is a `media` command, which
+// takes a seq and re-anchors like every other transition.
+func (r *Room) SetMediaKey(k string) { r.anchor.MediaKey = k }
+
 // IDs returns the member ids in a stable order.
 func (r *Room) IDs() []string { return r.ids }
 
