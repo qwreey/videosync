@@ -55,6 +55,24 @@ Bug to avoid, found in Jellyfin itself: `WaitingGroupState.cs:503-504` compares 
 millisecond constant, silently defeating a 500 ms safety floor. The correct sibling is
 `PlayingGroupState.cs:67`. Unit-test our tick/ms boundary.
 
+### Amendment: the delay formula must be capped, because D4 has no host
+
+Jellyfin sizes the delay from pings its own clients report. In a **no-host** room where any member
+can issue a command, that formula lets **one member on a bad connection set the delay for the whole
+room** — every pause becomes sluggish because of one person. Jellyfin has the same exposure but a
+different tolerance for it.
+
+**Decision:** `delay = clamp(2 x p95_ping, 500ms, 2000ms)`.
+- p95 rather than max, so a single outlier does not dominate.
+- Hard 2 s ceiling: past that, responsiveness matters more than perfect simultaneity.
+- A member whose ping exceeds the cap is **not** excluded from the room and **not** allowed to
+  stretch the delay. They are handled by the §6 `Waiting` state instead: they will simply be
+  behind, report not-ready, and gate the room through the readiness path, which already has a
+  timeout. One mechanism for slow members, not two.
+
+Rationale for writing this down now: it is one paragraph today and a wire-protocol rewrite if
+discovered mid-implementation.
+
 ## 3. Drift correction → layered, Syncplay's shape with watchparty's nudge
 
 Nobody but Syncplay layers this, and everybody who hard-seeks produces visible jumps.
@@ -116,6 +134,28 @@ sequence they cannot tell a stale in-flight update from a fresh one. Clients dis
 
 Also carry attribution (`who`) in the state so the UI can say "X paused" — with everyone holding
 control, unexplained jumps are the main UX failure mode.
+
+### Amendment: layer 1 and the sequence number collide on the sender's own path
+
+§4 layer 1 excludes the sender from the broadcast. §5 has clients discard state with
+`seq <= lastApplied`. Composed naively these are **broken**: the sender never receives the broadcast
+carrying the `seq` assigned to its own change, so its `lastApplied` never advances. The next
+broadcast it receives from another member then looks fresh when it is in fact racing the sender's
+own uncommitted optimistic state.
+
+**Decision: the server excludes the sender from the state *broadcast*, but always sends that sender
+a direct `ack{seq, appliedState}`.** The sender advances `lastApplied` on the ack.
+
+- Keeps layer 1's property (no echo of your own command as a command).
+- Restores a single monotonic `seq` timeline for every client including the originator.
+- The ack doubles as the "your command was accepted/rejected" signal — if the per-room mutex
+  ordered someone else's command first, the ack carries the *winning* state, and the sender rolls
+  its optimistic apply back to it. This is the rollback path optimistic apply requires and that no
+  reference implementation has.
+
+Rejected alternative: include the sender in the broadcast and rely on layer 2's `applyingRemote`
+flag to swallow it. That makes correctness depend on a timeout-based flag — exactly the mechanism
+syncwatch proved fragile (§4).
 
 ## 6. Buffering / readiness → Jellyfin's Waiting state, with Syncplay's instinct
 
@@ -221,9 +261,8 @@ MutationObserver for element replacement — neither reference has those.
 3. **Readiness-gate timeout** (§6) — every reference can be hung by a permanently-buffering member.
 4. **Shadow DOM piercing + SPA element-replacement observer** (§8).
 5. **Moderation without a host role.** Both OTT and SyncTube gate kick/ban behind an elevated role
-   we deliberately do not have (D4). For "friends who already know each other" the honest answer is
-   probably an unguessable room URL and per-member rate limiting, not moderation — but it is an
-   open question, not a solved one.
+   we deliberately do not have (D4). See §13 — this is now a stated v1 server requirement, not a
+   deferred question.
 6. **RTT-compensated clock sync combined with a host-less room** — each half exists somewhere, the
    combination exists nowhere.
 
@@ -236,3 +275,47 @@ MutationObserver for element replacement — neither reference has those.
 | Disney+/Prime/Wavve/TVING generic-adapter support | LIKELY, no primary source | smoke test each |
 | Firefox MV3 background can hold a WebSocket like Chrome | UNVERIFIED — different lifetime model | build a spike, measure |
 | watchbear's mechanisms | from decompiled CRX, not source | treat as inspiration, re-derive |
+
+## 13. Room access control is the *only* access control (v1 requirement, not an open question)
+
+With no host and an unguessable room URL, **anyone holding the URL can seek the room at will** —
+including someone it was forwarded to. There is no role that can remove them. That makes the room
+URL not a convenience but the room's entire security boundary, which makes it a **Go server design
+requirement under D2**, not a UX detail to settle later.
+
+v1 assumptions the server model must account for:
+
+1. **Room IDs are unguessable** — >=128 bits of CSPRNG entropy, not sequential, not short codes.
+2. **Room URLs are rotatable.** Any member can rotate the room's join secret; existing members keep
+   their session, anyone reconnecting with the old secret is refused. This is the no-host
+   replacement for "kick": you rotate and re-share with the people you meant to include.
+3. **Per-member command rate limiting**, server-side. Not anti-malice — anti-accident: a stuck
+   adapter or a reconnect storm must not be able to flood the room. Reuse cytube's constants as a
+   starting point (see `research/cytube-watchparty.md` section 12).
+4. **Rooms expire.** In-memory, idle-expiry on the VideoTogether model (3 min after last member).
+   No persistence means no long-lived leaked URL.
+
+What we explicitly do **not** build in v1: kick, ban, mute, roles, or any moderation hierarchy.
+Rotation plus expiry is the honest answer for "friends who already know each other".
+
+## 14. Note on `refs/`
+
+`refs/` is 164 MB of gitignored shallow clones on a filesystem at 91% capacity. **They are not
+durable and nothing should assume they persist.** All findings above are cited `file:line` against
+them, so re-clone before re-verifying a citation. Reproduce with:
+
+```
+git clone --depth=1 --single-branch <url> refs/<name>
+```
+
+| dir | url |
+|---|---|
+| VideoTogether | https://github.com/VideoTogether/VideoTogether |
+| syncplay | https://github.com/Syncplay/syncplay |
+| syncwatch | https://github.com/Semro/syncwatch |
+| opentogethertube | https://github.com/dyc3/opentogethertube |
+| cytube | https://github.com/calzoneman/sync |
+| watchparty | https://github.com/howardchung/watchparty |
+| watchbear | https://github.com/halitsever/watchbear (landing page only — extension source is not published) |
+| SyncTube | https://github.com/RblSb/SyncTube |
+| jellyfin-syncplay | https://github.com/jellyfin/jellyfin (sparse: `Emby.Server.Implementations/SyncPlay`, `MediaBrowser.Controller/SyncPlay`, `MediaBrowser.Model/SyncPlay`, `Jellyfin.Api/Controllers/SyncPlayController.cs`) |
