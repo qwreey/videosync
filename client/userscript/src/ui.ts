@@ -1,0 +1,350 @@
+/**
+ * The panel.
+ *
+ * Rendered into a shadow root: a site's stylesheet must not be able to reach
+ * in and make the controls unusable, and our styles must not leak out and
+ * break the site. Everything is created with `createElement` -- no
+ * `innerHTML` anywhere a room name, a member name or a chat line could reach,
+ * because all three are attacker-controlled text from the room's perspective.
+ */
+import type { MemberInfo } from '@videosync/core/engine/protocol.ts';
+
+const CSS = `
+:host { all: initial; }
+.panel {
+  position: fixed; z-index: 2147483000; right: 16px; bottom: 16px; width: 300px;
+  font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #e9e9ea; background: #17181c; border: 1px solid #303138; border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.45); overflow: hidden;
+}
+.panel.collapsed .body { display: none; }
+.head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: #1f2026; cursor: move; user-select: none;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #6b6d78; flex: none; }
+.dot.joined { background: #3ecf6a; }
+.dot.connecting { background: #e0b23a; }
+.dot.refused, .dot.closed { background: #e05a4f; }
+.title { font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head button { background: none; border: 0; color: #9a9ca6; cursor: pointer; font-size: 14px; padding: 0 2px; }
+.body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+label { display: block; font-size: 11px; color: #9a9ca6; margin-bottom: 2px; }
+input, button.action {
+  width: 100%; box-sizing: border-box; background: #101116; color: #e9e9ea;
+  border: 1px solid #303138; border-radius: 6px; padding: 6px 8px; font: inherit;
+}
+button.action { cursor: pointer; background: #2a5cff; border-color: #2a5cff; color: #fff; font-weight: 600; }
+button.action.secondary { background: #23242b; border-color: #303138; color: #c9cbd4; font-weight: 500; }
+button.action:disabled { opacity: .5; cursor: default; }
+.row { display: flex; gap: 6px; }
+.status { font-size: 12px; color: #9a9ca6; min-height: 1.45em; }
+.status.warn { color: #e0b23a; }
+.status.err { color: #e05a4f; }
+.members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 96px; overflow-y: auto; }
+.members li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.members .tag { font-size: 10px; color: #9a9ca6; border: 1px solid #303138; border-radius: 4px; padding: 0 4px; }
+.chat { display: flex; flex-direction: column; gap: 4px; }
+.log { height: 120px; overflow-y: auto; background: #101116; border: 1px solid #303138; border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+.log .line { font-size: 12px; word-break: break-word; }
+.log .who { color: #7f97ff; font-weight: 600; }
+.log .sys { color: #9a9ca6; font-style: italic; }
+.gesture {
+  position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.72); font: 600 18px system-ui, sans-serif; color: #fff; cursor: pointer;
+}
+.gesture div { padding: 18px 26px; border: 1px solid #4a4c58; border-radius: 12px; background: #17181c; text-align: center; }
+.gesture small { display: block; font-weight: 400; font-size: 13px; color: #9a9ca6; margin-top: 6px; }
+`;
+
+export type MediaAction = () => void;
+
+export interface UIHandlers {
+  onCreateRoom(serverUrl: string, name: string): void;
+  onJoin(serverUrl: string, roomId: string, secret: string, name: string): void;
+  onLeave(): void;
+  onChat(text: string): void;
+  onRotate(): void;
+  onGesture(): void;
+}
+
+export interface UIFields {
+  serverUrl: string;
+  roomId: string;
+  secret: string;
+  name: string;
+}
+
+export class Panel {
+  private readonly root: ShadowRoot;
+  private readonly host: HTMLElement;
+  private readonly el: Record<string, HTMLElement> = {};
+  private readonly h: UIHandlers;
+  private gestureOverlay: HTMLElement | null = null;
+  private joined = false;
+
+  constructor(doc: Document, fields: UIFields, handlers: UIHandlers) {
+    this.h = handlers;
+    this.host = doc.createElement('div');
+    this.host.id = 'videosync-root';
+    this.root = this.host.attachShadow({ mode: 'open' });
+    const style = doc.createElement('style');
+    style.textContent = CSS;
+    this.root.append(style, this.build(doc, fields));
+    doc.documentElement.append(this.host);
+  }
+
+  private build(doc: Document, f: UIFields): HTMLElement {
+    const mk = <K extends keyof HTMLElementTagNameMap>(
+      tag: K, cls?: string, text?: string,
+    ): HTMLElementTagNameMap[K] => {
+      const e = doc.createElement(tag);
+      if (cls) e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    };
+
+    const panel = mk('div', 'panel');
+    const head = mk('div', 'head');
+    const dot = mk('span', 'dot');
+    const title = mk('span', 'title', 'VideoSync');
+    const collapse = mk('button', '', '–');
+    collapse.title = '접기';
+    collapse.addEventListener('click', () => panel.classList.toggle('collapsed'));
+    head.append(dot, title, collapse);
+    this.dragify(head, panel, doc);
+
+    const body = mk('div', 'body');
+
+    const server = mk('input');
+    server.placeholder = 'http://localhost:8787';
+    server.value = f.serverUrl;
+    const name = mk('input');
+    name.placeholder = '이름';
+    name.value = f.name;
+    const room = mk('input');
+    room.placeholder = '방 ID';
+    room.value = f.roomId;
+    const secret = mk('input');
+    secret.placeholder = '참가 비밀키';
+    secret.value = f.secret;
+
+    const create = mk('button', 'action', '방 만들기');
+    create.addEventListener('click', () => this.h.onCreateRoom(server.value.trim(), name.value.trim()));
+    const join = mk('button', 'action secondary', '참가');
+    join.addEventListener('click', () =>
+      this.h.onJoin(server.value.trim(), room.value.trim(), secret.value.trim(), name.value.trim()));
+    const leave = mk('button', 'action secondary', '나가기');
+    leave.addEventListener('click', () => this.h.onLeave());
+
+    const copy = mk('button', 'action secondary', '초대 링크 복사');
+    copy.addEventListener('click', () => {
+      const url = new URL(location.href);
+      url.hash = `videosync=${encodeURIComponent(room.value)}.${encodeURIComponent(secret.value)}`;
+      void navigator.clipboard?.writeText(url.toString());
+      this.setStatus('초대 링크를 복사했어요. 이 링크를 가진 사람은 누구나 방을 조작할 수 있어요.', 'warn');
+    });
+    const rotate = mk('button', 'action secondary', '비밀키 교체');
+    rotate.title = '기존 참가자는 그대로 있고, 예전 링크로는 아무도 들어올 수 없게 돼요.';
+    rotate.addEventListener('click', () => this.h.onRotate());
+
+    const status = mk('div', 'status');
+    // Navigating to a different video does not move the room by itself: with no
+    // host, an accidental navigation by anybody would drag everyone off what
+    // they are watching and nobody could undo it. So it becomes a button.
+    const mediaNotice = mk('div', 'status warn');
+    const mediaBtn = mk('button', 'action secondary');
+    const mediaWrap = mk('div');
+    mediaWrap.style.display = 'none';
+    mediaWrap.append(mediaNotice, mediaBtn);
+    const members = mk('ul', 'members');
+    const log = mk('div', 'log');
+    const chatInput = mk('input');
+    chatInput.placeholder = '메시지…';
+    chatInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || !chatInput.value.trim()) return;
+      e.stopPropagation(); // site hotkeys must not see what is typed here
+      this.h.onChat(chatInput.value);
+      chatInput.value = '';
+    });
+    // A site listening on document for single-key shortcuts (YouTube's k/j/l)
+    // would otherwise act on every keystroke typed into this box.
+    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+      chatInput.addEventListener(t, (e) => { e.stopPropagation(); });
+    }
+
+    const field = (labelText: string, input: HTMLElement) => {
+      const wrap = mk('div');
+      wrap.append(mk('label', '', labelText), input);
+      return wrap;
+    };
+    const row = (...kids: HTMLElement[]) => {
+      const r = mk('div', 'row');
+      r.append(...kids);
+      return r;
+    };
+
+    body.append(
+      field('서버', server),
+      field('이름', name),
+      field('방 ID', room),
+      field('참가 비밀키', secret),
+      row(create, join),
+      row(copy, rotate),
+      leave,
+      status,
+      mediaWrap,
+      members,
+      log,
+      chatInput,
+    );
+    panel.append(head, body);
+
+    Object.assign(this.el, {
+      dot, title, status, members, log, create, join, leave, copy, rotate,
+      server, name, room, secret, chatInput, mediaWrap, mediaNotice, mediaBtn,
+    });
+    this.setJoined(false);
+    return panel;
+  }
+
+  /** Drag by the header. Pointer events so it works with a touch screen too. */
+  private dragify(handle: HTMLElement, panel: HTMLElement, doc: Document): void {
+    let start: { x: number; y: number; left: number; top: number } | null = null;
+    handle.addEventListener('pointerdown', (e: PointerEvent) => {
+      const r = panel.getBoundingClientRect();
+      start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', (e: PointerEvent) => {
+      if (!start) return;
+      panel.style.left = `${start.left + e.clientX - start.x}px`;
+      panel.style.top = `${start.top + e.clientY - start.y}px`;
+      panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
+    });
+    const end = () => { start = null; };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    void doc;
+  }
+
+  fields(): UIFields {
+    return {
+      serverUrl: (this.el.server as HTMLInputElement).value.trim(),
+      roomId: (this.el.room as HTMLInputElement).value.trim(),
+      secret: (this.el.secret as HTMLInputElement).value.trim(),
+      name: (this.el.name as HTMLInputElement).value.trim(),
+    };
+  }
+
+  setFields(f: Partial<UIFields>): void {
+    if (f.serverUrl !== undefined) (this.el.server as HTMLInputElement).value = f.serverUrl;
+    if (f.roomId !== undefined) (this.el.room as HTMLInputElement).value = f.roomId;
+    if (f.secret !== undefined) (this.el.secret as HTMLInputElement).value = f.secret;
+    if (f.name !== undefined) (this.el.name as HTMLInputElement).value = f.name;
+  }
+
+  setStatus(text: string, level: '' | 'warn' | 'err' = ''): void {
+    this.el.status!.className = `status ${level}`;
+    this.el.status!.textContent = text;
+  }
+
+  setConnection(state: string): void {
+    this.el.dot!.className = `dot ${state}`;
+  }
+
+  setJoined(joined: boolean): void {
+    this.joined = joined;
+    for (const k of ['create', 'join'] as const) (this.el[k] as HTMLButtonElement).disabled = joined;
+    for (const k of ['leave', 'copy', 'rotate'] as const) (this.el[k] as HTMLButtonElement).disabled = !joined;
+    (this.el.chatInput as HTMLInputElement).disabled = !joined;
+  }
+
+  setMembers(ms: readonly MemberInfo[], selfId: string, waitingOn: readonly string[]): void {
+    const ul = this.el.members!;
+    ul.textContent = '';
+    const doc = ul.ownerDocument;
+    for (const m of ms) {
+      const li = doc.createElement('li');
+      const nameEl = doc.createElement('span');
+      nameEl.textContent = m.name || m.id;           // never innerHTML: this is someone else's text
+      li.append(nameEl);
+      const tag = (t: string) => {
+        const s = doc.createElement('span');
+        s.className = 'tag';
+        s.textContent = t;
+        li.append(s);
+      };
+      if (m.id === selfId) tag('나');
+      if (m.suspended) tag('자리비움');
+      if (waitingOn.includes(m.id)) tag('버퍼링');
+      ul.append(li);
+    }
+  }
+
+  addChat(who: string, text: string, system = false): void {
+    const log = this.el.log!;
+    const doc = log.ownerDocument;
+    const line = doc.createElement('div');
+    line.className = 'line';
+    if (system) {
+      line.classList.add('sys');
+      line.textContent = text;
+    } else {
+      const w = doc.createElement('span');
+      w.className = 'who';
+      w.textContent = `${who}: `;
+      const t = doc.createElement('span');
+      t.textContent = text;
+      line.append(w, t);
+    }
+    log.append(line);
+    while (log.childElementCount > 200) log.firstElementChild?.remove();
+    log.scrollTop = log.scrollHeight;
+  }
+
+  /** Offer to move the room to what this member is watching. */
+  setMediaAction(notice: string, label: string, action: MediaAction): void {
+    this.el.mediaNotice!.textContent = notice;
+    const btn = this.el.mediaBtn as HTMLButtonElement;
+    btn.textContent = label;
+    btn.onclick = action;
+    this.el.mediaWrap!.style.display = '';
+  }
+
+  clearMediaAction(): void {
+    this.el.mediaWrap!.style.display = 'none';
+    (this.el.mediaBtn as HTMLButtonElement).onclick = null;
+  }
+
+  /**
+   * The gesture-capture overlay. `play()` was refused and nothing exposes the
+   * Media Engagement Index, so the only way back is a real user click -- and it
+   * has to be a click on something of ours, because a click on the site's own
+   * play button would fight the room.
+   */
+  showGesturePrompt(doc: Document): void {
+    if (this.gestureOverlay) return;
+    const o = doc.createElement('div');
+    o.className = 'gesture';
+    const box = doc.createElement('div');
+    box.textContent = '클릭해서 동기화';
+    const small = doc.createElement('small');
+    small.textContent = '브라우저가 자동 재생을 막았어요. 한 번 눌러주면 방에 맞춰 재생돼요.';
+    box.append(small);
+    o.append(box);
+    o.addEventListener('click', () => { this.hideGesturePrompt(); this.h.onGesture(); });
+    this.root.append(o);
+    this.gestureOverlay = o;
+  }
+
+  hideGesturePrompt(): void {
+    this.gestureOverlay?.remove();
+    this.gestureOverlay = null;
+  }
+
+  get isJoined(): boolean { return this.joined; }
+
+  destroy(): void { this.host.remove(); }
+}

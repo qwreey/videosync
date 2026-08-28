@@ -212,6 +212,9 @@ export class FakePlayer implements ProviderAdapter {
 
   destroy(): void { this.listeners.clear(); }
 
+  /** Fire an adapter event, as the DOM would. */
+  emit(event: AdapterEvent): void { for (const fn of this.listeners.get(event) ?? []) fn(); }
+
   /** Simulate a buffering stall: paused stays false, readyState drops. */
   stall(): void { this.settle(); this.readyState = 2; this.bufferedAheadS = 0; }
   recover(): void { this.settle(); this.readyState = 4; this.bufferedAheadS = 30; }

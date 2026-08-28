@@ -1,0 +1,30 @@
+// ==UserScript==
+// @name         VideoSync
+// @namespace    https://github.com/qwreey/videosync
+// @version      0.1.0
+// @description  Watch the same video together on your own accounts. Only the URL, position, play state and chat cross the wire — never the video itself.
+// @author       qwreey
+// @license      MIT
+// @match        https://www.youtube.com/*
+// @match        https://m.youtube.com/*
+// @match        https://youtu.be/*
+// @match        https://laftel.net/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @run-at       document-idle
+// @noframes
+// ==/UserScript==
+//
+// Adding a provider is one @match line. The script has no per-site code: it
+// finds the largest playing <video>, names the media from the URL, and syncs
+// position and play state. That is the whole design.
+//
+// @grant is NOT optional and not only for storage. With `@grant none` a
+// userscript is injected into the PAGE context, where the site's
+// Content-Security-Policy governs everything it does -- including opening a
+// WebSocket. Most OTT sites ship a `connect-src` that does not list your
+// self-hosted server, so the socket would simply be refused. Granting any GM
+// API moves the script into the userscript sandbox, which has its own CSP.
+//
+// @noframes because an embedded player in an iframe would otherwise mount a
+// second panel and a second member for the same person.
