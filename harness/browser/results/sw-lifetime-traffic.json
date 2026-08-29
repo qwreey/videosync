@@ -5,363 +5,495 @@
   "samples": [
     {
       "atMs": 15014,
-      "entries": 5,
+      "entries": 6,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 1,
       "last": {
-        "at": 1787990260962,
+        "at": 1787990576967,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 30017,
-      "entries": 7,
+      "atMs": 30016,
+      "entries": 9,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 3,
       "last": {
-        "at": 1787990280962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
+        "at": 1787990596967,
+        "event": "tick",
+        "instance": "g1qhw2",
+        "readyState": 1
       }
     },
     {
       "atMs": 45018,
-      "entries": 8,
+      "entries": 12,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 4,
       "last": {
-        "at": 1787990290962,
+        "at": 1787990606967,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
       "atMs": 60026,
-      "entries": 10,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990310962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 75034,
-      "entries": 11,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990320962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 90039,
-      "entries": 13,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990340962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 105043,
       "entries": 14,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 5,
       "last": {
-        "at": 1787990350962,
+        "at": 1787990616967,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 120047,
-      "entries": 16,
+      "atMs": 75033,
+      "entries": 18,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 7,
       "last": {
-        "at": 1787990370962,
+        "at": 1787990636967,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 135049,
-      "entries": 17,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990380962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 150050,
-      "entries": 19,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990400962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 165058,
-      "entries": 20,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990410962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 180061,
+      "atMs": 90038,
       "entries": 22,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 9,
       "last": {
-        "at": 1787990430962,
+        "at": 1787990656968,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 195067,
-      "entries": 23,
+      "atMs": 105042,
+      "entries": 24,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 10,
       "last": {
-        "at": 1787990440962,
+        "at": 1787990666968,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 210072,
-      "entries": 25,
-      "instances": 1,
-      "ticks": 0,
-      "last": {
-        "at": 1787990460962,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "6zg3ig"
-      }
-    },
-    {
-      "atMs": 225076,
+      "atMs": 120045,
       "entries": 26,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 11,
       "last": {
-        "at": 1787990470962,
+        "at": 1787990676968,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
       }
     },
     {
-      "atMs": 240077,
-      "entries": 28,
+      "atMs": 135047,
+      "entries": 30,
       "instances": 1,
-      "ticks": 0,
+      "ticks": 13,
       "last": {
-        "at": 1787990490962,
+        "at": 1787990696968,
         "event": "message",
         "frame": "time.reply",
-        "instance": "6zg3ig"
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 150049,
+      "entries": 32,
+      "instances": 1,
+      "ticks": 14,
+      "last": {
+        "at": 1787990706968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 165056,
+      "entries": 36,
+      "instances": 1,
+      "ticks": 16,
+      "last": {
+        "at": 1787990726968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 180058,
+      "entries": 38,
+      "instances": 1,
+      "ticks": 17,
+      "last": {
+        "at": 1787990736968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 195063,
+      "entries": 42,
+      "instances": 1,
+      "ticks": 19,
+      "last": {
+        "at": 1787990756968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 210068,
+      "entries": 44,
+      "instances": 1,
+      "ticks": 20,
+      "last": {
+        "at": 1787990766968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 225072,
+      "entries": 48,
+      "instances": 1,
+      "ticks": 22,
+      "last": {
+        "at": 1787990786968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
+      }
+    },
+    {
+      "atMs": 240073,
+      "entries": 50,
+      "instances": 1,
+      "ticks": 23,
+      "last": {
+        "at": 1787990796968,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "g1qhw2"
       }
     }
   ],
   "log": [
     {
-      "at": 1787990248934,
+      "at": 1787990564978,
       "event": "worker-start",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990250961,
+      "at": 1787990566965,
       "event": "room-created",
-      "instance": "6zg3ig",
-      "roomId": "VFdhhQ0XiQKH46iCUhzH5g"
+      "instance": "g1qhw2",
+      "roomId": "el0rexGumU58TWZWNB_Tzg"
     },
     {
-      "at": 1787990250963,
+      "at": 1787990566968,
       "event": "open",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990250963,
+      "at": 1787990566968,
       "event": "message",
       "frame": "welcome",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990260962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990576967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990270962,
+      "at": 1787990576967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990280962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990586967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990290962,
+      "at": 1787990586967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990300962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990596967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990310962,
+      "at": 1787990596967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990320962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990606967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990330962,
+      "at": 1787990606967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990340962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990616967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990350962,
+      "at": 1787990616967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990360962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990626967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990370962,
+      "at": 1787990626968,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990380962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990636967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990390962,
+      "at": 1787990636967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990400962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990646967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990410962,
+      "at": 1787990646967,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990420962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990656967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990430962,
+      "at": 1787990656968,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990440962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990666967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990450962,
+      "at": 1787990666968,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990460962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990676967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990470962,
+      "at": 1787990676968,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
     },
     {
-      "at": 1787990480962,
-      "event": "message",
-      "frame": "time.reply",
-      "instance": "6zg3ig"
+      "at": 1787990686967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
     },
     {
-      "at": 1787990490962,
+      "at": 1787990686968,
       "event": "message",
       "frame": "time.reply",
-      "instance": "6zg3ig"
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990696967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990696968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990706967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990706968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990716967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990716968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990726967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990726968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990736967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990736968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990746967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990746968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990756967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990756968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990766967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990766968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990776967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990776968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990786967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990786968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
+    },
+    {
+      "at": 1787990796967,
+      "event": "tick",
+      "instance": "g1qhw2",
+      "readyState": 1
+    },
+    {
+      "at": 1787990796968,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "g1qhw2"
     }
   ],
   "verdict": {
@@ -369,9 +501,9 @@
     "workerRestarted": false,
     "opens": 1,
     "closes": [],
-    "ticks": 0,
-    "maxTickGapMs": 0,
-    "lastReadyState": null,
-    "survivedMs": 0
+    "ticks": 23,
+    "maxTickGapMs": 10000,
+    "lastReadyState": 1,
+    "survivedMs": 229999
   }
 }

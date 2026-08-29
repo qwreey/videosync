@@ -347,7 +347,50 @@ and the player state has to cross a message port — which is precisely the spli
 the userscript does not have, and it puts the session on MV3's service-worker
 lifetime.
 
-That lifetime is what §10 measures.
+## 10. Does an MV3 service worker hold a WebSocket? (`probe-swlife.mjs`, `ext-life/`)
+
+The question §9 forces, and the reason the extension was sequenced last. If the
+worker cannot hold a socket, "self-hostable on your own machine" and "browser
+extension" are in tension and the product has to choose.
+
+**It holds it.** With a client-shaped heartbeat (one frame every 10 s), on a
+YouTube tab, against `ws://127.0.0.1`:
+
+| | |
+|---|---|
+| distinct worker instances over the run | **1** (never restarted) |
+| socket closes | **0** |
+| ticks delivered | 23 of 23 |
+| **largest gap between consecutive ticks** | **10 000 ms** — i.e. exactly the interval, never once late |
+| `readyState` at the end | 1 (OPEN) |
+
+A worker that had been torn down and revived would show a new instance id and a
+reset module state; a worker merely suspended would show a gap in a timer that
+fires every 10 s. Neither happened.
+
+### Two things the measurement had to avoid measuring itself
+
+- **Polling the worker keeps it alive.** Every `chrome.runtime.sendMessage` is
+  activity and resets the idle timer, so a probe that asks the worker how it is
+  doing has already answered its own question. After the initial start message
+  the driver never speaks to the worker again: the worker writes its own log to
+  `chrome.storage.local` and the content script reads it with
+  `chrome.storage.local.get`, which does not wake it.
+- **Module state is exactly what a teardown destroys**, so the log lives in
+  storage and every entry carries the instance that wrote it.
+
+One methodological bug worth recording because it produced a confident wrong
+number: the first run reported `ticks: 0` for a worker that was ticking
+perfectly. Two handlers were doing read-modify-write on `chrome.storage` at
+once and the tick writes were being clobbered by the message writes they had
+themselves caused. Serialising the log fixed it. The socket's own evidence — a
+server reply arriving every ten seconds — had been in the log the whole time.
+
+### What this does not settle
+
+The client heartbeats at 1 Hz, so the traffic case is the real one and it is the
+one measured. Whether an **idle** socket alone keeps the worker alive is a
+separate arm; a design that depends on it would be fragile anyway.
 
 
 ## 6. Reproducing
