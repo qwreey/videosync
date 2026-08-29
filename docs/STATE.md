@@ -16,7 +16,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
-| Extension shim | not started (deliberately last) |
+| MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
+| Extension shim | **not started — and it is not a thin wrapper** (see below) |
 
 ## What exists and works
 
@@ -90,17 +91,45 @@ pass in the userscript sandbox — but it means `@grant`, `GM_setValue`, and the
 panel inside a real extension have never actually run. Install it and open two
 profiles on the same YouTube video against a TLS-terminated server.
 
-**Your server needs TLS.** Measured, not assumed: from an https page a script
-can reach neither `http://` nor `ws://` on your server, and the blocked call
-never settles, so it looks exactly like a server that is down
-(BROWSER-FINDINGS §8). Either `-tls-cert/-tls-key`, or anything that terminates
-TLS in front of it.
+**Your server needs a public address AND TLS.** Measured, not assumed: from a
+page on a public origin the browser refuses every request to loopback or a
+private address, whatever the scheme, and the call never settles -- it looks
+exactly like a server that is down (BROWSER-FINDINGS §8). `http://localhost` and
+`https://192.168.x.y` both fail. Use a domain with a real certificate, or a
+tunnel that gives you one. (An extension would not need this; a userscript
+does.)
 
-### Then: the extension
+### Then: the extension — and it changed shape
 
-Deliberately last — highest platform risk, and the userscript already ships.
-The known unknowns are MV3 service-worker lifetime holding a WebSocket, and the
-same question on Firefox, which has a different lifetime model.
+It was sequenced last for platform risk. The measurements moved it from
+"convenience" to "the only way to self-host on your own machine", and at the
+same time confirmed it is **not** a thin wrapper around the userscript:
+
+| | content script | service worker |
+|---|---|---|
+| has the DOM / the `<video>` | **yes** | no |
+| can reach a server on loopback or your LAN, from an OTT page | **no** — the request never leaves the browser | **yes** |
+
+So the socket has to live in the **service worker** and the player state has to
+cross a message port. That is exactly the split the userscript does not have,
+and it puts the session on MV3's service-worker lifetime.
+
+Sketch, if it gets built:
+
+- `content.js` — `Html5Adapter` + `SeekDetector` + the eval loop. Sends
+  observations and player state over `chrome.runtime` ports; applies
+  transitions and corrections it is told to.
+- `sw.js` — `ServerClock` + the protocol client + the WebSocket. One port per
+  tab. This is where `SyncEngine` mostly already fits; the seam to introduce is
+  between "decide" and "touch the player", which the adapter interface already
+  is.
+- The clock is the awkward part: `ServerClock` must live with the socket (the
+  worker), but the *player* position is read in the content script, so a
+  residual is computed across a message hop. Measure that hop before assuming
+  it is negligible — the whole design resolves position to tens of
+  milliseconds.
+- Firefox: MV3 there uses event pages, not service workers, with a different
+  lifetime model. Ship Chrome first, keep the socket code in one place.
 
 ## Open questions that block things
 
