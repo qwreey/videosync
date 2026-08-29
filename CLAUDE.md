@@ -68,11 +68,13 @@ corrected. Read it before picking up work.
 - **Every millisecond field on the wire is an `int64`.** `performance.now()` is fractional; sending
   `{"t":"time","t0":874.47}` gets `bad_frame` and the session stays joined while the clock never
   settles and no correction ever fires. Round at the wire boundary.
-- **The server MUST have TLS.** From an https page a script can reach neither `http://` nor
-  `ws://` on your server — both are blocked as mixed content, and the blocked call never settles,
-  so it looks exactly like a server that is down. `http://localhost` being "potentially
-  trustworthy" governs whether that page IS a secure context; it does not exempt it as a
-  subresource of an https page. (`BROWSER-FINDINGS.md` §8.)
+- **A public-origin page cannot reach a loopback or private address AT ALL** — any scheme, http and
+  https and ws and wss alike. The request never leaves the browser (a permissive listener sees
+  nothing, not even a preflight) and it hangs forever, so it looks exactly like a server that is
+  down. The server needs a **public address with a real certificate**. An extension's **service
+  worker is exempt**, which is the one thing the extension can do that a userscript structurally
+  cannot. (`BROWSER-FINDINGS.md` §8, §9.) An earlier version of that section blamed mixed content;
+  that was an assumption that fit the data, not a measurement.
 - **A userscript or content script is ALWAYS on a different origin from the server**, so every
   `/api/rooms` call is cross-origin and needs CORS. Without it the browser succeeds at the request
   and then refuses to let the script read it — `TypeError: Failed to fetch`, naming nothing.

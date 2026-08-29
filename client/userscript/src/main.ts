@@ -103,21 +103,33 @@ function refreshStatus(): void {
 // --- room lifecycle ---------------------------------------------------------
 
 /**
- * Refuse a plaintext server from an https page, with the reason.
+ * Refuse a server the browser will never let us reach, with the reason.
  *
- * Measured (docs/BROWSER-FINDINGS.md §8): from an https page, both `fetch` to
- * `http://` and `new WebSocket('ws://...')` are blocked as mixed content, and
- * the localhost exemption that exists for secure *contexts* does not apply.
- * The failure has no useful error -- the request simply never settles -- so
- * catching it here is the difference between one clear sentence and an evening.
+ * Measured (docs/BROWSER-FINDINGS.md §8): from a page on a public origin, a
+ * request to a loopback or private address is refused **before it is sent** --
+ * any scheme, http and https and ws and wss alike -- and a plaintext server is
+ * additionally unreachable from an https page. Neither failure produces a
+ * useful error: the request simply never settles, which looks exactly like a
+ * server that is down. Catching it here is the difference between one sentence
+ * and an evening.
  */
-function mixedContentProblem(serverUrl: string): string | null {
-  if (location.protocol !== 'https:') return null;
+function unreachableServer(serverUrl: string): string | null {
   let u: URL;
   try { u = new URL(serverUrl); } catch { return null; }
-  if (u.protocol !== 'http:') return null;
-  return '이 페이지는 https라서 http 서버에는 연결할 수 없어요 (브라우저가 막아요). ' +
-    '서버에 TLS를 붙이거나(-tls-cert/-tls-key), TLS를 종단하는 리버스 프록시 뒤에 두세요.';
+  const local = location.protocol === 'http:' || location.hostname === 'localhost'
+    || location.hostname === '127.0.0.1';
+  const privateHost = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|\[?::1)/.test(u.hostname)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(u.hostname);
+  if (!local && privateHost) {
+    return '브라우저가 이 페이지에서 로컬/사설 주소로 나가는 요청을 아예 막아요 (스킴과 무관해요). ' +
+      '서버를 공개 주소 + 실제 인증서로 두거나, 터널을 쓰거나, 확장 프로그램 쪽을 쓰세요 — ' +
+      '확장의 서비스 워커는 이 제한을 받지 않아요.';
+  }
+  if (location.protocol === 'https:' && u.protocol === 'http:') {
+    return '이 페이지는 https라서 http 서버에는 연결할 수 없어요. ' +
+      '서버에 TLS를 붙이거나(-tls-cert/-tls-key), TLS를 종단하는 리버스 프록시 뒤에 두세요.';
+  }
+  return null;
 }
 
 function wsUrl(serverUrl: string): string {
@@ -128,8 +140,8 @@ function wsUrl(serverUrl: string): string {
 
 async function createRoom(serverUrl: string, name: string): Promise<void> {
   if (!serverUrl) { panel.setStatus('서버 주소를 입력해주세요.', 'err'); return; }
-  const mixed = mixedContentProblem(serverUrl);
-  if (mixed) { panel.setStatus(mixed, 'err'); return; }
+  const unreachable = unreachableServer(serverUrl);
+  if (unreachable) { panel.setStatus(unreachable, 'err'); return; }
   panel.setStatus('방을 만드는 중…');
   try {
     const res = await fetch(new URL('/api/rooms', serverUrl).toString(), {
@@ -152,8 +164,8 @@ async function createRoom(serverUrl: string, name: string): Promise<void> {
 
 function join(serverUrl: string, roomId: string, secret: string, name: string): void {
   if (!serverUrl || !roomId || !secret) { panel.setStatus('서버 주소, 방 ID, 비밀키가 모두 필요해요.', 'err'); return; }
-  const mixed = mixedContentProblem(serverUrl);
-  if (mixed) { panel.setStatus(mixed, 'err'); return; }
+  const unreachable = unreachableServer(serverUrl);
+  if (unreachable) { panel.setStatus(unreachable, 'err'); return; }
   leave();
   save('server', serverUrl); save('room', roomId); save('secret', secret); save('name', name);
 

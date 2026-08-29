@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "VideoSync capability probe",
+  "version": "0.0.1",
+  "description": "Measures what an MV3 content script is actually allowed to do. Not a product.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*", "https://127.0.0.1/*"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

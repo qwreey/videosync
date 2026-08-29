@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "VideoSync service-worker lifetime probe",
+  "version": "0.0.1",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    { "matches": ["https://*/*", "http://*/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ]
+}

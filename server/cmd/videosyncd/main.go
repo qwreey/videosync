@@ -64,16 +64,22 @@ func main() {
 			return
 		}
 		log.Printf("videosyncd listening on http://%s", *addr)
-		// Measured, not guessed (docs/BROWSER-FINDINGS.md section 8): a script on an
-		// https page cannot reach an http server at all -- neither `fetch` nor
-		// `ws://` -- and the localhost exemption that exists for secure
-		// CONTEXTS does not extend to mixed-content subresource blocking. Every
-		// provider we target serves https, so plaintext is a local-testing mode
-		// and nothing else. Say so at startup rather than let it be discovered
-		// as "the extension does not work".
-		log.Print("WARNING: no TLS. Browsers block http/ws from an https page, so this server " +
-			"is unreachable from any real provider. Pass -tls-cert/-tls-key, or put it behind " +
-			"a TLS-terminating reverse proxy.")
+		// Measured (docs/BROWSER-FINDINGS.md section 8): a page on a public origin
+		// cannot reach a loopback or private address by ANY scheme -- the
+		// request never leaves the browser and presents as an indefinite hang.
+		// TLS does not lift that; a public address does. An extension's service
+		// worker is exempt, which is why the extension can talk to a server on
+		// the user's own machine and a userscript cannot. Say it at startup
+		// rather than let it be discovered as "the server is down".
+		log.Print("WARNING: no TLS. For a userscript on a real provider this server also needs " +
+			"a PUBLIC address: browsers refuse every request from a public-origin page to " +
+			"loopback or a private IP, whatever the scheme. Pass -tls-cert/-tls-key with a real " +
+			"certificate, or put it behind a TLS-terminating reverse proxy on a public name. " +
+			"A plaintext loopback server is reachable only from a local test page or from the " +
+			"browser extension.")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("listen: %v", err)
+		}
 	}()
 
 	sig := make(chan os.Signal, 1)

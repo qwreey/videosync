@@ -279,38 +279,76 @@ not fight a raw DOM seek the way Netflix is reported to.
 
 So D1's "YouTube via the generic adapter" holds, with no per-site adapter.
 
-### The deployment constraint nobody would guess: **TLS is mandatory**
+### The deployment constraint nobody would guess — and the first explanation was wrong
 
-From an **https** page, a script can reach neither `http://` nor `ws://` on a
-self-hosted server. Both are blocked as mixed content. Measured both ways in
-one run:
+**What is true:** a page on a public origin cannot reach a server on
+**loopback or a private address** at all. Not `http`, not `https`, not `ws`,
+not `wss`. The request **never leaves the browser** — a permissive listener that
+answers everything, CORS and `Access-Control-Allow-Private-Network` included,
+sees **zero requests**, not even a preflight. It presents as an indefinite hang,
+with no rejection and nothing naming a reason. It looks exactly like a server
+that is down.
 
-| page | `fetch http://…/api/rooms` | `new WebSocket('ws://…')` |
-|---|---|---|
-| `http://127.0.0.1:8899` (our own test page) | **works** | **opens** |
-| `https://www.youtube.com` | **blocked** | **blocked** |
+| from | to `127.0.0.1` `http` | `ws` | `https` | `wss` | to a public https host |
+|---|---|---|---|---|---|
+| `http://127.0.0.1:8899` (our test page) | works | opens | works | opens | works |
+| `https://www.youtube.com` | **blocked** | **blocked** | **blocked** | **blocked** | **works** |
+| the extension's **service worker** | **works** | see §9 | — | — | works |
 
-The blocked cases never settle — no rejection, no error event, nothing that
-names CSP or mixed content. It looks exactly like a server that is down.
+> **Correction to the first version of this section.** It said the blocker was
+> mixed content and concluded "TLS is mandatory". That was an assumption that
+> happened to fit the data: only `http`/`ws` had been tested, and mixed content
+> explains those. Adding `https`/`wss` to the same target — still blocked — and a
+> public https host — reachable — shows the binding constraint is the **target's
+> address**, not the scheme. Mixed content is presumably also true for the
+> `http`-from-`https` case, but it was never isolated and this section should not
+> have claimed it. TLS is still required for any public deployment; it is simply
+> not what was being measured.
 
-Note the rule that does *not* save you: `http://localhost` being "potentially
-trustworthy" governs whether that page **is** a secure context. It does not
-exempt it from mixed-content blocking as a *subresource* of an https page.
+Consequences:
 
-Consequences, all now in the code:
-- `videosyncd` takes `-tls-cert`/`-tls-key`, and **warns at startup** when
-  running plaintext that no real provider can reach it.
-- The userscript refuses an `http://` server from an https page up front, with
-  the reason, instead of letting the request hang.
-- `client/userscript/README.md` leads with it.
+- **A userscript cannot talk to a server on your own machine or your LAN.** The
+  server needs a public address and a real certificate — a domain plus
+  Let's Encrypt, or a tunnel that provides one.
+- **An extension can**, because its service worker is exempt (measured above).
+  That turns the extension from a convenience into the only route to
+  self-hosting on a home network, which is what D2 meant by self-hostable — and
+  it moves the socket into the service worker, whose lifetime is §9's question.
+- `videosyncd` still takes `-tls-cert`/`-tls-key`; the startup warning now names
+  the address constraint rather than repeating the wrong explanation.
 
 ### What this run does NOT cover
 
-- **No Tampermonkey.** The bundle was injected into the MAIN world via CDP, so
-  the CSP question was asked from the *pessimistic* side. `@grant` puts the real
-  script in the userscript sandbox, which is strictly less restricted.
+- **No Tampermonkey.** The bundle was injected into the MAIN world via CDP.
+  Note that the address block above is not something `@grant` can lift: it is
+  enforced on the page's origin, and a userscript sandbox does not change which
+  addresses a page may reach.
+- **No public-address server of our own.** Mixed content per se is therefore
+  still untested for our service; only the address block is measured.
 - No Laftel (needs a session), no ads, no two-account room, no live SPA
   navigation between videos.
+
+## 9. What an MV3 content script may do (`probe-ext.mjs`, `ext-probe/`)
+
+Measured before writing any of the extension, because it decides its
+architecture rather than its details.
+
+| capability, from a content script on `https://www.youtube.com` | |
+|---|---|
+| `chrome.storage.local` | works |
+| `fetch` to a public https host | works |
+| `fetch`/`WebSocket` to `127.0.0.1`, any scheme | **blocked before the request is sent** |
+| the same, relayed through the **service worker** | **works** |
+
+So the extension is **not** a thin wrapper around the userscript. The content
+script has the DOM but cannot reach a self-hosted server; the service worker can
+reach it but has no DOM. The socket therefore has to live in the service worker
+and the player state has to cross a message port — which is precisely the split
+the userscript does not have, and it puts the session on MV3's service-worker
+lifetime.
+
+That lifetime is what §10 measures.
+
 
 ## 6. Reproducing
 

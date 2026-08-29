@@ -64,6 +64,16 @@ func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.Header().Set("Access-Control-Max-Age", "600")
+			// Private Network Access. A page on a public origin -- every OTT
+			// site -- reaching a server on localhost or a LAN address is a
+			// private-network request, and Chrome refuses it unless the target
+			// says it is expecting one. This is a SEPARATE gate from CORS and
+			// from mixed content: it applies to https targets too, and a
+			// self-hosted sync server on 127.0.0.1 or 192.168.x.y is exactly
+			// the case it governs.
+			if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+				w.Header().Set("Access-Control-Allow-Private-Network", "true")
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

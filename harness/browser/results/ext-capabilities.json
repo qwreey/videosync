@@ -1,0 +1,98 @@
+{
+  "pages": {
+    "http": {
+      "origin": "http://127.0.0.1:8899",
+      "world": "content-script",
+      "results": {
+        "directFetchHttp": {
+          "ok": true,
+          "roomId": "mS9kYsluTCqmNyonGwzt8A"
+        },
+        "wsPlain": {
+          "ok": true
+        },
+        "relayFetchHttp": {
+          "ok": true,
+          "status": 201,
+          "text": "{\"roomId\":\"zFUZ5SaOfb7kx94SiZ8KTw\",\"secret\":\"l9MzO_mAcNSo7sDfKzmh3w\"}\n"
+        },
+        "relayWsPlain": {
+          "ok": true
+        },
+        "directFetchTls": {
+          "ok": true,
+          "roomId": "uIvMlnw2uNAiKkkgeITd6w"
+        },
+        "wssFromContent": {
+          "ok": true
+        },
+        "publicHttps": {
+          "ok": true
+        },
+        "spyFetch": {
+          "ok": true
+        },
+        "storage": {
+          "ok": true
+        }
+      },
+      "done": true,
+      "spyRequests": [
+        {
+          "method": "POST",
+          "url": "/spy",
+          "origin": "http://127.0.0.1:8899",
+          "pna": null
+        }
+      ]
+    },
+    "https-youtube": {
+      "origin": "https://www.youtube.com",
+      "world": "content-script",
+      "results": {
+        "directFetchHttp": {
+          "ok": false,
+          "err": "timeout: directFetchHttp"
+        },
+        "wsPlain": {
+          "ok": false,
+          "err": "timeout: wsPlain"
+        },
+        "relayFetchHttp": {
+          "ok": true,
+          "status": 201,
+          "text": "{\"roomId\":\"XptM3dIKEcI8YGHb2xxe7A\",\"secret\":\"nG4fjpZE80O3TRjiQSsR6A\"}\n"
+        },
+        "relayWsPlain": {
+          "ok": false,
+          "err": "timeout"
+        },
+        "directFetchTls": {
+          "ok": false,
+          "err": "timeout: directFetchTls"
+        },
+        "wssFromContent": {
+          "ok": false,
+          "err": "timeout: wss"
+        },
+        "publicHttps": {
+          "ok": true
+        },
+        "spyFetch": {
+          "ok": false,
+          "err": "timeout: spyFetch"
+        },
+        "storage": {
+          "ok": true
+        }
+      },
+      "done": true,
+      "spyRequests": []
+    }
+  },
+  "notes": [],
+  "servers": {
+    "plaintext": true,
+    "tls": true
+  }
+}

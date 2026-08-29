@@ -14,26 +14,41 @@ and will not give it to them.
    ```
 3. Run a server somewhere all of you can reach — see below, it must be **https**.
 
-## Your server must have TLS. This is not optional.
+## Your server must be on a public address, with TLS
 
-Measured in a real browser (`docs/BROWSER-FINDINGS.md` §8): from an **https**
-page, a script can reach neither `http://your-server` nor `ws://your-server`.
-Both are blocked as mixed content, with no useful error — the request simply
-never settles. The "localhost is trustworthy" rule you may be thinking of
-applies to whether a page *is* a secure context, not to this.
+Measured in a real browser (`docs/BROWSER-FINDINGS.md` §8), and it is stricter
+than it sounds:
 
-Every provider worth syncing serves https. So:
+- From a page on a **public origin** — every OTT site — the browser refuses
+  every request to **loopback or a private address**. Not `http`, not `https`,
+  not `ws`, not `wss`. The request never leaves the browser: a listener that
+  answers everything permissively sees nothing arrive, not even a preflight.
+- Separately, an **https** page cannot reach an **http** server.
+
+Both failures present the same way: the call hangs forever, with no error and
+nothing naming a reason. It looks exactly like a server that is down.
+
+So `http://localhost:8787` will not work from YouTube, and neither will
+`https://192.168.1.10`. What works is a public name with a real certificate:
 
 ```
-# with a real certificate
+# a domain you control
 videosyncd -addr :443 -tls-cert fullchain.pem -tls-key privkey.pem
 
-# or behind anything that terminates TLS for you
+# or anything that terminates TLS on a public name for you
 caddy reverse-proxy --from sync.example.com --to 127.0.0.1:8787
+
+# or a tunnel, if you do not want to expose a port
+#   cloudflared / tailscale funnel / ngrok -- any of them gives you a public https name
 ```
 
-Plaintext still works for `http://localhost` test pages, and the server says so
-loudly at startup.
+Plaintext loopback still works for a local `http://` test page, and the server
+says so at startup.
+
+> **If you want to run the server on your own machine with no public name, use
+> the browser extension instead.** An extension's service worker is not subject
+> to the private-address block (measured, §9) — that is the one thing it can do
+> that a userscript structurally cannot.
 
 ## Adding a provider
 
