@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "with <all_urls>: the worker can create a room",
+      "ok": true,
+      "detail": "leV9j6Ey8-dH78MOrl7W6A"
+    },
+    {
+      "name": "with <all_urls>: the relayed socket opens",
+      "ok": true
+    },
+    {
+      "name": "WITHOUT host_permissions: the worker can create a room",
+      "ok": true,
+      "detail": "do9x_DSqd74AUFNsrFREkA"
+    },
+    {
+      "name": "WITHOUT host_permissions: the relayed socket opens",
+      "ok": true
+    }
+  ]
+}

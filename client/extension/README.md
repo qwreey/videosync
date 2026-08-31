@@ -51,9 +51,18 @@ No host, no moderation — the room is for people who already know each other
 the secret does not eject anyone; it stops the forwarded link from working, and
 you re-share with the people you meant.
 
+## Permissions
+
+`storage`, and the two content-script matches. **No `host_permissions`** — the
+worker reaches your server with an ordinary CORS request, and `videosyncd` sends
+`Access-Control-Allow-Origin: *`. Measured both ways
+(`harness/browser/results/ext-permissions.json`): room creation and the relayed
+socket both work with the permission removed.
+
+The one thing that depends on: if you put the server behind a proxy that strips
+CORS headers, the extension will need `host_permissions` for that origin. The
+server itself always sends them.
+
 ## Known gaps
 
-- `host_permissions: ["<all_urls>"]` is blunt. The worker needs it only to reach
-  whatever server you configure; a store-ready build should ask for that one
-  origin on demand instead.
 - Firefox is unverified: MV3 there uses event pages, not service workers.

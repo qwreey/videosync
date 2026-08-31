@@ -31,24 +31,24 @@
     {
       "name": "YouTube does not reset playbackRate",
       "ok": true,
-      "detail": "asked 1.1, held 1.1 after 10 s, advanced 10.98s (implied 1.098x)"
+      "detail": "asked 1.1, held 1.1 after 10 s, advanced 10.99s (implied 1.099x)"
     },
     {
       "name": "the rate actually changed playback speed",
       "ok": true,
-      "detail": "10.98s of media in 10 s of wall clock"
+      "detail": "10.99s of media in 10 s of wall clock"
     },
     {
       "name": "a currentTime write sticks and playback continues from it",
       "ok": true,
-      "detail": "landed at 122.43s"
+      "detail": "landed at 122.44s"
     }
   ],
   "measurements": {
     "videoElements": 1,
     "mediaKey": "yt:aqz-KE-bpKQ",
     "afterPlay": {
-      "positionS": 3.95,
+      "positionS": 3.98,
       "paused": false,
       "readyState": 4
     },
@@ -56,11 +56,11 @@
       "requested": 1.1,
       "immediately": 1.1,
       "after10s": 1.1,
-      "advancedS": 10.98,
-      "impliedRate": 1.098
+      "advancedS": 10.99,
+      "impliedRate": 1.099
     },
     "afterSeek": {
-      "positionS": 122.43,
+      "positionS": 122.44,
       "readyState": 4
     },
     "capabilities": {
@@ -70,7 +70,7 @@
       "supportsAdDetection": false,
       "volatileVideoElement": false
     },
-    "bufferedAheadS": 15.83
+    "bufferedAheadS": 15.82
   },
   "notes": []
 }

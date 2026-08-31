@@ -127,13 +127,15 @@ measurement saying teardown does not happen.
 share `client/core/src/app/bootstrap.ts` verbatim and differ in exactly three
 injected pieces: storage, transport, and how a room gets created.
 
+It asks for **no `host_permissions`** — measured, not assumed: the worker
+reaches the server with an ordinary CORS request and `videosyncd` sends
+`Access-Control-Allow-Origin: *`, so room creation and the relayed socket both
+work with the permission removed
+(`harness/browser/results/ext-permissions.json`). That makes the install prompt
+`storage` plus two sites. The dependency is real though: a proxy in front of the
+server that strips CORS headers would put the permission back.
+
 Still to do there:
-- **`host_permissions: ["<all_urls>"]`** is the blunt version. The worker needs
-  it only to `POST /api/rooms` to whatever server the user configures. A
-  store-ready build should use `optional_host_permissions` and request the one
-  origin on the "방 만들기" click, which is a user gesture. Worth checking first
-  whether it is needed at all: the server sends `Access-Control-Allow-Origin: *`,
-  so a plain CORS fetch from the worker may already work with no host permission.
 - **Firefox.** The manifest carries a `browser_specific_settings` id, but MV3
   there uses event pages rather than service workers, with a different lifetime
   model. Unverified.
