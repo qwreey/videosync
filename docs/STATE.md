@@ -17,7 +17,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
-| Extension shim | **not started — and it is not a thin wrapper** (see below) |
+| Extension shim | **built** — `client/extension/`, validated in two real browsers |
 
 ## What exists and works
 
@@ -99,37 +99,45 @@ exactly like a server that is down (BROWSER-FINDINGS §8). `http://localhost` an
 tunnel that gives you one. (An extension would not need this; a userscript
 does.)
 
-### Then: the extension — and it changed shape
+### The extension — built, and it IS a thin wrapper after all
 
 It was sequenced last for platform risk. The measurements moved it from
-"convenience" to "the only way to self-host on your own machine", and at the
-same time confirmed it is **not** a thin wrapper around the userscript:
+"convenience" to **the only way to self-host on your own machine**:
 
 | | content script | service worker |
 |---|---|---|
 | has the DOM / the `<video>` | **yes** | no |
 | can reach a server on loopback or your LAN, from an OTT page | **no** — the request never leaves the browser | **yes** |
 
-So the socket has to live in the **service worker** and the player state has to
-cross a message port. That is exactly the split the userscript does not have,
-and it puts the session on MV3's service-worker lifetime.
+The first reading of that was "so the engine moves to the worker and player
+state crosses a port on every evaluation". That was unnecessarily bad. The
+constraint is only that the **socket** must live in the worker; everything else
+— adapter, detector, clock, engine — stays beside the `<video>` exactly as in
+the userscript, and the worker is a **dumb frame relay (1.7 kB)**. No position
+ever crosses the port. The hop sits inside the measured round trip, where
+min-RTT sampling already accounts for it and it merely widens `uncertaintyMs`
+by half the hop.
 
-Sketch, if it gets built:
+It also means the worker holds no session state, so a teardown costs a
+**reconnect** and nothing else — the engine already knows how to back off,
+reconnect and throw a stale clock estimate away. That is worth more than §10's
+measurement saying teardown does not happen.
 
-- `content.js` — `Html5Adapter` + `SeekDetector` + the eval loop. Sends
-  observations and player state over `chrome.runtime` ports; applies
-  transitions and corrections it is told to.
-- `sw.js` — `ServerClock` + the protocol client + the WebSocket. One port per
-  tab. This is where `SyncEngine` mostly already fits; the seam to introduce is
-  between "decide" and "touch the player", which the adapter interface already
-  is.
-- The clock is the awkward part: `ServerClock` must live with the socket (the
-  worker), but the *player* position is read in the content script, so a
-  residual is computed across a message hop. Measure that hop before assuming
-  it is negligible — the whole design resolves position to tens of
-  milliseconds.
-- Firefox: MV3 there uses event pages, not service workers, with a different
-  lifetime model. Ship Chrome first, keep the socket code in one place.
+`client/extension/` — `npm run build` → `dist/`, load unpacked. Two shims now
+share `client/core/src/app/bootstrap.ts` verbatim and differ in exactly three
+injected pieces: storage, transport, and how a room gets created.
+
+Still to do there:
+- **`host_permissions: ["<all_urls>"]`** is the blunt version. The worker needs
+  it only to `POST /api/rooms` to whatever server the user configures. A
+  store-ready build should use `optional_host_permissions` and request the one
+  origin on the "방 만들기" click, which is a user gesture. Worth checking first
+  whether it is needed at all: the server sends `Access-Control-Allow-Origin: *`,
+  so a plain CORS fetch from the worker may already work with no host permission.
+- **Firefox.** The manifest carries a `browser_specific_settings` id, but MV3
+  there uses event pages rather than service workers, with a different lifetime
+  model. Unverified.
+- `content_scripts.matches` ships YouTube + Laftel, same as the userscript.
 
 ## Open questions that block things
 
