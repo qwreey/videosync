@@ -257,7 +257,8 @@ room setting, not an emergent consequence of participant count.
 
 **All nine references threshold on absolute offset only. None looks at the derivative.** That is a
 real gap, because seeking is expensive, visible, and on MSE players risks stalling outside the
-buffered range (§7).
+buffered range — since measured: an in-buffer seek is ~free at any network speed, an out-of-buffer
+one costs a full segment fetch and rebuffers for it (`docs/BROWSER-FINDINGS.md` §2).
 
 The derivative should choose **which correction to apply**, not merely whether to correct:
 
@@ -419,13 +420,26 @@ MutationObserver for element replacement — neither reference has those.
 
 ## 12. Verification backlog (things we believe but have not proven)
 
+Updated as things were settled. `docs/BROWSER-FINDINGS.md` has the numbers.
+
 | Claim | Status | How to settle |
 |---|---|---|
-| Laftel works via the generic adapter | CONFIRMED by one blog, my own probe inconclusive | headless browser + real session |
+| YouTube works via the generic adapter | **SETTLED — yes** (§8): `play()` accepted, `currentTime` sticks, `playbackRate` 1.1 held for 10 s. No `movie_player` adapter needed | — |
+| `playbackRate` nudging is safe on an MSE player | **SETTLED — yes** (§7, §8) on hls.js and on YouTube | Laftel still open |
+| Chrome MV3 service worker can hold a WebSocket | **SETTLED — yes** (§10): 10 minutes, one instance, zero closes, with traffic *and* idle | — |
+| Laftel works via the generic adapter | CONFIRMED by one blog, my own probe inconclusive | needs a real session — **the last open provider question** |
 | Netflix internal API still exists in 2026 | UNVERIFIED, last evidence ~2020 | out of v1 scope; test if added |
 | Disney+/Prime/Wavve/TVING generic-adapter support | LIKELY, no primary source | smoke test each |
-| Firefox MV3 background can hold a WebSocket like Chrome | UNVERIFIED — different lifetime model | build a spike, measure |
+| Firefox MV3 background can hold a WebSocket like Chrome | UNVERIFIED, and **currently moot**: Firefox has never shipped `background.service_worker`, so its MV3 needs `background.scripts` and a different build | write that manifest, then measure |
 | watchbear's mechanisms | from decompiled CRX, not source | treat as inspiration, re-derive |
+
+Two things settled here that were not on the list, because nobody thought to doubt them:
+
+- **A page on a public origin cannot reach a loopback or private address at all** — any scheme, and
+  the request never leaves the browser (§8). This is why the userscript needs a public name with a
+  certificate and the extension does not.
+- **An extension's service worker is exempt from that** (§9), which is the strongest argument for
+  D5 shipping both surfaces, and not the one D5 was written for.
 
 ## 13. Room access control is the *only* access control (v1 requirement, not an open question)
 
