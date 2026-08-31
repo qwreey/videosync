@@ -17,7 +17,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
-| Extension shim | **built** — `client/extension/`, validated in two real browsers |
+| Extension shim | **built; end-to-end run not yet green** — `client/extension/`, `probe-extension.mjs` |
 
 ## What exists and works
 
