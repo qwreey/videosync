@@ -7,7 +7,7 @@
  * `innerHTML` anywhere a room name, a member name or a chat line could reach,
  * because all three are attacker-controlled text from the room's perspective.
  */
-import type { MemberInfo } from '@videosync/core/engine/protocol.ts';
+import type { MemberInfo } from '../engine/protocol.ts';
 
 const CSS = `
 :host { all: initial; }

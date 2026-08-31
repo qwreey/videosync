@@ -96,20 +96,63 @@ export class Session {
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
+  /**
+   * Track execution contexts so an extension's ISOLATED world can be addressed.
+   *
+   * A content script does not share globals with the page -- that is the whole
+   * point of an isolated world -- so `Runtime.evaluate` with no contextId
+   * cannot see anything the extension defined. Driving the extension therefore
+   * means finding its context and evaluating in it, rather than adding a
+   * postMessage command channel to the content script, which would let any
+   * page drive the extension.
+   */
+  trackContexts() {
+    this.contexts = new Map();
+    this.on('Runtime.executionContextCreated', (p) => {
+      this.contexts.set(p.context.id, p.context);
+    });
+    this.on('Runtime.executionContextDestroyed', (p) => {
+      this.contexts.delete(p.executionContextId);
+    });
+    this.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
+  }
+
+  /** The most recently created isolated world, i.e. the content script's. */
+  isolatedContextId() {
+    if (!this.contexts) return null;
+    let best = null;
+    for (const [id, c] of this.contexts) {
+      if (c.auxData && c.auxData.isDefault === false) best = id;
+    }
+    return best;
+  }
+
+  async waitForIsolated({ timeoutMs = 30000 } = {}) {
+    const t0 = Date.now();
+    for (;;) {
+      const id = this.isolatedContextId();
+      if (id !== null) return id;
+      if (Date.now() - t0 > timeoutMs) throw new Error('no isolated world appeared (did the content script run?)');
+      await sleep(100);
+    }
+  }
+
   // Evaluate an expression in the page and return its value, awaiting promises.
-  async eval(expression) {
+  // `contextId` targets a specific world; omit it for the page's own.
+  async eval(expression, contextId) {
     const r = await this.send('Runtime.evaluate', {
       expression, awaitPromise: true, returnByValue: true, allowUnsafeEvalBlockedByCSP: false,
+      ...(contextId === undefined ? {} : { contextId }),
     });
     if (r.exceptionDetails) {
       throw new Error('page threw: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text));
     }
     return r.result.value;
   }
-  async waitFor(expression, { timeoutMs = 20000, everyMs = 100 } = {}) {
+  async waitFor(expression, { timeoutMs = 20000, everyMs = 100, contextId } = {}) {
     const t0 = Date.now();
     for (;;) {
-      if (await this.eval(expression)) return true;
+      if (await this.eval(expression, contextId)) return true;
       if (Date.now() - t0 > timeoutMs) throw new Error(`waitFor timed out: ${expression}`);
       await sleep(everyMs);
     }

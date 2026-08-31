@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "VideoSync message-hop probe",
+  "version": "0.0.1",
+  "permissions": ["storage"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    { "matches": ["https://*/*", "http://*/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ]
+}

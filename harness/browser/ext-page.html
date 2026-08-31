@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>VideoSync extension probe</title>
+<body style="margin:0;background:#0b0c10">
+<video id="v" width="560" height="315" playsinline style="display:block"></video>
+<script src="/media/hls.js"></script>
+<!--
+  No userscript here. The EXTENSION is loaded into the browser instead, and its
+  content script finds this element the same way -- by polling, exactly as it
+  will on a single-page app where the player appears long after the script ran.
+-->
+
+<script>
+const v = document.getElementById('v');
+let hls = null;
+window.page = {
+  async loadHls() {
+    hls = new Hls({ maxBufferLength: 12, maxMaxBufferLength: 24 });
+    hls.loadSource('/media/index.m3u8');
+    hls.attachMedia(v);
+    await new Promise((res, rej) => {
+      hls.on(Hls.Events.MANIFEST_PARSED, res);
+      hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) rej(new Error(d.details)); });
+    });
+    await new Promise((res) => v.readyState >= 1 ? res() : v.addEventListener('loadedmetadata', res, { once: true }));
+    return { duration: v.duration, usingMSE: !!(window.MediaSource && hls.media) };
+  },
+  ctl: (q) => fetch('/ctl?' + q).then(r => r.json()),
+  el: () => ({ ct: v.currentTime, paused: v.paused, rs: v.readyState, rate: v.playbackRate, muted: v.muted }),
+  // A real user dragging the scrubber: the element moves, the room does not.
+  userSeek(toS) { v.currentTime = toS; return v.currentTime; },
+  userPause() { v.pause(); return v.paused; },
+  userPlay() { return v.play().then(() => ({ ok: true }), (e) => ({ ok: false, name: e.name })); },
+  setMuted(m) { v.muted = m; return v.muted; },
+};
+window.__ready = true;
+</script>
