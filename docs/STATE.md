@@ -100,9 +100,9 @@ survives.
 
 The extension asks for **no `host_permissions`** — measured, not assumed: the
 worker reaches the server with an ordinary CORS request and `videosyncd` sends
-`Access-Control-Allow-Origin: *`. The install prompt is `storage` plus two
-sites. The dependency is real though: a proxy in front of the server that
-strips CORS headers would put the permission back.
+`Access-Control-Allow-Origin: *`. The install prompt is `storage` plus the sites in
+`content_scripts.matches`. The dependency is real though: a proxy in front of the
+server that strips CORS headers would put the permission back.
 
 ## The next task, concretely
 
@@ -179,7 +179,7 @@ certificate, or a tunnel that gives you one:
 ## Open questions that block things
 
 - ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube.** hls.js held 1.1
-  exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.98 s of media in 10 s of
+  exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.99 s of media in 10 s of
   wall clock (§8). Writing `currentTime` sticks on YouTube too. **Laftel is still unmeasured** and
   needs a session.
 - **Laftel** rests on one blog post plus the generic-adapter assumption. Needs a live smoke test

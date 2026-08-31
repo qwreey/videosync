@@ -109,7 +109,7 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 server/          Go. Sync server + the Risk-A simulation harness (shares the sync core).
 client/core/     Platform-agnostic TS: adapters, detector, sync engine, protocol client.
                  MUST NOT import browser-extension APIs — both shims depend on it.
-client/core/app/ and ui/  The wiring and the panel, shared VERBATIM by both shims. The shims
+  src/app/, src/ui/   The wiring and the panel, shared VERBATIM by both shims. The shims
                  differ in three injected pieces: storage, transport, room creation.
 client/userscript/  Tampermonkey shim. Ships. Needs the server on a public address (see Traps).
 client/extension/   Chrome MV3 shim. Ships. Its service worker is a frame relay and nothing else —

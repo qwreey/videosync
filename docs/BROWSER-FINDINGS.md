@@ -49,6 +49,13 @@ expensive and looking for ways to avoid it (POC-FINDINGS §19 flagged that seeks
 harness flattered seek-based strategies — the truth is that they are free *sometimes*). The right
 rule is not "avoid seeks", it is **"never seek outside the buffered range"**:
 
+> **Superseded — that rule is too absolute** (`docs/POC-FINDINGS.md` §35). Not seeking is not free
+> either: the ±10 % rate clamp closes only 100 ms of gap per second, so a gap of *G* costs
+> `G / 0.10` of audibly wrong playback to absorb — minutes, for a large one. `tab-suspension`
+> falsified it directly: a member returning from a 15 s suspension nudged for 150 s. The shipping
+> rule is **which correction is cheaper**, and past `NUDGE_MAX_RESIDUAL` one segment fetch plainly
+> is. The measurements in this section are unchanged and are what the cost comparison is built on.
+
 - A correction landing inside `video.buffered` costs nothing and should be preferred over a nudge.
 - A correction landing outside it costs a full rebuffer, which makes the client *more* out of sync
   before it gets better, and can start a seek → rebuffer → residual → seek loop.
@@ -66,8 +73,10 @@ NotAllowedError: play() failed because the user didn't interact with the documen
 ```
 
 Confirmed by accident, and worth the accident: the first measurement run produced nothing but
-paused-element numbers because of it. `docs/PROTOCOL.md` §5's typed-error + gesture-capture overlay
-requirement is real, not defensive.
+paused-element numbers because of it. The typed-error + gesture-capture-overlay requirement
+(`CLAUDE.md`, Traps) is real, not defensive — it ships as `AutoplayBlockedError`
+(`client/core/src/adapter/types.ts`), the engine's `onAutoplayBlocked`, and the panel's
+"클릭해서 동기화" overlay.
 
 ## 4. Timer throttling: audible playback is the exemption, and Workers are the escape hatch
 
@@ -203,8 +212,8 @@ not a claim that backgrounding does not matter.
 ### `playbackRate` is safe on a real MSE player — the servo's premise holds
 
 The open question the whole servo design leans on. Asked for **1.1**; the
-element **held exactly 1.1** and advanced **5.47 s in 5.0 s of wall clock**
-(implied 1.094×) on hls.js/MSE with audio, with no rate reset and no audio
+element **held exactly 1.1** and advanced **5.478 s in 5.0 s of wall clock**
+(implied 1.096×) on hls.js/MSE with audio, with no rate reset and no audio
 dropout.
 
 Two things about *how* it is measured, both of which produced a wrong number
@@ -263,7 +272,7 @@ seek-only path and the whole strategy comparison would have to be redone.
 | requested | **1.1** |
 | immediately after | 1.1 |
 | **after 10 s** | **1.1** |
-| media advanced in 10 s of wall clock | **10.98 s** (implied **1.098×**) |
+| media advanced in 10 s of wall clock | **10.99 s** (implied **1.099×**) |
 
 Ten seconds and not one, deliberately: a player that resets on its own timer —
 a stats ping, a quality switch — would look fine at t+1 s.
@@ -342,12 +351,22 @@ architecture rather than its details.
 | `fetch`/`WebSocket` to `127.0.0.1`, any scheme | **blocked before the request is sent** |
 | the same, relayed through the **service worker** | **works** |
 
-So the extension is **not** a thin wrapper around the userscript. The content
-script has the DOM but cannot reach a self-hosted server; the service worker can
-reach it but has no DOM. The socket therefore has to live in the service worker
-and the player state has to cross a message port — which is precisely the split
-the userscript does not have, and it puts the session on MV3's service-worker
-lifetime.
+The content script has the DOM but cannot reach a self-hosted server; the
+service worker can reach it but has no DOM. So the **socket** has to live in the
+worker.
+
+> **This section originally continued "…and the player state has to cross a
+> message port, which puts the session on MV3's service-worker lifetime". That
+> was wrong, and it is worth keeping the retraction visible because the wrong
+> reading is the obvious one.**
+>
+> Only the socket is forced across. Adapter, detector, clock and engine all stay
+> beside the `<video>` exactly as in the userscript, and the worker is a dumb
+> frame relay — **no position ever crosses the port**, and the worker holds **no
+> session state**, so a teardown is a reconnect rather than a lost session.
+> The extension is a thin wrapper after all: it differs from the userscript in
+> three injected pieces. Measured in §11; the code says so at
+> `client/extension/src/sw.ts` ("Deliberately not the engine").
 
 ## 10. Does an MV3 service worker hold a WebSocket? (`probe-swlife.mjs`, `ext-life/`)
 
@@ -413,7 +432,7 @@ this shim can answer. **11/11.**
 | | |
 |---|---|
 | the service worker reached `http://127.0.0.1` **from a page that provably cannot** | yes — the whole reason this shim exists |
-| two players after 4 s of synced playback, through the relay | **2–36 ms apart** across runs |
+| two players after 4 s of synced playback, through the relay | **2–40 ms apart** across runs |
 | `bestRTT` through the message port | **0.2–1 ms**, uncertainty ±0.1–0.5 ms |
 | the page could see `window.VideoSync` | no — the isolated world holds |
 | worker terminated mid-session (`Target.closeTarget`, verified gone) | **reconnect 0 → 1, session stayed joined, room still worked** |

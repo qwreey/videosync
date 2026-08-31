@@ -53,7 +53,7 @@ you re-share with the people you meant.
 
 ## Permissions
 
-`storage`, and the two content-script matches. **No `host_permissions`** — the
+`storage`, and the content-script matches. **No `host_permissions`** — the
 worker reaches your server with an ordinary CORS request, and `videosyncd` sends
 `Access-Control-Allow-Origin: *`. Measured both ways
 (`harness/browser/results/ext-permissions.json`): room creation and the relayed
