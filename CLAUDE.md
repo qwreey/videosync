@@ -16,14 +16,15 @@ corrected. Read it before picking up work, then the Traps below.
 |---|---|
 | `docs/STATE.md` | Where the project is, what is next, and what was retracted. The handover document. |
 | `docs/DECISIONS.md` | **Locked constraints.** Inputs, not open questions. Changing one needs an explicit decision from the user. Each carries a note on what measurement later found. |
-| `research/SYNTHESIS.md` | **The design.** 9 reference implementations distilled per sub-problem, with the reasoning and citations. The single most useful file in the repo. |
+| `research/SYNTHESIS.md` | **The design's reasoning.** 9 reference implementations distilled per sub-problem, with citations. Read its `### Amendment:` blocks — §4c's classifier table was falsified by measurement and replaced. Where it disagrees with STATE.md, STATE.md wins. |
 | `docs/PROTOCOL.md` | Wire protocol spec. Derived from SYNTHESIS; keep them consistent. |
 | `docs/POC-FINDINGS.md` | What the simulation measured, in the order it was measured. A log, not a summary — later sections overturn earlier ones. |
 | `docs/BROWSER-FINDINGS.md` | What a real browser actually does. §7 and §11 are the full-stack runs (userscript, extension). |
 | `research/*.md` | Per-reference deep dives, cited `file:line` into `refs/`. |
 | `README.md` | For a person, not an agent: what this is and how to run it. |
 
-Do not re-derive a decision that SYNTHESIS already argued. Do not silently contradict DECISIONS.
+Do not re-derive a decision that SYNTHESIS already argued — but check its amendments first, and
+check STATE.md's "claims that were corrected". Do not silently contradict DECISIONS.
 
 ## The design in six lines
 

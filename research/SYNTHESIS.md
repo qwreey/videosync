@@ -1,5 +1,10 @@
 # Synthesis — what 9 references teach us, and what we must build ourselves
 
+> **Read the amendments.** Several sections carry an `### Amendment:` block recording what
+> measurement later found — sometimes confirming the design, sometimes falsifying it (§4c's
+> classifier table is the largest case). This file is the reasoning; `docs/STATE.md` is what is
+> true now. Where they disagree, STATE.md wins and this file is out of date.
+
 Inputs: `research/*.md` (each cited `file:line` into `refs/`). Decisions: `docs/DECISIONS.md`.
 Every row below names the reference we take the mechanism from, so the choice is auditable.
 
@@ -277,6 +282,31 @@ frequency, with zero network noise**, and reports the *residual and trend* rathe
 position. The server aggregates a small meaningful signal instead of denoising a large one.
 
 Move the computation to the client; leave the server with the judgement.
+
+### Amendment: the classifier above was measured and does not work as written
+
+The **premise held and the table did not.** `docs/POC-FINDINGS.md` §1 ran it against the harness:
+the `waste` counter — seeks issued while the offset was already closing, the exact case row one
+exists to prevent — was **zero in almost every cell**. The row describes a transient that does not
+occur. A browser that stalls for 800 ms does not overshoot and recover; it resumes at 1.0× and
+stays 800 ms behind forever, so "closing vs diverging" is not the distinction that matters.
+
+What replaced it, after eight more rounds (`ServoCorrector`, `server/internal/sync/corrector_servo.go`):
+
+- The useful distinction is **step vs ramp** — a rate mismatch that will keep growing, versus a gap
+  that already happened and is now constant.
+- The slope drives a **frequency** term, because `d/dt residual = rate − 1` for any constant offset
+  and is therefore immune to a bad clock estimate. Phase gets a **proportional** term with a
+  dead-band at the client's own `uncertaintyMs` — never an integrator, because §1's bias means
+  phase cannot be resolved finer than that bound and an integrator would chase a target that does
+  not exist.
+- Whether to seek is decided by **price, not size**: an in-buffer seek is ~free at any network
+  speed, an out-of-buffer one costs a segment fetch *and* rebuffers. But not seeking is not free
+  either — the ±10 % rate clamp closes only 100 ms of gap per second — so a large enough gap is
+  worth the fetch (`docs/POC-FINDINGS.md` §35).
+
+The paragraph above this amendment is still right about where the computation belongs, and §4c's
+"judge, do not aggregate" is untouched. It is the four-row table that was falsified.
 
 ## 6. Buffering / readiness → Jellyfin's Waiting state, with Syncplay's instinct
 
