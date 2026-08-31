@@ -24,8 +24,13 @@ dir = "{{config_root}}/server"
 run = "go run ./cmd/simharness"
 
 [tasks.test]
-description = "Run all tests (Go simulation + TS client core)"
-run = ["cd {{config_root}}/server && go test ./...", "cd {{config_root}}/client/core && npm test"]
+description = "Run all tests (Go + TS client core) and typecheck both shims"
+run = [
+  "cd {{config_root}}/server && go test ./...",
+  "cd {{config_root}}/client/core && npm test",
+  "cd {{config_root}}/client/userscript && npx tsc --noEmit",
+  "cd {{config_root}}/client/extension && npx tsc --noEmit",
+]
 
 [tasks.test-e2e]
 description = "Run the TS client against a real videosyncd (builds the binary)"
@@ -37,7 +42,25 @@ description = "Run the Risk-B browser probes in the pinned container"
 dir = "{{config_root}}/harness/browser"
 run = "./run.sh node probe-detector.mjs"
 
+[tasks.build]
+description = "Build both shipping shims"
+run = [
+  "cd {{config_root}}/client/userscript && npm run build",
+  "cd {{config_root}}/client/extension && npm run build",
+]
+
 [tasks.build-core]
 description = "Bundle the client core for the browser harness"
 dir = "{{config_root}}/client/core"
 run = "npm run build:probe"
+
+[tasks.probe-stack]
+description = "Stage the artifacts the full-stack browser probes need, then run them"
+run = [
+  "cd {{config_root}}/server && go build -o ../harness/browser/dist/videosyncd ./cmd/videosyncd",
+  "cd {{config_root}}/client/userscript && npm run build",
+  "cd {{config_root}}/client/extension && npm run build",
+  "cp {{config_root}}/client/userscript/dist/videosync.user.js {{config_root}}/harness/browser/dist/",
+  "cd {{config_root}}/harness/browser && ./run.sh node probe-userscript.mjs",
+  "cd {{config_root}}/harness/browser && ./run.sh node probe-extension.mjs",
+]

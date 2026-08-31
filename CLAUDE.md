@@ -50,7 +50,10 @@ corrected. Read it before picking up work.
   Store CRX and are tagged `[CRX]`. Treat as inspiration, re-derive before relying on it.
 - **MV3 bans remote code.** Adapters ship in the bundle; the server may send JSON only.
 - **MAIN and ISOLATED worlds share `window`/origin**, so `event.origin`/`event.source` authenticate
-  nothing in the bridge. Per-load nonce is mandatory.
+  nothing in the bridge. Per-load nonce is mandatory. *(Not currently load-bearing: the extension
+  has no MAIN-world bridge — the generic adapter drives YouTube from the isolated world, and
+  keeping `window.VideoSync` out of the page means a page cannot drive the extension. This trap
+  applies again the moment a provider needs its page-context player API.)*
 - **The browser pauses a hidden tab whose playback was never audible**, firing a real `pause`.
   Broadcast naively it pauses the whole room. The trigger is "never made a sound", NOT "currently
   muted" — a tab that was audible is exempt for its lifetime. (`BROWSER-FINDINGS.md` §5.)
