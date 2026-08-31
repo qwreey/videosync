@@ -319,6 +319,56 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     }
   });
 
+  // The joiner half of the same question the creator test asks. A joiner does
+  // NOT seed the room, so the escape hatch is the reconciler: the anchor is
+  // truth about pause state too, and nothing in the correction table can press
+  // pause. Only the creator path was covered; this pins the other one.
+  it('pauses a joining member whose player is playing against a paused room', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 0 });
+    try {
+      await joined(a);
+      await sleep(6000); // twice reconcileAfterMs
+      assert.equal(a.player.paused, true,
+        'never reconciled to the paused anchor -- the member fights the room forever');
+      assert.ok(a.engine.stats.reconciles >= 1, 'the player was paused by something else');
+      assert.equal(a.engine.stats.cmdsSent, 0, 'a joiner steered the room');
+    } finally {
+      a.engine.stop();
+    }
+  });
+
+  // The next-episode flow, which is the first thing a series watcher hits: the
+  // member navigates, then moves the room with a `media` command while their
+  // new episode is already autoplaying. A `media` anchor is deliberately
+  // `paused` (`room.go:353`) and no `play` is emitted -- the detector reports
+  // transitions only and `setLocalMediaKey` just reset it. What makes that
+  // safe is that the command's OWN transition pauses the member; if it ever
+  // stops doing so, this is the fresh-room bug again by another route.
+  it('a media command pauses the member whose player was already playing', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
+    try {
+      await joined(a);
+      await waitFor(() => a.engine.appliedSeq >= 2, 6000, 'the creator to seed the room');
+
+      a.engine.setLocalMediaKey('e2e:media2'); // the navigation lands first
+      a.engine.setMedia('e2e:media2', 0);
+      await sleep(5000); // longer than reconcileAfterMs
+
+      assert.equal(a.engine.currentAnchor.mediaKey, 'e2e:media2');
+      assert.equal(a.engine.currentAnchor.paused, true, 'a media anchor must start paused');
+      assert.equal(a.player.paused, true,
+        'the player kept playing under a paused anchor -- it will be fought forever');
+      assert.ok(a.player.readState().positionS < 1,
+        `player at ${a.player.readState().positionS.toFixed(2)}s, not the new media's 0`);
+    } finally {
+      a.engine.stop();
+    }
+  });
+
   // A joiner is NOT a creator: the anchor is truth and they must conform to it,
   // however loudly their own player disagrees.
   it('does not let a joining member seed a room that already has one', async function () {

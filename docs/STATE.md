@@ -44,7 +44,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 63 unit tests, plus 8 end-to-end tests that drive real engines over real WebSockets
+  build step. 63 unit tests, plus 10 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`).
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
 - `client/extension` — the Chrome MV3 build (`npm run build` → `dist/`, load unpacked).
@@ -146,6 +146,16 @@ context cannot see it, by design.
   the correction law needs a measured seek-only path.
 - `VideoSync.adapter.seekTo(120)` — does a raw `currentTime` write stick, or
   does the player fight it the way Netflix reportedly does?
+  **Answered in the field: it sticks** (BROWSER-FINDINGS §12).
+- `VideoSync.adapter.pause()` — **does a programmatic pause stick?** Added after
+  the first live session, and it is the load-bearing one. Two mechanisms rest
+  entirely on it: the reconciler (the anchor is truth about pause state, and
+  nothing in the correction table can press pause) and every `media` command,
+  whose anchor deliberately starts paused so the readiness gate decides when the
+  room may start. Both are e2e-tested against a player that honours `pause()`.
+  If Laftel resumes itself, both loop forever and that is a bigger finding than
+  any of the above. Check `VideoSync.engine().stats.reconciles` on the next live
+  run: climbing while the player never actually pauses is the signature.
 
 Then actually watch something with somebody, which is the only test that covers
 ads, mid-session navigation, and a second account.
