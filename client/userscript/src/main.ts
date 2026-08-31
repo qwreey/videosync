@@ -43,7 +43,17 @@ function isPrivateHost(hostname: string): boolean {
  */
 function unreachable(serverUrl: string): string | null {
   let u: URL;
-  try { u = new URL(serverUrl); } catch { return null; }
+  try {
+    u = new URL(serverUrl);
+  } catch {
+    return '서버 주소를 이해할 수 없어요. http:// 나 https:// 로 시작해야 해요.';
+  }
+  // `new URL('localhost:8787')` PARSES -- scheme `localhost:`, opaque path --
+  // so returning null here declared it reachable and the failure surfaced much
+  // later, as nothing happening at all.
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    return '서버 주소는 http:// 나 https:// 로 시작해야 해요.';
+  }
   // The block keys off the page's ADDRESS SPACE, not its scheme: an http page
   // on a public host is still public, and Chrome still refuses. Using the
   // scheme as a proxy would let exactly the case this function exists to catch

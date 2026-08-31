@@ -37,6 +37,7 @@ export class SeekDetector {
   private lastKnownPos = 0;
   private haveLastKnown = false;
   private lastEvalPos = 0;
+  private lastEvalAt = 0;
   private haveEvalPos = false;
   private stallSuspected = false;
   private suspended = false;
@@ -102,13 +103,26 @@ export class SeekDetector {
       this.history = [];
     }
 
+    // How long since the last evaluation, measured rather than assumed.
+    //
+    // This used to be `cfg.evalIntervalMs`, which made every rule below depend
+    // on the loop actually running at that rate. It does not: a hidden tab is
+    // throttled, a busy page delays a timer, and a DOM event triggers an
+    // evaluation off-cadence entirely. Dead-reckoning a full interval for a
+    // partial one walks `lastKnownPos` away from the truth and eventually
+    // manufactures a seek that never happened.
+    const dt = this.haveEvalPos
+      ? Math.max(0, Math.min(5000, nowMs - this.lastEvalAt))
+      : this.cfg.evalIntervalMs;
+    this.lastEvalAt = nowMs;
+
     // --- stall inference ---------------------------------------------------
     // A video sitting at its end has a frozen currentTime too. That is not a
     // stall and the room must not gate on it -- the member has finished.
     const ended = s.durationS > 0 && s.positionS >= s.durationS - 0.25;
     const frozen =
-      !ended && this.haveEvalPos && !s.paused &&
-      posMs - this.lastEvalPos < this.cfg.evalIntervalMs * 0.5;
+      !ended && this.haveEvalPos && !s.paused && dt > 0 &&
+      posMs - this.lastEvalPos < dt * 0.5;
     const wasStalled = this.stallSuspected;
     this.stallSuspected = !ended && (s.readyState < this.cfg.minReadyState || frozen);
     this.lastEvalPos = posMs;
@@ -131,7 +145,7 @@ export class SeekDetector {
       if (wasStalled) {
         this.lastKnownPos = posMs; // just resumed: re-baseline, do not judge the gap
       } else if (!s.paused) {
-        this.lastKnownPos += this.cfg.evalIntervalMs * s.rate;
+        this.lastKnownPos += dt * s.rate;
       }
 
       const playerDiff = Math.abs(posMs - this.lastKnownPos);
@@ -185,6 +199,7 @@ export class SeekDetector {
   reset(): void {
     this.haveLastKnown = false;
     this.haveEvalPos = false;
+    this.lastEvalAt = 0;
     this.lastPaused = null;
     this.stallSuspected = false;
     this.history = [];

@@ -40,6 +40,19 @@ export interface EngineConfig {
   reportThresholdMs: number;
   /** Do not seek to satisfy a transition we are already this close to. */
   seekToleranceMs: number;
+  /**
+   * How long the player may disagree with the anchor about play state before
+   * the engine re-applies it.
+   *
+   * The anchor is truth, and until now nothing enforced that for the PAUSE
+   * state: a `play()` that failed, a transition that lost a race, a site that
+   * paused the element for its own reasons -- each left the member paused
+   * against a playing room, reporting a growing residual, being seek-corrected
+   * forever, because the corrector only ever seeks or nudges and never presses
+   * play. Long enough that a genuine local pause has time to become a command
+   * and come back as a new anchor.
+   */
+  reconcileAfterMs: number;
   reconnectBaseMs: number;
   reconnectMaxMs: number;
   rateMin: number;
@@ -56,6 +69,7 @@ export const DEFAULT_ENGINE_CONFIG: Omit<EngineConfig, 'room' | 'secret' | 'name
   minReportIntervalMs: 250,
   reportThresholdMs: 250,
   seekToleranceMs: 250,
+  reconcileAfterMs: 3000,
   reconnectBaseMs: 500,
   reconnectMaxMs: 15000,
   rateMin: 0.95,
@@ -122,8 +136,14 @@ export interface EngineStats {
   badFrames: number;
   /** Transitions not applied because this member is watching something else. */
   skippedOffMedia: number;
-  /** Queued transitions dropped because a newer one took over first. */
+  /** Queued transitions dropped because a newer one took over, or the session ended. */
   supersededApplies: number;
+  /** The transport refused to open at all. Any value above zero is our bug or a dead extension context. */
+  connectFailures: number;
+  /** play() failed for a reason that is not an autoplay refusal. */
+  playFailures: number;
+  /** Times the player disagreed with the anchor long enough to be re-applied. */
+  reconciles: number;
 }
 
 export class SyncEngine {
@@ -134,7 +154,8 @@ export class SyncEngine {
     cmdsSent: 0, statesApplied: 0, acksApplied: 0, correctionsSeek: 0,
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
-    skippedOffMedia: 0, supersededApplies: 0,
+    skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0,
+    playFailures: 0, reconciles: 0,
   };
 
   private readonly d: EngineDeps;
@@ -175,6 +196,10 @@ export class SyncEngine {
 
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
+  /** Unsubscribes the adapter listener, so a stopped engine stops listening. */
+  private unsubscribeAdapter: (() => void) | null = null;
+  /** When the player first started disagreeing with the anchor about play state. */
+  private disagreeingSince = 0;
 
   /**
    * Every mutation of the player runs through here, one at a time.
@@ -190,6 +215,15 @@ export class SyncEngine {
    */
   private applyChain: Promise<void> = Promise.resolve();
   private draining = false;
+  /**
+   * Bumped whenever the session ends -- a disconnect, or `stop()`.
+   *
+   * A queued player mutation can be parked inside a seek for up to ten seconds.
+   * Without this it resumes into a session that no longer exists: it acts on a
+   * stale anchor with a clock that was just reset, or -- after `stop()` -- it
+   * starts the video playing seconds after the user left the room.
+   */
+  private epoch = 0;
 
   private serialise(fn: () => Promise<void>): Promise<void> {
     const next = this.applyChain.then(fn).catch(() => { /* one failure must not wedge the chain */ });
@@ -211,7 +245,15 @@ export class SyncEngine {
     // Without this the next evaluation sees a 300 s backward jump that is large
     // in BOTH diffs, calls it a user seek, and drags the whole room to the
     // start of a video nobody else is watching.
-    deps.adapter.on('elementreplaced', () => {
+    // docs/PROTOCOL.md section 4: "DOM events TRIGGER this evaluation, they never
+    // broadcast directly. One decision path, two input sources." The second
+    // source was wired up in the adapter and subscribed by nobody, so the 100 ms
+    // poll was the only input and a user's seek could sit undetected for a
+    // whole interval. Everything an event does is run the same evaluation the
+    // timer runs; nothing about the decision changes.
+    const unsubs = (['seeked', 'play', 'pause', 'ratechange', 'waiting', 'playing'] as const)
+      .map((ev) => deps.adapter.on(ev, () => { if (this.running) this.evaluate(); }));
+    const unsubReplaced = deps.adapter.on('elementreplaced', () => {
       this.detector.reset();
       // If we are still on the room's media, put the new element where the
       // room is. If we are not, leave it alone -- snapping someone's next
@@ -221,6 +263,10 @@ export class SyncEngine {
           this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused));
       }
     });
+    this.unsubscribeAdapter = () => {
+      for (const u of unsubs) u();
+      unsubReplaced();
+    };
   }
 
   /**
@@ -258,6 +304,9 @@ export class SyncEngine {
 
   stop(): void {
     this.running = false;
+    this.epoch++;
+    this.unsubscribeAdapter?.();
+    this.unsubscribeAdapter = null;
     this.d.clearTimer(this.evalTimer); this.evalTimer = 0;
     this.d.clearTimer(this.timeTimer); this.timeTimer = 0;
     this.d.clearTimer(this.applyTimer); this.applyTimer = 0;
@@ -269,11 +318,23 @@ export class SyncEngine {
 
   private connect(): void {
     this.setStatus('connecting');
-    this.d.transport.connect({
-      onOpen: () => this.onOpen(),
-      onFrame: (f) => this.onFrame(f),
-      onClose: (clean, reason) => this.onClose(clean, reason),
-    });
+    try {
+      this.d.transport.connect({
+        onOpen: () => this.onOpen(),
+        onFrame: (f) => this.onFrame(f),
+        onClose: (clean, reason) => this.onClose(clean, reason),
+      });
+    } catch (e) {
+      // `chrome.runtime.connect()` throws synchronously once the extension has
+      // been reloaded or auto-updated under a tab that stayed open. Unguarded,
+      // that throw escapes a timer callback, no further reconnect is ever
+      // armed, and the panel sits on "connecting" forever with nothing
+      // anywhere recording a failure -- the one way this design could end a
+      // session rather than degrade it.
+      this.stats.connectFailures++;
+      this.ev.onError?.('transport', (e as Error).message);
+      this.onClose(false, `transport: ${(e as Error).message}`);
+    }
   }
 
   private onOpen(): void {
@@ -307,7 +368,11 @@ export class SyncEngine {
     // that could have cleared it.
     this.clock.reset();
     this.detector.reset();
-    this.lastAppliedSeq = 0;
+    // NOT zeroed: `welcome` sets it from the server, and zeroing it here
+    // disarmed the supersede guard for any mutation still queued from the old
+    // session (`p.seq < lastAppliedSeq` can never be true against 0). The
+    // epoch is what invalidates that work now.
+    this.epoch++;
     this.stats.reconnects++;
     const backoff = Math.min(
       this.cfg.reconnectMaxMs,
@@ -442,6 +507,16 @@ export class SyncEngine {
     this.applyTimer = 0;
     const next = this.pending[0];
     if (!next) return;
+    if (!this.clock.ready) {
+      // With no offset yet, `clientTime` is a Unix epoch minus a page-relative
+      // number -- about 1.8e12 ms, which setTimeout's long conversion turns
+      // into a timer roughly seventeen days out. The transition would never
+      // fire at its `when`; it recovered only because the server's stale-anchor
+      // resend eventually replaced it, a second late and unsynchronised. Wait
+      // for the clock instead, and re-check at the evaluation rate.
+      this.applyTimer = this.d.setTimer(() => { void this.drain(); }, this.cfg.evalIntervalMs);
+      return;
+    }
     const delay = Math.max(0, this.clock.clientTime(next.whenServerMs) - this.d.now());
     this.applyTimer = this.d.setTimer(() => { void this.drain(); }, delay);
   }
@@ -449,6 +524,7 @@ export class SyncEngine {
   private async drain(): Promise<void> {
     this.applyTimer = 0;
     if (this.draining) return; // a frame arriving mid-apply re-arms the timer
+    if (!this.clock.ready) { this.rearm(); return; } // nothing can be scheduled yet
     this.draining = true;
     try {
       const serverNow = this.serverNow();
@@ -478,7 +554,14 @@ export class SyncEngine {
       return Promise.resolve();
     }
 
+    const epoch = this.epoch;
     return this.serialise(async () => {
+      if (epoch !== this.epoch) {
+        // The session ended while this was queued -- a reconnect, or the user
+        // left. Acting now would move a player nobody is watching with us.
+        this.stats.supersededApplies++;
+        return;
+      }
       if (p.seq < this.lastAppliedSeq) {
         // Something newer took over while we were queued. Applying this now
         // would move the player backwards into a state the room has left.
@@ -533,7 +616,14 @@ export class SyncEngine {
         this.ev.onAutoplayBlocked?.();
         return;
       }
-      throw e;
+      // Everything else -- most commonly AbortError, "the play() request was
+      // interrupted", which is routine when a site's own logic reacts to our
+      // seek. Rethrowing propagated out of the queued closure into
+      // `serialise`'s catch and vanished, leaving the member paused against a
+      // playing room with no counter and nothing that would ever press play
+      // again. Counted, and left for the reconciler below to fix.
+      this.stats.playFailures++;
+      this.ev.onError?.('play_failed', (e as Error).message);
     }
   }
 
@@ -560,6 +650,14 @@ export class SyncEngine {
 
   private async applyCorrection(mode: 'seek' | 'nudge', rate?: number): Promise<void> {
     const a = this.d.adapter;
+    // The same two guards a scheduled transition gets. Without the media one, a
+    // correction already in flight when the user navigates seeks episode two's
+    // player to episode one's position; without the clock one, `expected()`
+    // with a zero offset asks for a position around -1.8e12 ms, which clamps to
+    // the start of the video and then blocks the queue for the seek's full
+    // ten-second timeout.
+    if (!this.onRoomMedia()) return;
+    if (mode === 'seek' && !this.clock.ready) return;
     if (mode === 'nudge') {
       if (!a.capabilities.supportsPlaybackRateNudge) {
         // A provider that fights playbackRate gets seek-only correction. Count
@@ -595,6 +693,11 @@ export class SyncEngine {
     if (this.running) {
       this.evalTimer = this.d.setTimer(() => this.evalLoop(), this.cfg.evalIntervalMs);
     }
+    this.evaluate();
+  }
+
+  /** One evaluation. Run by the ~10 Hz timer and by any DOM event. */
+  private evaluate(): void {
     if (this.status !== 'joined') return;
 
     const now = this.d.now();
@@ -617,6 +720,26 @@ export class SyncEngine {
           this.stats.echoesSuppressed++;
         }
       }
+    }
+
+    // --- the anchor is truth, including about being paused ------------------
+    if (
+      this.clock.ready && onRoomMedia && !this.autoplayBlocked && !this.applyingRemote &&
+      state.paused !== this.anchor.paused
+    ) {
+      if (this.disagreeingSince === 0) {
+        this.disagreeingSince = now;
+      } else if (now - this.disagreeingSince > this.cfg.reconcileAfterMs) {
+        this.disagreeingSince = 0;
+        this.stats.reconciles++;
+        const epoch = this.epoch;
+        void this.serialise(async () => {
+          if (epoch !== this.epoch) return;
+          await this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused);
+        });
+      }
+    } else {
+      this.disagreeingSince = 0;
     }
 
     if (!report) return;

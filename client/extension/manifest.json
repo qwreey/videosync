@@ -23,11 +23,5 @@
       "run_at": "document_idle",
       "all_frames": false
     }
-  ],
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "videosync@qwreey.moe",
-      "strict_min_version": "115.0"
-    }
-  }
+  ]
 }

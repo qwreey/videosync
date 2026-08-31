@@ -692,3 +692,84 @@ describe('going absent', () => {
     assert.equal(h.tr.sentOf('hb').at(-1)!.suspended, true);
   });
 });
+
+describe('the anchor is truth about being paused, too', () => {
+  it('re-applies when the player is paused against a playing room', async () => {
+    // Nothing used to enforce this. A play() that failed, a transition that
+    // lost a race, or a site pausing the element for its own reasons all left
+    // the member paused against a playing room -- reporting a growing residual
+    // and being seek-corrected forever, because the corrector only ever seeks
+    // or nudges and never presses play.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(500);
+
+    // Something outside our control stops the element. Not a user gesture as
+    // far as the room is concerned -- the anchor still says playing.
+    h.player.paused = true;
+    h.tr.sent.length = 0;
+    await h.vt.advance(1500);
+    assert.equal(h.player.paused, true, 'reconciled far too eagerly');
+
+    await h.vt.advance(2500);
+    assert.equal(h.player.paused, false, 'never came back to what the room is doing');
+    assert.ok(h.engine.stats.reconciles >= 1);
+  });
+
+  it('leaves a genuine local pause alone long enough to become a command', async () => {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(500);
+
+    await h.player.pause();                      // the user pressed pause
+    await h.vt.advance(400);
+    const cmds = h.tr.sentOf('cmd');
+    assert.equal(cmds.at(-1)?.kind, 'pause', 'the pause was not broadcast');
+    assert.equal(h.player.paused, true, 'fought the user before the room could answer');
+
+    // The room agrees, and the disagreement is over.
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds.at(-1)!.reqId, seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 10_500, atServerMs: when, paused: true, mediaKey: 'yt:abc' },
+      kind: 'pause',
+    });
+    await h.vt.advance(5000);
+    assert.equal(h.player.paused, true);
+    assert.equal(h.engine.stats.reconciles, 0);
+  });
+});
+
+describe('DOM events are the second input to the same decision', () => {
+  it('a seek is detected on the event, not one poll later', async () => {
+    // PROTOCOL §4: "DOM events TRIGGER this evaluation, they never broadcast
+    // directly. One decision path, two input sources." The second source was
+    // wired up in the adapter and subscribed by nobody.
+    const h = harness({ paused: false, positionS: 10 }, { evalIntervalMs: 1000 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(2000);
+    const before = h.tr.sentOf('cmd').length;
+
+    h.player.positionS = 400;
+    h.player.emit('seeked');            // the element says so immediately
+    await flush();
+    assert.equal(h.tr.sentOf('cmd').length, before + 1,
+      'the seek waited for the next poll');
+    assert.equal(h.tr.sentOf('cmd').at(-1)!.kind, 'seek');
+  });
+
+  it('an off-cadence evaluation does not manufacture a seek', async () => {
+    // The detector used to dead-reckon a full evalIntervalMs per call. Running
+    // it more often than that -- which an event does, and a busy page does --
+    // walked lastKnownPos ahead of the player and eventually invented a jump.
+    const h = harness({ paused: false, positionS: 10 }, { evalIntervalMs: 100 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    const before = h.tr.sentOf('cmd').length;
+    for (let i = 0; i < 60; i++) {
+      h.player.emit('playing');         // 60 extra evaluations, no time passing
+      await flush();
+    }
+    await h.vt.advance(3000);
+    assert.equal(h.tr.sentOf('cmd').length, before, 'invented a seek out of extra evaluations');
+  });
+});

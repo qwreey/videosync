@@ -171,6 +171,19 @@ export function start(p: Platform): App {
     const why = p.unreachable(serverUrl);
     if (why) { panel.setStatus(why, 'err'); return; }
     leave();
+
+    let transport;
+    try {
+      transport = p.makeTransport(serverUrl);
+    } catch (e) {
+      // A URL that parses but has no usable base -- `localhost:8787`, which is
+      // the likeliest thing to type into a field whose placeholder is
+      // `http://localhost:8787` -- makes `new URL('/ws', ...)` throw here. The
+      // throw used to escape the click handler and 참가 did nothing at all,
+      // with the status line still saying whatever it said before.
+      panel.setStatus(`서버 주소를 사용할 수 없어요: ${(e as Error).message}`, 'err');
+      return;
+    }
     p.store.save('server', serverUrl);
     p.store.save('room', roomId);
     p.store.save('secret', secret);
@@ -178,7 +191,7 @@ export function start(p: Platform): App {
 
     engine = new SyncEngine({
       adapter,
-      transport: p.makeTransport(serverUrl),
+      transport,
       now: () => performance.now(),
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (h) => { clearTimeout(h); },

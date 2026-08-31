@@ -63,6 +63,13 @@ The one thing that depends on: if you put the server behind a proxy that strips
 CORS headers, the extension will need `host_permissions` for that origin. The
 server itself always sends them.
 
-## Known gaps
+## Firefox is not supported yet
 
-- Firefox is unverified: MV3 there uses event pages, not service workers.
+The manifest used to carry a `browser_specific_settings.gecko` id, which was a
+claim this build cannot keep: Firefox has never shipped
+`background.service_worker`, so the background would simply not exist, the
+content script's `chrome.runtime.connect()` would find no receiver, and every
+session would die at the port. Firefox MV3 wants `background.scripts` and treats
+`host_permissions` as opt-in.
+
+Supporting it is a separate manifest and a real test run, not a field.

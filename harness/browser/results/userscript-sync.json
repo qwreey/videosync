@@ -22,12 +22,12 @@
     {
       "name": "two browsers joined one room",
       "ok": true,
-      "detail": "uls9cPDaB1Mw5ULyOIpeXg"
+      "detail": "CfGxjk0x8CZEYl01gWpFDg"
     },
     {
       "name": "the clock settled from real round trips",
       "ok": true,
-      "detail": "bestRTT 0 ms"
+      "detail": "bestRTT 0.39999961853027344 ms"
     },
     {
       "name": "a play by one member started both",
@@ -36,7 +36,7 @@
     {
       "name": "the two players stayed together",
       "ok": true,
-      "detail": "13 ms apart (sampling skew 1 ms), a=23.965s b=23.951s"
+      "detail": "40 ms apart (sampling skew 1 ms), a=23.980s b=23.939s"
     },
     {
       "name": "the sender scheduled its own command against the ack",
@@ -89,26 +89,29 @@
       "advancedS": 5.478,
       "impliedRate": 1.096
     },
-    "loopbackRttMs": 0,
-    "playbackGapMs": 13.2,
+    "loopbackRttMs": 0.39999961853027344,
+    "playbackGapMs": 40.4,
     "samplingSkewMs": 1,
     "senderAcks": 2,
     "stats": {
       "a": {
         "cmdsSent": 5,
-        "statesApplied": 1,
+        "statesApplied": 0,
         "acksApplied": 5,
         "correctionsSeek": 2,
         "correctionsNudge": 10,
         "nudgesUnsupported": 0,
-        "reportsSent": 22,
+        "reportsSent": 23,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,
         "echoesSuppressed": 0,
         "badFrames": 0,
         "skippedOffMedia": 0,
-        "supersededApplies": 0
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "playFailures": 0,
+        "reconciles": 0
       },
       "b": {
         "cmdsSent": 0,
@@ -124,7 +127,10 @@
         "echoesSuppressed": 0,
         "badFrames": 0,
         "skippedOffMedia": 0,
-        "supersededApplies": 0
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "playFailures": 0,
+        "reconciles": 0
       }
     }
   }

@@ -17,17 +17,17 @@
     {
       "name": "the service worker reached a loopback server the page cannot",
       "ok": true,
-      "detail": "OYMjLNFbkXbw2xoJOappqQ"
+      "detail": "CLBuuP1oJdOHDZvvD02rrA"
     },
     {
       "name": "the relayed clock exchange still settles tightly",
       "ok": true,
-      "detail": "bestRTT 0.19999980926513672 ms through the port, uncertainty ±0.09999990463256836 ms"
+      "detail": "bestRTT 0.6999998092651367 ms through the port, uncertainty ±0.34999990463256836 ms"
     },
     {
       "name": "the two players stayed together through the relay",
       "ok": true,
-      "detail": "36 ms apart (sampling skew 1 ms)"
+      "detail": "40 ms apart (sampling skew 1 ms)"
     },
     {
       "name": "a pause reached the other browser without echoing back",
@@ -54,10 +54,10 @@
     }
   ],
   "measurements": {
-    "relayedRttMs": 0.19999980926513672,
-    "relayedUncertaintyMs": 0.09999990463256836,
-    "playbackGapMs": 36,
-    "serviceWorkerTarget": "chrome-extension://ieminlmlcpaemglpkaaogjdaichbhphh/sw.js",
+    "relayedRttMs": 0.6999998092651367,
+    "relayedUncertaintyMs": 0.34999990463256836,
+    "playbackGapMs": 39.6,
+    "serviceWorkerTarget": "chrome-extension://inkjlckcbdfggjkooolfcdciinnklblb/sw.js",
     "reconnectAfterWorkerKill": {
       "before": 0,
       "after": 1
@@ -68,7 +68,7 @@
         "statesApplied": 0,
         "acksApplied": 4,
         "correctionsSeek": 1,
-        "correctionsNudge": 5,
+        "correctionsNudge": 4,
         "nudgesUnsupported": 0,
         "reportsSent": 11,
         "timeSamples": 11,
@@ -77,7 +77,10 @@
         "echoesSuppressed": 0,
         "badFrames": 0,
         "skippedOffMedia": 0,
-        "supersededApplies": 0
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "playFailures": 0,
+        "reconciles": 0
       },
       "b": {
         "cmdsSent": 0,
@@ -93,7 +96,10 @@
         "echoesSuppressed": 0,
         "badFrames": 0,
         "skippedOffMedia": 0,
-        "supersededApplies": 0
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "playFailures": 0,
+        "reconciles": 0
       }
     }
   }
