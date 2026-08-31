@@ -1,0 +1,584 @@
+{
+  "totalMs": 600000,
+  "stepMs": 60000,
+  "sendsTraffic": false,
+  "samples": [
+    {
+      "atMs": 60008,
+      "entries": 9,
+      "instances": 1,
+      "ticks": 5,
+      "last": {
+        "at": 1788156595571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 120011,
+      "entries": 15,
+      "instances": 1,
+      "ticks": 11,
+      "last": {
+        "at": 1788156655571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 180013,
+      "entries": 21,
+      "instances": 1,
+      "ticks": 17,
+      "last": {
+        "at": 1788156715571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 240015,
+      "entries": 27,
+      "instances": 1,
+      "ticks": 23,
+      "last": {
+        "at": 1788156775571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 300020,
+      "entries": 33,
+      "instances": 1,
+      "ticks": 29,
+      "last": {
+        "at": 1788156835571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 360028,
+      "entries": 39,
+      "instances": 1,
+      "ticks": 35,
+      "last": {
+        "at": 1788156895571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 420033,
+      "entries": 45,
+      "instances": 1,
+      "ticks": 41,
+      "last": {
+        "at": 1788156955571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 480039,
+      "entries": 51,
+      "instances": 1,
+      "ticks": 47,
+      "last": {
+        "at": 1788157015571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 540040,
+      "entries": 57,
+      "instances": 1,
+      "ticks": 53,
+      "last": {
+        "at": 1788157075571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    },
+    {
+      "atMs": 600044,
+      "entries": 63,
+      "instances": 1,
+      "ticks": 59,
+      "last": {
+        "at": 1788157135571,
+        "event": "tick",
+        "instance": "e7p4ss",
+        "readyState": 1,
+        "silent": true
+      }
+    }
+  ],
+  "log": [
+    {
+      "at": 1788156543710,
+      "event": "worker-start",
+      "instance": "e7p4ss"
+    },
+    {
+      "at": 1788156545570,
+      "event": "room-created",
+      "instance": "e7p4ss",
+      "roomId": "wNpmFD9qjV8rgkTDxuvpBw"
+    },
+    {
+      "at": 1788156545572,
+      "event": "open",
+      "instance": "e7p4ss"
+    },
+    {
+      "at": 1788156545572,
+      "event": "message",
+      "frame": "welcome",
+      "instance": "e7p4ss"
+    },
+    {
+      "at": 1788156555571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156565571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156575571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156585571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156595571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156605571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156615571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156625571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156635571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156645571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156655571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156665571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156675571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156685571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156695571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156705571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156715571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156725571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156735571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156745571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156755571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156765571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156775571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156785571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156795571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156805571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156815571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156825571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156835571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156845571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156855571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156865571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156875571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156885571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156895571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156905571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156915571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156925571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156935571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156945571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156955571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156965571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156975571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156985571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788156995571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157005571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157015571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157025571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157035571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157045571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157055571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157065571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157075571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157085571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157095571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157105571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157115571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157125571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    },
+    {
+      "at": 1788157135571,
+      "event": "tick",
+      "instance": "e7p4ss",
+      "readyState": 1,
+      "silent": true
+    }
+  ],
+  "verdict": {
+    "distinctWorkerInstances": 1,
+    "workerRestarted": false,
+    "opens": 1,
+    "closes": [],
+    "ticks": 59,
+    "maxTickGapMs": 10000,
+    "lastReadyState": 1,
+    "survivedMs": 589999
+  }
+}

@@ -82,19 +82,25 @@ async function openPeer(name, port, x) {
   s.trackContexts();
   await s.send('Runtime.enable');
   await s.send('Page.enable');
-  await s.send('Page.reload');            // ensure the content script runs with tracking on
-  const ctx = await s.waitForIsolated({ timeoutMs: 30000 });
+  // Reload so the content script runs with context tracking already on, and
+  // wait for the load to finish -- otherwise the isolated world we find is the
+  // pre-reload one, which is destroyed a moment later and every later eval
+  // fails with "Cannot find context with specified id".
+  const loaded = new Promise((res) => s.on('Page.loadEventFired', res));
+  await s.send('Page.reload');
+  await Promise.race([loaded, sleep(20000)]);
   await s.waitFor('window.__ready === true');
   const media = await s.eval('window.page.loadHls()');
-  // `window.VideoSync` lives in the content script's world, not the page's.
-  await s.waitFor('!!window.VideoSync', { timeoutMs: 20000, contextId: ctx });
-  const p = { name, s, ctx, b };
+  // `window.VideoSync` lives in the content script's world, not the page's, and
+  // that world is resolved per call rather than cached.
+  await s.waitFor('!!window.VideoSync', { timeoutMs: 20000, isolated: true });
+  const p = { name, s, b };
   peers.push(p);
   return { ...p, media };
 }
 
 // Everything the extension exposes is in the isolated world.
-const ev = (p, expr) => p.s.eval(expr, p.ctx);
+const ev = (p, expr) => p.s.evalIsolated(expr);
 
 let failed = false;
 try {
@@ -109,14 +115,14 @@ try {
 
   // --- the whole reason this shim exists ------------------------------------
   const room = await ev(a, `window.VideoSync.createRoom(${JSON.stringify(SERVER)}, 'a')`);
-  await a.s.waitFor("window.VideoSync.status().state === 'joined'", { contextId: a.ctx });
+  await a.s.waitFor("window.VideoSync.status().state === 'joined'", { isolated: true });
   check('the service worker reached a loopback server the page cannot', true, room.roomId);
 
   await ev(b, `window.VideoSync.join(${JSON.stringify(SERVER)}, ${JSON.stringify(room.roomId)}, ` +
     `${JSON.stringify(room.secret)}, 'b')`);
-  await b.s.waitFor("window.VideoSync.status().state === 'joined'", { contextId: b.ctx });
-  await a.s.waitFor('window.VideoSync.engine().clock.ready', { contextId: a.ctx });
-  await b.s.waitFor('window.VideoSync.engine().clock.ready', { contextId: b.ctx });
+  await b.s.waitFor("window.VideoSync.status().state === 'joined'", { isolated: true });
+  await a.s.waitFor('window.VideoSync.engine().clock.ready', { isolated: true });
+  await b.s.waitFor('window.VideoSync.engine().clock.ready', { isolated: true });
 
   // The socket now sits behind a message port. min-RTT already accounts for the
   // hop, so what matters is how much it widened the honest error bound.
@@ -129,8 +135,8 @@ try {
 
   // --- sync, over the relay --------------------------------------------------
   await ev(a, 'window.VideoSync.engine().seek(20)');
-  await a.s.waitFor('window.VideoSync.status().seq >= 1', { contextId: a.ctx });
-  await b.s.waitFor('window.VideoSync.status().seq >= 1', { contextId: b.ctx });
+  await a.s.waitFor('window.VideoSync.status().seq >= 1', { isolated: true });
+  await b.s.waitFor('window.VideoSync.status().seq >= 1', { isolated: true });
   await ev(a, 'window.VideoSync.engine().play()');
   await a.s.waitFor('!window.page.el().paused', { timeoutMs: 8000 });
   await b.s.waitFor('!window.page.el().paused', { timeoutMs: 8000 });
@@ -167,7 +173,7 @@ try {
     try { await swSession.eval('globalThis.close ? close() : null'); } catch { /* it went away */ }
     swSession.close();
     await sleep(1500);
-    await a.s.waitFor("window.VideoSync.status().state === 'joined'", { timeoutMs: 20000, contextId: a.ctx });
+    await a.s.waitFor("window.VideoSync.status().state === 'joined'", { timeoutMs: 20000, isolated: true });
     const reconnects1 = (await ev(a, 'window.VideoSync.status().stats')).reconnects;
     check('killing the service worker costs a reconnect, not the session',
       (await ev(a, "window.VideoSync.status().state")) === 'joined',

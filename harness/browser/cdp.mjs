@@ -127,6 +127,25 @@ export class Session {
     return best;
   }
 
+  /**
+   * Evaluate in whatever isolated world exists RIGHT NOW.
+   *
+   * Caching the id does not survive a navigation: the context is destroyed and
+   * a new one created, and every later call fails with "Cannot find context
+   * with specified id". Resolving it per call costs nothing and removes a whole
+   * class of flake.
+   */
+  async evalIsolated(expression, { timeoutMs = 30000 } = {}) {
+    const id = await this.waitForIsolated({ timeoutMs });
+    try {
+      return await this.eval(expression, id);
+    } catch (e) {
+      if (!/Cannot find context/.test(String(e.message))) throw e;
+      // It went away between resolving and using it. Once more, freshly.
+      return this.eval(expression, await this.waitForIsolated({ timeoutMs }));
+    }
+  }
+
   async waitForIsolated({ timeoutMs = 30000 } = {}) {
     const t0 = Date.now();
     for (;;) {
@@ -149,10 +168,11 @@ export class Session {
     }
     return r.result.value;
   }
-  async waitFor(expression, { timeoutMs = 20000, everyMs = 100, contextId } = {}) {
+  async waitFor(expression, { timeoutMs = 20000, everyMs = 100, contextId, isolated = false } = {}) {
     const t0 = Date.now();
     for (;;) {
-      if (await this.eval(expression, contextId)) return true;
+      const v = isolated ? await this.evalIsolated(expression) : await this.eval(expression, contextId);
+      if (v) return true;
       if (Date.now() - t0 > timeoutMs) throw new Error(`waitFor timed out: ${expression}`);
       await sleep(everyMs);
     }

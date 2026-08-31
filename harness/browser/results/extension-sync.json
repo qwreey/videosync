@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {
+      "name": "probe ran to completion",
+      "ok": false,
+      "detail": "{\"code\":-32000,\"message\":\"Cannot find context with specified id\"}"
+    }
+  ],
+  "measurements": {}
+}

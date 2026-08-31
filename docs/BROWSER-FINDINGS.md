@@ -353,20 +353,28 @@ The question §9 forces, and the reason the extension was sequenced last. If the
 worker cannot hold a socket, "self-hostable on your own machine" and "browser
 extension" are in tension and the product has to choose.
 
-**It holds it.** With a client-shaped heartbeat (one frame every 10 s), on a
-YouTube tab, against `ws://127.0.0.1`:
+**It holds it, for ten minutes, with or without traffic.** On a YouTube tab,
+against `ws://127.0.0.1`, two arms — one sending a client-shaped heartbeat every
+10 s, one holding the socket and sending nothing:
 
-| | |
-|---|---|
-| distinct worker instances over the run | **1** (never restarted) |
-| socket closes | **0** |
-| ticks delivered | 23 of 23 |
-| **largest gap between consecutive ticks** | **10 000 ms** — i.e. exactly the interval, never once late |
-| `readyState` at the end | 1 (OPEN) |
+| | traffic | silent |
+|---|---|---|
+| run length | 600 s | 600 s |
+| distinct worker instances | **1** | **1** |
+| socket closes | **0** | **0** |
+| ticks fired / expected | 60 / 60 | 59 / 60 |
+| **largest gap between consecutive ticks** | **10 002 ms** | **10 000 ms** |
+| `readyState` at the end | 1 (OPEN) | 1 (OPEN) |
 
-A worker that had been torn down and revived would show a new instance id and a
-reset module state; a worker merely suspended would show a gap in a timer that
-fires every 10 s. Neither happened.
+The tick interval is 10 s, so a largest gap of 10 000–10 002 ms means the timer
+was never once late: the worker was continuously alive for the whole run. A
+worker torn down and revived would show a new instance id and a reset module
+state; a suspended one would show a gap. Neither happened in either arm.
+
+The silent arm is the stronger result and the one that was not expected: an
+**idle** WebSocket alone is enough. The shipping client heartbeats at 1 Hz, so
+it is the traffic arm that describes reality — but the design does not depend on
+that being true.
 
 ### Two things the measurement had to avoid measuring itself
 
@@ -388,9 +396,11 @@ server reply arriving every ten seconds — had been in the log the whole time.
 
 ### What this does not settle
 
-The client heartbeats at 1 Hz, so the traffic case is the real one and it is the
-one measured. Whether an **idle** socket alone keeps the worker alive is a
-separate arm; a design that depends on it would be fragile anyway.
+Ten minutes is not a film. Nothing here says what happens across a laptop
+suspend, a network change, or an hour. It does not need to: the extension's
+worker holds **no session state** — it is a frame relay — so a teardown costs a
+reconnect, which the engine already does (back off, reconnect, throw the stale
+clock estimate away). The measurement says the common case is not even that.
 
 
 ## 6. Reproducing

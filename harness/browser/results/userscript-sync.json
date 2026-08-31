@@ -17,17 +17,17 @@
     {
       "name": "playbackRate is honoured and holds on a real MSE player",
       "ok": true,
-      "detail": "rate stayed 1.1, advanced 5.47s in 5s (implied 1.094x)"
+      "detail": "rate stayed 1.1, advanced 5.48s in 5s (implied 1.096x)"
     },
     {
       "name": "two browsers joined one room",
       "ok": true,
-      "detail": "jPHVfplKKbRq7S0S4VXpTw"
+      "detail": "uls9cPDaB1Mw5ULyOIpeXg"
     },
     {
       "name": "the clock settled from real round trips",
       "ok": true,
-      "detail": "bestRTT 0.19999980926513672 ms"
+      "detail": "bestRTT 0 ms"
     },
     {
       "name": "a play by one member started both",
@@ -36,7 +36,7 @@
     {
       "name": "the two players stayed together",
       "ok": true,
-      "detail": "27 ms apart (sampling skew 1 ms), a=23.943s b=23.916s"
+      "detail": "13 ms apart (sampling skew 1 ms), a=23.965s b=23.951s"
     },
     {
       "name": "the sender scheduled its own command against the ack",
@@ -78,7 +78,7 @@
     {
       "name": "no correction storm",
       "ok": true,
-      "detail": "seeks a=1 b=1, nudges a=4 b=5"
+      "detail": "seeks a=2 b=1, nudges a=10 b=6"
     }
   ],
   "measurements": {
@@ -86,43 +86,45 @@
       "requested": 1.1,
       "held": 1.1,
       "windowMs": 5000,
-      "advancedS": 5.47,
-      "impliedRate": 1.094
+      "advancedS": 5.478,
+      "impliedRate": 1.096
     },
-    "loopbackRttMs": 0.19999980926513672,
-    "playbackGapMs": 26.5,
+    "loopbackRttMs": 0,
+    "playbackGapMs": 13.2,
     "samplingSkewMs": 1,
     "senderAcks": 2,
     "stats": {
       "a": {
         "cmdsSent": 5,
-        "statesApplied": 3,
+        "statesApplied": 1,
         "acksApplied": 5,
-        "correctionsSeek": 1,
-        "correctionsNudge": 4,
+        "correctionsSeek": 2,
+        "correctionsNudge": 10,
         "nudgesUnsupported": 0,
-        "reportsSent": 21,
+        "reportsSent": 22,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,
         "echoesSuppressed": 0,
         "badFrames": 0,
-        "skippedOffMedia": 0
+        "skippedOffMedia": 0,
+        "supersededApplies": 0
       },
       "b": {
         "cmdsSent": 0,
-        "statesApplied": 7,
+        "statesApplied": 5,
         "acksApplied": 0,
         "correctionsSeek": 1,
-        "correctionsNudge": 5,
+        "correctionsNudge": 6,
         "nudgesUnsupported": 0,
-        "reportsSent": 50,
+        "reportsSent": 51,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,
         "echoesSuppressed": 0,
         "badFrames": 0,
-        "skippedOffMedia": 0
+        "skippedOffMedia": 0,
+        "supersededApplies": 0
       }
     }
   }
