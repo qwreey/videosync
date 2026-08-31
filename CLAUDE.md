@@ -7,15 +7,21 @@ on their own accounts*; only playback state and chat cross the wire.
 Only URL + position + play state + chat. Every participant must independently hold legal access to
 the media. If a request seems to want capture/relay, it is out of scope — say so.
 
+**Start here: `docs/STATE.md`.** It says what is done, what is next, and which earlier claims were
+corrected. Read it before picking up work, then the Traps below.
+
 ## Authority documents — read before designing anything
 
 | Doc | What it is |
 |---|---|
-| `docs/DECISIONS.md` | **Locked constraints.** Inputs, not open questions. Changing one needs an explicit decision from the user. |
+| `docs/STATE.md` | Where the project is, what is next, and what was retracted. The handover document. |
+| `docs/DECISIONS.md` | **Locked constraints.** Inputs, not open questions. Changing one needs an explicit decision from the user. Each carries a note on what measurement later found. |
 | `research/SYNTHESIS.md` | **The design.** 9 reference implementations distilled per sub-problem, with the reasoning and citations. The single most useful file in the repo. |
 | `docs/PROTOCOL.md` | Wire protocol spec. Derived from SYNTHESIS; keep them consistent. |
-| `docs/BROWSER-FINDINGS.md` | What a real browser actually does. §7 is the full-stack run. |
+| `docs/POC-FINDINGS.md` | What the simulation measured, in the order it was measured. A log, not a summary — later sections overturn earlier ones. |
+| `docs/BROWSER-FINDINGS.md` | What a real browser actually does. §7 and §11 are the full-stack runs (userscript, extension). |
 | `research/*.md` | Per-reference deep dives, cited `file:line` into `refs/`. |
+| `README.md` | For a person, not an agent: what this is and how to run it. |
 
 Do not re-derive a decision that SYNTHESIS already argued. Do not silently contradict DECISIONS.
 
@@ -30,9 +36,6 @@ Do not re-derive a decision that SYNTHESIS already argued. Do not silently contr
 5. Correction type is chosen by (offset, d(offset)/dt): ignore / rate-nudge / hard-seek /
    readiness-gate (§3, §4c, §6).
 6. No host. Server-assigned monotonic `seq` + per-room mutex resolve conflicts (§5).
-
-**Start here:** `docs/STATE.md` says what is done, what is next, and which earlier claims were
-corrected. Read it before picking up work.
 
 ## Traps that cost real time to rediscover
 
@@ -105,16 +108,21 @@ corrected. Read it before picking up work.
 server/          Go. Sync server + the Risk-A simulation harness (shares the sync core).
 client/core/     Platform-agnostic TS: adapters, detector, sync engine, protocol client.
                  MUST NOT import browser-extension APIs — both shims depend on it.
-client/userscript/  Tampermonkey shim. Ships. Also the cheapest way to validate the adapter layer.
-client/extension/   Chrome MV3 + Firefox shim. Deliberately last — highest platform risk.
-harness/browser/    Risk-B: local page with a real <video> for detector/adapter testing.
+client/core/app/ and ui/  The wiring and the panel, shared VERBATIM by both shims. The shims
+                 differ in three injected pieces: storage, transport, room creation.
+client/userscript/  Tampermonkey shim. Ships. Needs the server on a public address (see Traps).
+client/extension/   Chrome MV3 shim. Ships. Its service worker is a frame relay and nothing else —
+                 which is the only way to reach a server on your own machine. Firefox unsupported.
+harness/browser/    Risk-B: a pinned container with a real Chromium, a media server that can
+                 starve the player on demand, and the probes behind every measured number.
 refs/            Gitignored shallow clones of the 9 references. NOT durable —
                  reproduce from the URL table in SYNTHESIS §14.
 ```
 
 ## Working here
 
-- `mise` provides the toolchain (go, node), pinned in `mise.toml`. `mise run test`, `mise run sim`.
+- `mise` provides the toolchain (go, node), pinned in `mise.toml`. `mise run test` (Go + TS +
+  both shims' typecheck), `sim`, `build`, `probe`, `probe-stack`, `test-e2e`.
 - Go module/package caches live in `.cache/` inside the project — the host FS runs tight on space.
 - The repo is git-tracked; `refs/`, `.cache/`, `node_modules/` are ignored.
 
@@ -130,3 +138,9 @@ Risk is split so the expensive half is validated last:
   service-worker exposure, so it validates the adapter layer at the lowest cost.
 
 Run A before writing any browser code.
+
+> **How that came out.** The sequencing held, but the reason for putting the extension last did
+> not: MV3's service-worker lifetime turned out not to be the risk (`BROWSER-FINDINGS.md` §10), and
+> the extension turned out to be the *only* way to reach a server on your own machine (§8, §9). It
+> is now a thin wrapper sharing everything with the userscript. What the ordering actually bought
+> was that all of that was discovered against working, measured code.
