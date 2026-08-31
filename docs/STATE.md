@@ -8,7 +8,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | phase | state |
 |---|---|
 | Research (9 reference implementations) | **done** — `research/SYNTHESIS.md` |
-| Risk A — does the algorithm converge? | **done** — `server/internal/sim`, 8 rounds in `docs/POC-FINDINGS.md` |
+| Risk A — does the algorithm converge? | **done** — `server/internal/sim`, 10 rounds in `docs/POC-FINDINGS.md` |
 | Risk B — does it survive a real browser? | **done for what we can reach** — `harness/browser/`, `docs/BROWSER-FINDINGS.md` |
 | Client core (adapter, detector, clock) | **done and browser-validated** — `client/core/` |
 | Sync server (Go, WebSocket, rooms) | **done** — `server/cmd/videosyncd` |

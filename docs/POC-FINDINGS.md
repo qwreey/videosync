@@ -1,11 +1,20 @@
 # Risk-A findings (simulation harness)
 
-Run: `mise run sim`. Deterministic virtual clock, no browser, no network.
-Four strategies x six scenarios. Numbers below are from the run committed with this doc.
+Run: `mise run sim`. Deterministic virtual clock, no browser, no network — currently **8 correction
+strategies across 12 scenarios**, and byte-identical run to run.
 
-**Headline: the derivative classifier, as specified in SYNTHESIS §4c, does not beat a plain
-threshold. And all four strategies share a seek-storm failure mode that no reference implementation
-documents.** Both results are why Risk A ran before any browser code.
+**This is a chronological log, not a summary.** Sections are numbered in the order they were
+written, across ten rounds, and several of them record a conclusion that a later section overturns.
+That is the point: the retractions are worth more than the confirmations, and a reader looking for
+"what is true now" should start at `docs/STATE.md` instead.
+
+Round 1's headline, kept because it set the direction: **the derivative classifier, as specified in
+SYNTHESIS §4c, does not beat a plain threshold — and every strategy shared a seek-storm failure
+mode that no reference implementation documents.** Both are why Risk A ran before any browser code.
+
+The numbers in each section are from the run committed alongside it. Absolute values shift whenever
+the amount of traffic on the simulated network changes, because that re-rolls every jitter draw
+(see §39); the comparisons are what survive.
 
 ---
 

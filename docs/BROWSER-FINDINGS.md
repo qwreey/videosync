@@ -4,9 +4,11 @@ Chromium 151.0.7922.173, headless and headful under Xvfb. Harness in `harness/br
 raw outputs in `harness/browser/results/`. Media is locally generated (`ffmpeg`), served by
 `server.mjs`, which can starve the player on demand.
 
-> **Environment caveat:** chromium/ffmpeg/Xvfb were installed with `pacman` on a host whose
-> package state is not persistent. Re-installing them is a prerequisite for re-running any of
-> this. See §6.
+> **Environment:** everything runs in a pinned container (`harness/browser/Dockerfile`) — see
+> **Reproducing** at the end. The earliest measurements (§1–§4) were taken with chromium/ffmpeg/Xvfb
+> installed on the host with `pacman`; that state is not persistent, which is why the harness was
+> containerised, and why those sections are the ones most worth re-running if a number ever looks
+> wrong.
 
 ---
 
@@ -462,7 +464,11 @@ two sites rather than every site you visit.
 The dependency is real: a proxy in front of the server that strips CORS headers
 would put the permission back.
 
-## 6. Reproducing
+## Reproducing
+
+<!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
+     numbered sections are cited from other documents and from code comments, so
+     they never get renumbered -- which is also why there is no §6. -->
 
 Everything runs in the pinned container — the host's package state is not
 persistent, so anything installed with `pacman` disappears on a host update and
