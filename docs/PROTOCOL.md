@@ -123,8 +123,13 @@ seeked     = playerDiff > SEEK_THRESHOLD && roomDiff > SEEK_THRESHOLD
 The AND is echo suppression built into detection: a server-driven seek makes `playerDiff` large but
 `roomDiff` ~0, so nothing is rebroadcast. No timeout, no flag, cannot get stuck.
 
-DOM events (`seeked`/`play`/`pause`/`ratechange`) **trigger this evaluation, they never broadcast
-directly.** One decision path, two input sources.
+DOM events (`seeked`/`play`/`pause`/`ratechange`/`waiting`/`playing`) **trigger this evaluation,
+they never broadcast directly.** One decision path, two input sources.
+
+> Wiring the second source in requires the evaluation to measure its own elapsed time rather than
+> assume `EVAL_INTERVAL`. A detector that dead-reckons a fixed interval per call walks its reference
+> away from the player whenever the loop does not run at exactly that rate — an event, a throttled
+> tab, a busy page — and eventually manufactures a seek that never happened.
 
 ### Browser-initiated pause is not user intent
 
@@ -205,6 +210,17 @@ must never try to differentiate 1 Hz reports itself (§4c).
 
 Report immediately (don't wait for the heartbeat tick) when `|residualMs|` crosses
 `REPORT_THRESHOLD` or when paused-state disagrees with the anchor.
+
+### The anchor is truth about pause state, not only position
+
+A client whose player is paused while the anchor says playing must **re-apply the anchor** after
+`RECONCILE_AFTER`. Nothing else will: the correction table below only ever seeks or nudges, so a
+member that ends up paused for a reason outside the protocol — a `play()` that failed with
+`AbortError`, a transition that lost a race, a site pausing the element for its own reasons — would
+sit there reporting a growing residual and being seek-corrected forever.
+
+The delay matters. A genuine local pause also disagrees with the anchor, for exactly as long as it
+takes to become a command and come back; reconciling faster than that would fight the user.
 
 ## 5. Correction — the server judges, the client self-heals first
 
@@ -374,6 +390,7 @@ client is `bad_frame`, because either would move room state without passing the 
 | `GATE_TIMEOUT` | 30000 ms | drop a stuck member from the gate |
 | `RAMP_MAX_SLOPE` | 100 ms/s | above this the slope is a discontinuity, not a rate error |
 | `SEEK_COOLDOWN` | 2000 ms | floor between two seeks for one client |
+| `RECONCILE_AFTER` | 3000 ms | player disagreeing with the anchor's pause state this long is re-applied |
 | `MIN_CLOCK_SAMPLES` | 3 | no position correction before the estimate settles |
 | `MAX_CHAT_LEN` | 320 bytes | chat truncation (cytube's value) |
 | `ROOM_IDLE_TTL` | 3 min | room deleted this long after its last member leaves |

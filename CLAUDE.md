@@ -81,6 +81,12 @@ corrected. Read it before picking up work.
   The WebSocket upgrade is not subject to CORS; it uses the `Origin` allowlist.
 - **`@grant none` puts a userscript in the page context**, where the site's CSP governs its
   WebSocket. No OTT site's `connect-src` lists your self-hosted server. Grant any GM API.
+- **The anchor is truth about *pause state* too.** Nothing in the correction table can press play,
+  so a client that ends up paused against a playing room stays there forever, reporting a growing
+  residual and being seek-corrected. The client re-applies the anchor after `RECONCILE_AFTER`.
+- **A detector must measure elapsed time, not assume its own interval.** Dead-reckoning a fixed
+  `EVAL_INTERVAL` per call breaks the moment the loop runs off-cadence — a DOM event, a throttled
+  tab, a busy page — and manufactures a seek that never happened.
 - **Exact-value assertions on one seed are coin flips.** Two regression tests asserted "exactly 0"
   and had been passing on seed 5's luck; the property holds in ~2/3 of seeds either way. Assert the
   comparison, average over seeds, keep the control (POC-FINDINGS §39).
