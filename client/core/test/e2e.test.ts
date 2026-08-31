@@ -116,8 +116,12 @@ function peer(roomId: string, secret: string, name: string, opts = {}): Peer {
 
 async function joined(...ps: Peer[]): Promise<void> {
   for (const p of ps) p.engine.start();
+  // Generous on purpose. Joining is fast, but settling the clock needs the five
+  // rapid connect probes to complete, and this suite shares a machine with
+  // headful browser probes -- a 5 s budget failed under that load and looked
+  // like a regression rather than contention.
   await waitFor(() => ps.every((p) => p.engine.state === 'joined' && p.engine.clock.ready),
-    5000, 'every peer to join and settle its clock');
+    20000, 'every peer to join and settle its clock');
 }
 
 describe('client core against a real videosyncd', { concurrency: false }, () => {
