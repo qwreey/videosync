@@ -69,4 +69,9 @@
 
   out.done = true;
   document.documentElement.setAttribute('data-hop', JSON.stringify(out));
-})();
+})().catch((e) => {
+  // An unhandled rejection in an isolated world is invisible to the driver --
+  // it just sees "no report" and cannot tell a crash from a slow run.
+  document.documentElement.setAttribute('data-hop',
+    JSON.stringify({ done: true, error: String((e && e.stack) || e) }));
+});

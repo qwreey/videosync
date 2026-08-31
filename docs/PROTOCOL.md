@@ -187,8 +187,16 @@ mechanism that exists because a measurement demanded it:
 | `atServerMs` | nothing in the shipping path. Only the experimental PLL/FLL correctors read it, to min-filter a one-way delay estimate. Send it; it is cheap and it keeps those comparable |
 
 `lastAppliedSeq` is what lets the server spot a client stuck on stale state. **The server MUST act
-on it**: when a report's `lastAppliedSeq` lags the current `seq`, resend the state instead of
-judging the report. A client on a stale anchor measures its residual *against that stale anchor* and
+on it**: when a report's `lastAppliedSeq` lags the current `seq` **and the command is already due**,
+resend the state instead of judging the report.
+
+> The "already due" half is not optional. A client advances `lastAppliedSeq` when it *applies* a
+> command, which is `CMD_DELAY` after the broadcast — so for the whole 500–2000 ms scheduling
+> window every member reports a lagging seq while being perfectly correct. Resending there does
+> real damage: the resend carries `when = now`, the client replaces its correctly-scheduled entry
+> with it, and transitions `CMD_DELAY` **early** — destroying exactly the simultaneity this
+> timebase exists to provide. With a 1 Hz heartbeat and the 500 ms floor it fired on roughly half
+> of all commands, including for the originator, whose `ack` takes the same path. A client on a stale anchor measures its residual *against that stale anchor* and
 so reports ≈ 0 while being arbitrarily out of position — measured at 115 603 ms mean error without
 the resend and 250 ms with it (POC-FINDINGS §34). This is three lines and reads a field already on
 the wire.

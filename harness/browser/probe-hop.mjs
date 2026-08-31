@@ -50,6 +50,12 @@ try {
     }
     if (!raw) { out.pages[label] = { error: 'no report' }; console.log(`FAIL ${label}: no report`); s.close(); continue; }
     const p = JSON.parse(raw);
+    if (p.error) {
+      out.pages[label] = { error: p.error };
+      console.log(`FAIL ${label}: the content script threw\n${p.error}`);
+      s.close();
+      continue;
+    }
     const rec = {
       origin: p.origin,
       portRtt: stats(p.port.map((r) => r.rttMs)),
