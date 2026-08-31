@@ -403,6 +403,65 @@ reconnect, which the engine already does (back off, reconnect, throw the stale
 clock estimate away). The measurement says the common case is not even that.
 
 
+## 11. The extension, end to end (`probe-extension.mjs`, `probe-hop.mjs`, `probe-extperm.mjs`)
+
+The same two-browser run as §7 with the shim swapped, plus the three checks only
+this shim can answer. **11/11.**
+
+| | |
+|---|---|
+| the service worker reached `http://127.0.0.1` **from a page that provably cannot** | yes — the whole reason this shim exists |
+| two players after 4 s of synced playback, through the relay | **2–36 ms apart** across runs |
+| `bestRTT` through the message port | **0.2–1 ms**, uncertainty ±0.1–0.5 ms |
+| the page could see `window.VideoSync` | no — the isolated world holds |
+| worker terminated mid-session (`Target.closeTarget`, verified gone) | **reconnect 0 → 1, session stayed joined, room still worked** |
+
+That last row is the claim the architecture rests on: the worker holds no
+session state, so a teardown is a reconnect and nothing more. An earlier version
+of the check evaluated `close()` inside the worker — a no-op there — and passed
+while proving nothing. It now closes the target and confirms it is gone before
+asserting anything.
+
+### The message port costs about half a millisecond
+
+The hop sits inside the measured round trip, so it does not distort position —
+it just widens `uncertaintyMs` by half of itself.
+
+| | idle page | youtube.com |
+|---|---|---|
+| port round trip, p50 | **0.5 ms** | **0.4 ms** |
+| p95 | 0.6 ms | 0.6 ms |
+| p99 / max | 0.6 / 0.7 ms | 9 / **280 ms** |
+| one-way (`Date.now()`, 1 ms granularity) | ≤1 ms | ≤1 ms |
+| first hop after 15 s of silence | 0.5 ms | 0.5 ms |
+
+Against a 500 ms tolerance band, half a millisecond is nothing. The 280 ms
+outlier on a busy YouTube page is real but harmless *by construction*: the clock
+takes the **minimum** RTT, so an outlier is discarded rather than averaged in —
+which is the property min-RTT was chosen for in the first place (§1 of
+PROTOCOL.md).
+
+Two facts recorded because they would otherwise be assumed:
+
+- **`performance.now()` is not comparable across contexts.** Content script and
+  worker reported 33 505 ms and 65 526 ms at the same instant — different time
+  origins. The design does not need it (the clock lives with the engine, in the
+  content script), but a design that moved the clock into the worker would have
+  to use `Date.now()`, which is wall clock and can step.
+- **No cold-start penalty.** A hop after 15 s of silence costs the same as one
+  after 50 ms, which fits §10: the worker is not being torn down.
+
+### It needs no host permissions
+
+The worker's only cross-origin need is `POST /api/rooms`, and `videosyncd` sends
+`Access-Control-Allow-Origin: *`, so an ordinary CORS fetch suffices. Measured
+both ways with the real build: room creation and the relayed socket both pass
+with `host_permissions` removed entirely. The install prompt is `storage` plus
+two sites rather than every site you visit.
+
+The dependency is real: a proxy in front of the server that strips CORS headers
+would put the permission back.
+
 ## 6. Reproducing
 
 Everything runs in the pinned container — the host's package state is not
@@ -428,8 +487,17 @@ cd server && go build -o ../harness/browser/dist/videosyncd ./cmd/videosyncd
 cd ../client/userscript && npm run build && cp dist/videosync.user.js ../../harness/browser/dist/
 cd ../../harness/browser && ./run.sh node probe-userscript.mjs      # the whole stack, two browsers (§7)
 ./run.sh node probe-youtube.mjs         # the real YouTube player (§8)
-./run.sh node probe-csp.mjs             # mixed content, http vs https page (§8)
+./run.sh node probe-csp.mjs             # the address block, http vs https page (§8)
+./run.sh node probe-ext.mjs             # what an MV3 content script may do (§9)
+TOTAL_MS=600000 ./run.sh node probe-swlife.mjs          # worker holds a socket (§10)
+SILENT=1 TOTAL_MS=600000 ./run.sh node probe-swlife.mjs # ...even an idle one
+./run.sh node probe-extension.mjs       # the extension, two browsers (§11)
+./run.sh node probe-hop.mjs             # what the message port costs (§11)
+./run.sh node probe-extperm.mjs         # are host_permissions needed? (§11)
 ```
+
+The extension probes need `client/extension/npm run build` as well as the two
+artifacts above.
 
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
 The container needs `--shm-size=1g`; Chrome's renderer hangs on the default

@@ -1,10 +1,100 @@
 {
   "checks": [
     {
-      "name": "probe ran to completion",
-      "ok": false,
-      "detail": "{\"code\":-32000,\"message\":\"Cannot find context with specified id\"}"
+      "name": "the extension loaded and found the element in both browsers",
+      "ok": true
+    },
+    {
+      "name": "both are playing real MSE media",
+      "ok": true,
+      "detail": "duration 120.0s"
+    },
+    {
+      "name": "the page cannot see the extension",
+      "ok": true,
+      "detail": "isolated world holds"
+    },
+    {
+      "name": "the service worker reached a loopback server the page cannot",
+      "ok": true,
+      "detail": "OYMjLNFbkXbw2xoJOappqQ"
+    },
+    {
+      "name": "the relayed clock exchange still settles tightly",
+      "ok": true,
+      "detail": "bestRTT 0.19999980926513672 ms through the port, uncertainty ±0.09999990463256836 ms"
+    },
+    {
+      "name": "the two players stayed together through the relay",
+      "ok": true,
+      "detail": "36 ms apart (sampling skew 1 ms)"
+    },
+    {
+      "name": "a pause reached the other browser without echoing back",
+      "ok": true,
+      "detail": "b sent 0 commands while applying a remote pause"
+    },
+    {
+      "name": "the service worker was actually terminated",
+      "ok": true
+    },
+    {
+      "name": "killing the service worker costs a reconnect, not the session",
+      "ok": true,
+      "detail": "reconnects 0 -> 1, state joined"
+    },
+    {
+      "name": "the room still works after the worker came back",
+      "ok": true
+    },
+    {
+      "name": "no frame was rejected as malformed",
+      "ok": true,
+      "detail": "a=0 b=0"
     }
   ],
-  "measurements": {}
+  "measurements": {
+    "relayedRttMs": 0.19999980926513672,
+    "relayedUncertaintyMs": 0.09999990463256836,
+    "playbackGapMs": 36,
+    "serviceWorkerTarget": "chrome-extension://ieminlmlcpaemglpkaaogjdaichbhphh/sw.js",
+    "reconnectAfterWorkerKill": {
+      "before": 0,
+      "after": 1
+    },
+    "stats": {
+      "a": {
+        "cmdsSent": 4,
+        "statesApplied": 0,
+        "acksApplied": 4,
+        "correctionsSeek": 1,
+        "correctionsNudge": 5,
+        "nudgesUnsupported": 0,
+        "reportsSent": 11,
+        "timeSamples": 11,
+        "reconnects": 1,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0
+      },
+      "b": {
+        "cmdsSent": 0,
+        "statesApplied": 4,
+        "acksApplied": 0,
+        "correctionsSeek": 0,
+        "correctionsNudge": 4,
+        "nudgesUnsupported": 0,
+        "reportsSent": 8,
+        "timeSamples": 6,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0
+      }
+    }
+  }
 }

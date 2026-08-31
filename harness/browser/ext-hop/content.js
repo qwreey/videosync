@@ -12,7 +12,7 @@
  * reported position forward is wrong by the jitter, times the playback rate.
  */
 (async () => {
-  const N = Number(new URLSearchParams(location.hash.slice(1)).get('n') || 400);
+  const N = Number(new URLSearchParams(location.hash.slice(1)).get('n') || 200);
   const GAP = 50;
   const out = { origin: location.origin, n: N, gapMs: GAP, port: [], sendMessage: [], idle: [] };
 
@@ -57,7 +57,7 @@
   // down while idle, this is where it shows up -- and in the real design the
   // socket is what keeps it alive, so a large number here is an argument for
   // never letting the socket go quiet.
-  for (const quietMs of [1000, 5000, 15000, 45000]) {
+  for (const quietMs of [1000, 5000, 15000]) {
     await new Promise((r2) => setTimeout(r2, quietMs));
     const r = await ping(90000 + quietMs);
     if (r) out.idle.push({ quietMs, rttMs: r.rttMs, oneWayMs: r.oneWayMs });

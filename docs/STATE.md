@@ -9,7 +9,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 |---|---|
 | Research (9 reference implementations) | **done** — `research/SYNTHESIS.md` |
 | Risk A — does the algorithm converge? | **done** — `server/internal/sim`, 8 rounds in `docs/POC-FINDINGS.md` |
-| Risk B — does it survive a real browser? | **partly done** — `harness/browser/`, `docs/BROWSER-FINDINGS.md` |
+| Risk B — does it survive a real browser? | **done for what we can reach** — `harness/browser/`, `docs/BROWSER-FINDINGS.md` |
 | Client core (adapter, detector, clock) | **done and browser-validated** — `client/core/` |
 | Sync server (Go, WebSocket, rooms) | **done** — `server/cmd/videosyncd` |
 | Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
@@ -17,7 +17,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
-| Extension shim | **built; end-to-end run not yet green** — `client/extension/`, `probe-extension.mjs` |
+| Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (11/11) |
 
 ## What exists and works
 

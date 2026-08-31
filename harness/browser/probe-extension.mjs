@@ -162,25 +162,44 @@ try {
     `b sent ${cmdsB1 - cmdsB0} commands while applying a remote pause`);
 
   // --- the worker dying must cost a reconnect, not the session ---------------
+  // This is the claim the whole architecture rests on: the worker holds no
+  // session state, so Chrome tearing it down is a reconnect and nothing more.
+  // Killing it properly matters -- an earlier version evaluated `close()` in
+  // the worker, which is a no-op there, and the check passed while proving
+  // nothing.
   const reconnects0 = (await ev(a, 'window.VideoSync.status().stats')).reconnects;
-  const targets = await (await fetch(`http://127.0.0.1:9461/json/list`)).json();
-  const sw = targets.find((t) => t.type === 'service_worker');
-  results.measurements.serviceWorkerTarget = !!sw;
-  if (sw) {
-    // Kill the worker the way Chrome would when it decides the session is idle.
-    const swSession = await new Session(sw.webSocketDebuggerUrl).open();
-    await swSession.send('Runtime.enable');
-    try { await swSession.eval('globalThis.close ? close() : null'); } catch { /* it went away */ }
-    swSession.close();
-    await sleep(1500);
-    await a.s.waitFor("window.VideoSync.status().state === 'joined'", { timeoutMs: 20000, isolated: true });
-    const reconnects1 = (await ev(a, 'window.VideoSync.status().stats')).reconnects;
+  const version = await (await fetch('http://127.0.0.1:9461/json/version')).json();
+  const browser = await new Session(version.webSocketDebuggerUrl).open();
+  const { targetInfos } = await browser.send('Target.getTargets');
+  const swTarget = targetInfos.find((t) => t.type === 'service_worker');
+  results.measurements.serviceWorkerTarget = swTarget ? swTarget.url : null;
+  if (swTarget) {
+    await browser.send('Target.closeTarget', { targetId: swTarget.targetId });
+    // It must actually be gone, or the rest of this proves nothing.
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i++) {
+      const { targetInfos: now } = await browser.send('Target.getTargets');
+      alive = now.some((t) => t.targetId === swTarget.targetId);
+      if (alive) await sleep(100);
+    }
+    check('the service worker was actually terminated', !alive);
+
+    await a.s.waitFor("window.VideoSync.status().state === 'joined'",
+      { timeoutMs: 30000, isolated: true });
+    const st = await ev(a, 'window.VideoSync.status()');
+    results.measurements.reconnectAfterWorkerKill = { before: reconnects0, after: st.stats.reconnects };
     check('killing the service worker costs a reconnect, not the session',
-      (await ev(a, "window.VideoSync.status().state")) === 'joined',
-      `reconnects ${reconnects0} -> ${reconnects1}`);
+      st.state === 'joined' && st.stats.reconnects > reconnects0,
+      `reconnects ${reconnects0} -> ${st.stats.reconnects}, state ${st.state}`);
+
+    // And the room still works afterwards.
+    await ev(a, 'window.VideoSync.engine().seek(75)');
+    await b.s.waitFor('Math.abs(window.page.el().ct - 75) < 4', { timeoutMs: 25000 });
+    check('the room still works after the worker came back', true);
   } else {
     check('a service worker target was found to kill', false, 'skipped the teardown test');
   }
+  browser.close();
 
   const sa = await ev(a, 'window.VideoSync.status().stats');
   const sb = await ev(b, 'window.VideoSync.status().stats');

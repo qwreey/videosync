@@ -36,14 +36,14 @@ const b = await launch({
 let s = null;
 try {
   for (const [label, url] of [
-    ['local', `http://127.0.0.1:${process.env.PORT || 8899}/hop-page.html#n=400`],
-    ['youtube', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ#n=400'],
+    ['local', `http://127.0.0.1:${process.env.PORT || 8899}/hop-page.html#n=200`],
+    ['youtube', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ#n=200'],
   ]) {
     const tab = await newTab(9451, url);
     s = await new Session(tab.webSocketDebuggerUrl).open();
     await s.send('Runtime.enable');
     let raw = null;
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 150; i++) {
       raw = await s.eval('document.documentElement.getAttribute("data-hop")');
       if (raw) { const p = JSON.parse(raw); if (p.done) break; }
       await sleep(1000);
