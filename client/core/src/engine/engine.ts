@@ -6,7 +6,7 @@
  * `transport`, `isHidden`) so the engine runs unchanged in a browser, in a
  * userscript, and in a Node test against a real `videosyncd`.
  */
-import type { ProviderAdapter } from '../adapter/types.ts';
+import type { PlayerState, ProviderAdapter } from '../adapter/types.ts';
 import { AutoplayBlockedError } from '../adapter/types.ts';
 import { SeekDetector } from '../detector/detector.ts';
 import type { DetectorConfig } from '../detector/types.ts';
@@ -57,6 +57,23 @@ export interface EngineConfig {
   reconnectMaxMs: number;
   rateMin: number;
   rateMax: number;
+  /**
+   * Seed the room from this member's own player, once, on the first settled
+   * evaluation after joining. Set only by whoever CREATED the room.
+   *
+   * A room is created with the anchor at `paused@0` (`hub.Create`), and the
+   * detector only reports play-state *transitions* -- so a creator whose video
+   * was already playing never announces itself: `cmdsSent` stays 0 and the
+   * room defends a position nobody is at. The player is dragged back to 0
+   * every `reconcileAfterMs` while the servo nudges it, forever. Measured in
+   * the field on Laftel, alone in a room.
+   *
+   * It sends ordinary commands rather than mutating the room from `hello`,
+   * because a room only changes by a command that takes a `seq` and reaches
+   * everyone (SYNTHESIS 5). A joiner never sets this: the anchor is truth and
+   * a joiner must conform to it.
+   */
+  adoptLocalStateOnJoin: boolean;
   detector: Partial<DetectorConfig>;
 }
 
@@ -74,6 +91,7 @@ export const DEFAULT_ENGINE_CONFIG: Omit<EngineConfig, 'room' | 'secret' | 'name
   reconnectMaxMs: 15000,
   rateMin: 0.95,
   rateMax: 1.1,
+  adoptLocalStateOnJoin: false,
   detector: {},
 };
 
@@ -200,6 +218,8 @@ export class SyncEngine {
   private unsubscribeAdapter: (() => void) | null = null;
   /** When the player first started disagreeing with the anchor about play state. */
   private disagreeingSince = 0;
+  /** One-shot: the creator's seed, consumed by the first settled evaluation. */
+  private pendingAdopt = false;
 
   /**
    * Every mutation of the player runs through here, one at a time.
@@ -236,6 +256,7 @@ export class SyncEngine {
     this.cfg = cfg;
     this.ev = events;
     this.localMediaKey = cfg.mediaKey;
+    this.pendingAdopt = cfg.adoptLocalStateOnJoin;
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
       evalIntervalMs: cfg.evalIntervalMs,
@@ -702,6 +723,16 @@ export class SyncEngine {
 
     const now = this.d.now();
     const state = this.d.adapter.readState();
+
+    // The creator seeds the room from their own player, exactly once, as soon
+    // as the clock is settled -- which is well inside `reconcileAfterMs`, so
+    // they never see the room defend `paused@0` against them. See
+    // `adoptLocalStateOnJoin`.
+    if (this.pendingAdopt && this.clock.ready) {
+      this.pendingAdopt = false;
+      this.adoptLocalState(state);
+    }
+
     const expected = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
     const { observation, report } = this.detector.evaluate(state, expected, now);
 
@@ -788,6 +819,23 @@ export class SyncEngine {
   }
 
   // --- outbound user intent -------------------------------------------------
+
+  /**
+   * Two commands, in this order, and both are needed.
+   *
+   * `play` only advances the anchor and clears `Paused` -- it does not carry a
+   * position (`room.go:346`). Adopting with `play` alone would leave the anchor
+   * at 0 and reproduce the same fight in a subtler form. `seek` is what
+   * reanchors, and it preserves `Paused`, so a creator who is paused at 500 s
+   * gets `paused@500s` from the one command.
+   *
+   * The room lands `CMD_DELAY` behind the still-advancing player, which costs
+   * one correction -- the same thing any user seek during playback costs.
+   */
+  private adoptLocalState(s: PlayerState): void {
+    this.seek(s.positionS);
+    if (!s.paused) this.play();
+  }
 
   private send(kind: CmdKind, positionMs: number, mediaKey?: string): string {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;

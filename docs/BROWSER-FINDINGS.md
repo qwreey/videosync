@@ -483,6 +483,27 @@ two sites rather than every site you visit.
 The dependency is real: a proxy in front of the server that strips CORS headers
 would put the permission back.
 
+## 12. Laftel, in the field — NOT a probe measurement
+
+The first real session against Laftel, extension shim, server behind a tunnel,
+2026-08-31. **Everything here is an observation from a live session, not a
+number from a probe**, so it is weaker evidence than §7–§11 and must not be
+cited as if it were the same kind of thing. §12 exists because the session
+happened before anyone could run `harness/browser` against Laftel, and losing
+what it showed would be worse than recording it with its provenance attached.
+
+| question | what the session showed | status |
+|---|---|---|
+| does `mediaKey` differ per episode? | `laftel:/player/45462/93304` — the generic `host:pathname` rule picks up both ids from the path | **likely answered**; the episode is not in a query parameter. Two different episodes were not compared side by side |
+| does `seekTo` stick? | yes, demonstrably: the room's corrections dragged the player back to ~0 s repeatedly and it went | **answered.** A raw `currentTime` write is not fought |
+| does Laftel reset `playbackRate`? | **unanswered.** `stats.correctionsNudge` climbing only proves `setRate` was *called* — nothing observed whether the rate was held | **still open**, needs the 10-second hold from `STATE.md` §1 |
+
+The session also produced a real bug, from `VideoSync.status()` on a member
+alone in a room: `cmdsSent: 0`, `expectedMs: 0`, `positionS` sawtoothing between
+0.03 s and 0.73 s. See CLAUDE.md's trap on a fresh room's `paused@0` anchor —
+`expectedMs` came back `0` rather than `null`, which proves the clock was
+settled and made the diagnosis unambiguous.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

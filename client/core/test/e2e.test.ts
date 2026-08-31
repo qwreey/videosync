@@ -92,13 +92,14 @@ interface Peer {
   chat: Array<{ name: string; text: string }>;
 }
 
-function peer(roomId: string, secret: string, name: string, opts = {}): Peer {
+function peer(roomId: string, secret: string, name: string, opts = {}, adopt = false): Peer {
   const player = new FakePlayer(realTime, { paused: true, positionS: 0, ...opts });
   const gates: Array<[boolean, readonly string[]]> = [];
   const chat: Array<{ name: string; text: string }> = [];
   const cfg: EngineConfig = {
     ...DEFAULT_ENGINE_CONFIG,
     room: roomId, secret, name, mediaKey: 'e2e:media',
+    adoptLocalStateOnJoin: adopt,
   };
   const engine = new SyncEngine({
     adapter: player,
@@ -266,6 +267,79 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       assert.ok(b.engine.stats.reconnects >= 1);
     } finally {
       a.engine.stop(); b.engine.stop();
+    }
+  });
+
+  // A room is created at `paused@0`. A creator whose video is already playing
+  // never emits a play-state TRANSITION, so nothing announced them: the room
+  // defended a position nobody was at, dragging the player back every
+  // RECONCILE_AFTER while the servo nudged it. Found in the field on Laftel,
+  // alone in a room, with `cmdsSent: 0` and `expectedMs: 0` as the proof.
+  it('adopts the creator\'s already-playing player into the fresh room', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 640 }, true);
+    try {
+      await joined(a);
+      await waitFor(() => a.engine.appliedSeq >= 2, 6000, 'the creator to seed the room');
+
+      const anchor = a.engine.currentAnchor;
+      assert.equal(anchor.paused, false, 'the room stayed paused under a playing creator');
+      // CMD_DELAY behind the still-advancing player, and one correction closes
+      // it. What must not happen is the anchor sitting at 0.
+      assert.ok(Math.abs(anchor.positionMs - 640_000) < 3000,
+        `anchor at ${anchor.positionMs}ms, not the creator's ~640s`);
+
+      // The real symptom was the player being yanked to 0, over and over.
+      await sleep(4000); // longer than reconcileAfterMs
+      const pos = a.player.readState().positionS;
+      assert.ok(pos > 640, `player fell back to ${pos.toFixed(2)}s -- the room is fighting it`);
+      assert.equal(a.player.paused, false, 'the player was paused by its own room');
+    } finally {
+      a.engine.stop();
+    }
+  });
+
+  // The control: without the flag the bug reproduces, which is what makes the
+  // test above evidence rather than decoration.
+  it('leaves the room at paused@0 when the creator does NOT adopt', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 640 });
+    try {
+      await joined(a);
+      await sleep(2000);
+      assert.equal(a.engine.stats.cmdsSent, 0, 'something announced an already-playing creator');
+      assert.equal(a.engine.currentAnchor.positionMs, 0);
+      assert.equal(a.engine.currentAnchor.paused, true);
+      assert.ok(a.player.readState().positionS < 640,
+        'the room did not drag the player back -- the bug no longer reproduces');
+    } finally {
+      a.engine.stop();
+    }
+  });
+
+  // A joiner is NOT a creator: the anchor is truth and they must conform to it,
+  // however loudly their own player disagrees.
+  it('does not let a joining member seed a room that already has one', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
+    try {
+      await joined(a);
+      await waitFor(() => a.engine.appliedSeq >= 2, 6000, 'the creator to seed');
+      const b = peer(roomId, secret, 'b', { paused: false, positionS: 3000 });
+      try {
+        await joined(b);
+        await sleep(2500);
+        assert.equal(b.engine.stats.cmdsSent, 0, 'the joiner steered the room');
+        assert.ok(Math.abs(a.engine.currentAnchor.positionMs - 100_000) < 5000,
+          'the joiner dragged the room to its own position');
+      } finally {
+        b.engine.stop();
+      }
+    } finally {
+      a.engine.stop();
     }
   });
 });

@@ -15,7 +15,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
 | Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
-| Live provider smoke test — Laftel | **blocked on a real session** ← needs the user |
+| Live provider smoke test — Laftel | **partly done in the field** — BROWSER-FINDINGS §12; `playbackRate` still unmeasured |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
 | Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (11/11) |
 
@@ -44,7 +44,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 63 unit tests, plus 5 end-to-end tests that drive real engines over real WebSockets
+  build step. 63 unit tests, plus 8 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`).
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
 - `client/extension` — the Chrome MV3 build (`npm run build` → `dist/`, load unpacked).
@@ -106,6 +106,14 @@ server that strips CORS headers would put the permission back.
 
 ## The next task, concretely
 
+**The first live session (2026-08-31, Laftel + extension + tunnel) happened and
+found one real bug, now fixed:** a freshly created room anchors at `paused@0`,
+and the detector reports play-state *transitions* only, so a creator whose video
+was already playing never announced itself — the room fought its own creator
+forever, alone in the room. The creator now seeds the room
+(`adoptLocalStateOnJoin`, e2e-tested with a control). What that session did and
+did not settle about Laftel is BROWSER-FINDINGS §12.
+
 Everything that can be validated without your accounts and your browser has
 been. Both remaining items need you, and **the extension makes them much
 easier** than the userscript does — its service worker can reach a server on
@@ -162,6 +170,17 @@ certificate, or a tunnel that gives you one:
 
 ### 3. Then, in rough order of value
 
+- **Joining should take you to the video (user request, 2026-08-31).** Today nothing ever
+  navigates anybody: a joiner on a different page gets a mismatch notice whose only button is
+  `이 영상으로 방 옮기기` — it moves the *room* to them. The intended flow is the invite link,
+  which carries `location.href`; the user's own testing found that fragile ("url 이 낡아") and
+  wants the Netflix-Party shape instead: **join by code in the widget, and the room takes you to
+  what it is watching, with the link kept in sync as the room's media changes.**
+  What makes this more than a button: **`mediaKey` is lossy on purpose** — `yt:abc`,
+  `laftel:/player/45462/93304` — so the room cannot reconstruct a watch URL from it. The room
+  would have to carry the real URL alongside the key, which touches `hello`, the `media` command,
+  the anchor and `PROTOCOL.md`, and it needs a rule for what a *stale* URL means when the room has
+  moved on. Deliberately backlogged, not built.
 - **Firefox.** Deliberately not claimed: the manifest used to carry a gecko id
   while declaring `background.service_worker`, which Firefox has never shipped —
   the background would not have existed and every session would have died at the
@@ -178,12 +197,15 @@ certificate, or a tunnel that gives you one:
 
 ## Open questions that block things
 
-- ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube.** hls.js held 1.1
+- ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube; still open on Laftel.** hls.js held 1.1
   exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.99 s of media in 10 s of
   wall clock (§8). Writing `currentTime` sticks on YouTube too. **Laftel is still unmeasured** and
   needs a session.
-- **Laftel** rests on one blog post plus the generic-adapter assumption. Needs a live smoke test
-  with a real session — the one open provider question, and it needs the user's account.
+- **Laftel** — narrowed by a live session, not closed (BROWSER-FINDINGS §12). `seekTo` sticks and
+  the generic `host:pathname` key picks up the episode ids. **Whether Laftel resets `playbackRate`
+  is still unmeasured**: nudges were observed being *sent*, which says nothing about whether the
+  rate was held. That is the whole `supportsPlaybackRateNudge` question and it needs the
+  10-second hold from §1.
 - **Tampermonkey itself is unverified.** Everything measured on YouTube injected the bundle into
   the main world via CDP. That is the pessimistic side of the CSP question (a pass there implies a
   pass in the sandbox), but the `@grant` sandbox, `GM_setValue`, and the panel's behaviour inside a

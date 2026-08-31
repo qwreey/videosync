@@ -102,6 +102,14 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.
 - **In-buffer seeks are ~free; out-of-buffer seeks cost a segment fetch and rebuffer.** The choice
   is about price, not about the size of the error.
+- **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
+  The detector reports play-state *transitions* only, so a member who was already playing when the
+  room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is
+  at, dragging the player back every `RECONCILE_AFTER` and nudging it in between — alone in the
+  room. `adoptLocalStateOnJoin` (set only by the creator) seeds the room with `seek` then `play`.
+  **Both commands, in that order:** `play` advances the anchor and clears `Paused` but carries no
+  position (`room.go:346`), so adopting with `play` alone leaves the anchor at 0 and the fight
+  continues in a subtler form.
 
 ## Layout
 

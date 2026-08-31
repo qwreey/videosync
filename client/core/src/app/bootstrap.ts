@@ -154,7 +154,9 @@ export function start(p: Platform): App {
     try {
       const out = await p.createRoom(serverUrl, mediaKey);
       panel.setFields(out);
-      join(serverUrl, out.roomId, out.secret, name);
+      // The creator seeds the room from their own player. Only here: a joiner
+      // conforms to the anchor, a creator IS the anchor.
+      join(serverUrl, out.roomId, out.secret, name, true);
       return out;
     } catch (e) {
       panel.setStatus(`방을 만들지 못했어요: ${(e as Error).message}. ` +
@@ -163,7 +165,9 @@ export function start(p: Platform): App {
     }
   }
 
-  function join(serverUrl: string, roomId: string, secret: string, name: string): void {
+  function join(
+    serverUrl: string, roomId: string, secret: string, name: string, adopt = false,
+  ): void {
     if (!serverUrl || !roomId || !secret) {
       panel.setStatus('서버 주소, 방 ID, 비밀키가 모두 필요해요.', 'err');
       return;
@@ -199,6 +203,7 @@ export function start(p: Platform): App {
     }, {
       ...DEFAULT_ENGINE_CONFIG,
       room: roomId, secret, name: name || '익명', mediaKey,
+      adoptLocalStateOnJoin: adopt,
     }, {
       onStatus: (s: EngineStatus, detail?: string) => {
         panel.setConnection(s);
