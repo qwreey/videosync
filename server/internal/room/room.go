@@ -134,6 +134,10 @@ type Room struct {
 	// to buffer could make the gate worse than no gate at all.
 	GateDisabled bool
 
+	// lastCmdWhen is when the most recent command becomes due. Until then a
+	// member that has not applied it is not stale -- it is early.
+	lastCmdWhen int64
+
 	// held is the one command the readiness gate is holding, if any. At most
 	// one: any later command supersedes it, because holding a queue would let
 	// a member who is slow to buffer replay a stale burst of user intent at
@@ -351,6 +355,7 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
 			Paused: true, MediaKey: m.MediaKey}
 	}
+	r.lastCmdWhen = when
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}
 	for _, mid := range r.ids {
 		if mid == id {
@@ -396,7 +401,16 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// A lagging lastAppliedSeq is the only signal that distinguishes "in sync"
 	// from "confidently wrong about what it is syncing to". It is already on
 	// the wire and nothing was reading it.
-	if !r.NoStaleResend && rep.LastAppliedSeq < r.seq {
+	//
+	// But it cannot, on its own, distinguish "missed the command" from "has it
+	// scheduled and has not reached `when` yet" -- the client advances the field
+	// at apply time, CMD_DELAY after the broadcast. Resending during that window
+	// is actively harmful: the resend carries `when: now`, the client replaces
+	// its correctly-scheduled entry with it and transitions CMD_DELAY early,
+	// which is precisely the simultaneity this timebase exists to provide. With
+	// a 1 Hz heartbeat and a 500 ms floor that fired on roughly half of all
+	// commands. So a member is stale only once the command is actually due.
+	if !r.NoStaleResend && rep.LastAppliedSeq < r.seq && now >= r.lastCmdWhen {
 		r.StaleResends++
 		r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,
 			Anchor: r.anchor, By: "server", Kind: "resync"})

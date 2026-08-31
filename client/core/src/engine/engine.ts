@@ -122,6 +122,8 @@ export interface EngineStats {
   badFrames: number;
   /** Transitions not applied because this member is watching something else. */
   skippedOffMedia: number;
+  /** Queued transitions dropped because a newer one took over first. */
+  supersededApplies: number;
 }
 
 export class SyncEngine {
@@ -132,7 +134,7 @@ export class SyncEngine {
     cmdsSent: 0, statesApplied: 0, acksApplied: 0, correctionsSeek: 0,
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
-    skippedOffMedia: 0,
+    skippedOffMedia: 0, supersededApplies: 0,
   };
 
   private readonly d: EngineDeps;
@@ -174,6 +176,27 @@ export class SyncEngine {
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
 
+  /**
+   * Every mutation of the player runs through here, one at a time.
+   *
+   * There are four un-serialised ways into the player -- a scheduled
+   * transition, a correction, an element swap, and a gesture retry -- and each
+   * of them awaits a seek that can take hundreds of milliseconds. Overlapping
+   * them inverts their effects: a `pause` parked inside `seekTo` finishes AFTER
+   * the `play` that superseded it, leaving the player paused with an anchor
+   * that says playing. Nothing recovers from that -- the corrector only ever
+   * seeks or nudges, it never presses play -- so the member sits paused against
+   * a playing room, being seek-corrected forever.
+   */
+  private applyChain: Promise<void> = Promise.resolve();
+  private draining = false;
+
+  private serialise(fn: () => Promise<void>): Promise<void> {
+    const next = this.applyChain.then(fn).catch(() => { /* one failure must not wedge the chain */ });
+    this.applyChain = next;
+    return next;
+  }
+
   constructor(deps: EngineDeps, cfg: EngineConfig, events: EngineEvents = {}) {
     this.d = deps;
     this.cfg = cfg;
@@ -194,7 +217,8 @@ export class SyncEngine {
       // room is. If we are not, leave it alone -- snapping someone's next
       // episode to the old one's timestamp is worse than doing nothing.
       if (this.status === 'joined' && this.onRoomMedia()) {
-        void this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused);
+        void this.serialise(() =>
+          this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused));
       }
     });
   }
@@ -424,16 +448,25 @@ export class SyncEngine {
 
   private async drain(): Promise<void> {
     this.applyTimer = 0;
-    const serverNow = this.serverNow();
-    while (this.pending.length > 0 && this.pending[0]!.whenServerMs <= serverNow) {
-      const p = this.pending.shift()!;
-      await this.applyScheduled(p);
+    if (this.draining) return; // a frame arriving mid-apply re-arms the timer
+    this.draining = true;
+    try {
+      const serverNow = this.serverNow();
+      while (this.pending.length > 0 && this.pending[0]!.whenServerMs <= serverNow) {
+        const p = this.pending.shift()!;
+        await this.applyScheduled(p);
+      }
+    } finally {
+      this.draining = false;
+      this.rearm();
     }
-    this.rearm();
   }
 
-  private async applyScheduled(p: Scheduled): Promise<void> {
-    if (p.seq <= this.lastAppliedSeq) return;
+  private applyScheduled(p: Scheduled): Promise<void> {
+    if (p.seq <= this.lastAppliedSeq) return Promise.resolve();
+    // Bookkeeping is synchronous even though the player work is queued, so a
+    // command that arrives while an earlier one is still touching the player
+    // knows it has been superseded.
     this.lastAppliedSeq = p.seq;
     this.anchor = p.anchor;
     this.ev.onAnchor?.(p.anchor);
@@ -442,17 +475,26 @@ export class SyncEngine {
     // different media: the room's position means nothing on our timeline.
     if (!this.onRoomMedia()) {
       this.stats.skippedOffMedia++;
-      return;
+      return Promise.resolve();
     }
 
-    // If `when` has already passed -- the normal case on a slow link -- the
-    // room has moved on since. Aim at where it is NOW, never at where it was
-    // when the command was emitted. (The server-side twin of this bug made
-    // every correction land one downlink delay behind.)
-    const serverNow = this.serverNow();
-    if (serverNow > p.whenServerMs + this.cfg.seekToleranceMs) this.stats.lateApplies++;
-    const targetMs = expectedAt(p.anchor, Math.max(serverNow, p.anchor.atServerMs));
-    await this.applyTransition(targetMs, p.anchor.paused);
+    return this.serialise(async () => {
+      if (p.seq < this.lastAppliedSeq) {
+        // Something newer took over while we were queued. Applying this now
+        // would move the player backwards into a state the room has left.
+        this.stats.supersededApplies++;
+        return;
+      }
+      // If `when` has already passed -- the normal case on a slow link -- the
+      // room has moved on since. Aim at where it is NOW, never at where it was
+      // when the command was emitted. Computed inside the queue, because time
+      // passes while waiting for it. (The server-side twin of this bug made
+      // every correction land one downlink delay behind.)
+      const serverNow = this.serverNow();
+      if (serverNow > p.whenServerMs + this.cfg.seekToleranceMs) this.stats.lateApplies++;
+      const targetMs = expectedAt(p.anchor, Math.max(serverNow, p.anchor.atServerMs));
+      await this.applyTransition(targetMs, p.anchor.paused);
+    });
   }
 
   private async applyTransition(targetMs: number, paused: boolean): Promise<void> {
@@ -495,10 +537,25 @@ export class SyncEngine {
     }
   }
 
-  /** Retry a refused play from inside a user gesture. */
+  /**
+   * Retry a refused play from inside a user gesture.
+   *
+   * If the room is paused right now there is nothing to play, and the earlier
+   * refusal is no longer a fact about anything -- so the flag is cleared
+   * outright. Leaving it set made the click do nothing at all: a blocked member
+   * sends no commands and reports `suspended`, so they could not press play,
+   * could not be corrected, and could not be gated on. The room sat paused
+   * waiting for somebody, and that somebody's clicks were being swallowed with
+   * no symptom anywhere.
+   */
   async resumeAfterGesture(): Promise<void> {
     if (!this.autoplayBlocked) return;
-    await this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused);
+    if (this.anchor.paused) {
+      this.autoplayBlocked = false;
+      return;
+    }
+    await this.serialise(() =>
+      this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused));
   }
 
   private async applyCorrection(mode: 'seek' | 'nudge', rate?: number): Promise<void> {
@@ -520,14 +577,16 @@ export class SyncEngine {
     // The frame deliberately carries no position: one computed at send time is
     // stale by a downlink delay on arrival.
     this.stats.correctionsSeek++;
-    this.applyingRemote = true;
-    try {
-      await a.seekTo(expectedAt(this.anchor, this.serverNow()) / 1000).catch(() => {});
-    } finally {
-      this.applyingRemote = false;
-      const s = a.readState();
-      this.detector.rebaseline(s.positionS, s.paused);
-    }
+    await this.serialise(async () => {
+      this.applyingRemote = true;
+      try {
+        await a.seekTo(expectedAt(this.anchor, this.serverNow()) / 1000).catch(() => {});
+      } finally {
+        this.applyingRemote = false;
+        const s = a.readState();
+        this.detector.rebaseline(s.positionS, s.paused);
+      }
+    });
   }
 
   // --- the local loop -------------------------------------------------------
@@ -565,6 +624,14 @@ export class SyncEngine {
     // or a refused autoplay: this member cannot follow the room and no
     // correction can change that. Absent, not behind.
     const absent = report.suspended || this.autoplayBlocked || !onRoomMedia;
+
+    // An absent member is no longer judged, so any rate the servo left behind
+    // would stick forever -- including onto whatever they navigate to next,
+    // since a site that reuses its <video> element keeps its playbackRate. Hand
+    // it back before going quiet.
+    if (absent && state.rate !== 1 && this.d.adapter.capabilities.supportsPlaybackRateNudge) {
+      this.d.adapter.setRate(1);
+    }
     const dueHeartbeat = now - this.lastHbAt >= this.cfg.hbIntervalMs;
     const anomaly =
       Math.abs(report.residualMs) >= this.cfg.reportThresholdMs ||

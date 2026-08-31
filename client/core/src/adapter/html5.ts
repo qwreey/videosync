@@ -82,11 +82,16 @@ export class Html5Adapter implements ProviderAdapter {
     return new Promise<void>((resolve, reject) => {
       let timer = 0;
       const done = () => {
+        // A `seeked` from somebody else -- the user dragging the scrubber, or
+        // the site's own player -- must not resolve OUR seek. Two promises
+        // resolving on one event is how a superseded transition finishes after
+        // the one that replaced it.
+        if (Math.abs(this.el.currentTime - positionS) > 0.5) return;
         this.el.removeEventListener('seeked', done);
         clearTimeout(timer);
         resolve();
       };
-      this.el.addEventListener('seeked', done, { once: true });
+      this.el.addEventListener('seeked', done);
       timer = setTimeout(() => {
         this.el.removeEventListener('seeked', done);
         reject(new Error(`seek to ${positionS}s did not complete within ${timeoutMs}ms`));

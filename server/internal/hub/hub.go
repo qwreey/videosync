@@ -168,6 +168,10 @@ func (h *Hub) sweep() {
 		if l := h.rooms[id]; l != nil {
 			l.mu.Lock()
 			if len(l.conns) == 0 && now-l.emptySinceMs > ttl {
+				// Marked before the delete and under the room's own lock, so a
+				// join that is already inside Live.join sees it and is refused
+				// rather than landing in a room nobody can reach.
+				l.dead = true
 				delete(h.rooms, id)
 			}
 			l.mu.Unlock()

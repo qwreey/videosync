@@ -18,7 +18,13 @@ type Live struct {
 	hub *Hub
 	id  string
 
-	mu           sync.Mutex
+	mu sync.Mutex
+	// dead is set by the sweeper, under l.mu, at the moment the room is removed
+	// from the registry. Lookup releases both locks before returning a *Live,
+	// so without this a join can land in a room that no longer exists: the
+	// joiner would be alone in it forever, nobody else could ever reach that id,
+	// and it would never be Ticked, so its readiness gate would never expire.
+	dead         bool
 	secret       string
 	room         *room.Room
 	conns        map[string]*conn
@@ -53,6 +59,9 @@ func (l *Live) Send(clientID string, m room.Msg) {
 func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.dead {
+		return room.Welcome{}, nil, ErrNoSuchRoom
+	}
 	if len(l.conns) >= l.hub.cfg.MaxMembersPerRoom {
 		return room.Welcome{}, nil, ErrRoomFull
 	}

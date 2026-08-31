@@ -279,8 +279,14 @@ func TestALaggingLastAppliedSeqTriggersAResend(t *testing.T) {
 	a.await("members")
 
 	a.send(room.Cmd{ReqID: "r1", Kind: "seek", PositionMs: 60000})
-	a.await("ack")
+	ack := a.await("ack")
 	b.await("state")
+
+	// Wait past `when`. Before that, a member that has not applied the command
+	// is early, not stale, and resending would make it transition ahead of
+	// everyone else -- see TestAMemberIsNotStaleWhileACommandIsMerelyNotDueYET.
+	lead := num(ack, "when") - num(ack, "emittedAt")
+	time.Sleep(time.Duration(lead+200) * time.Millisecond)
 
 	// b now reports a perfect residual but an old seq: exactly the client that
 	// is confidently wrong about what it is syncing to.
@@ -1055,5 +1061,44 @@ func TestServesOverTLS(t *testing.T) {
 	c.send(room.Hello{Room: out.RoomID, Secret: out.Secret, Name: "a", MediaKey: "m"})
 	if m := c.await("welcome"); m["you"] == "" {
 		t.Fatalf("welcome over wss = %v", m)
+	}
+}
+
+func TestAMemberIsNotStaleWhileACommandIsMerelyNotDueYET(t *testing.T) {
+	// `lastAppliedSeq` cannot distinguish "missed the command" from "has it
+	// scheduled and has not reached `when` yet" -- the client advances it at
+	// apply time, which is CMD_DELAY after the broadcast. So for the whole
+	// 500-2000 ms scheduling window every member looks stale.
+	//
+	// Resending is not harmless there: the resend carries `when: now`, the
+	// client replaces its correctly-scheduled entry with it, and applies
+	// immediately -- CMD_DELAY early, which is exactly the simultaneity the
+	// whole timebase exists to provide. With a 1 Hz heartbeat and a 500 ms
+	// floor it lands roughly half the time.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	ack := a.await("ack")
+	st := b.await("state")
+	lead := num(ack, "when") - num(ack, "emittedAt")
+	if lead < 400 {
+		t.Fatalf("command lead %v ms is too short for this test to mean anything", lead)
+	}
+
+	// b reports honestly: it has the command, it has not applied it.
+	b.send(hb(0, 0, nil))
+	b.quiet(300*time.Millisecond, "state")
+	_ = st
+
+	// The control: once the command is actually due, a member still reporting
+	// an old seq IS stale and must be resent to.
+	time.Sleep(time.Duration(lead+300) * time.Millisecond)
+	b.send(hb(0, 0, nil))
+	if resync := b.await("state"); resync["kind"] != "resync" {
+		t.Fatalf("no resync after the command came due: %v", resync)
 	}
 }

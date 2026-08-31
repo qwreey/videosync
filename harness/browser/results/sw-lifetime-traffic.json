@@ -1,499 +1,871 @@
 {
-  "totalMs": 240000,
-  "stepMs": 15000,
+  "totalMs": 600000,
+  "stepMs": 60000,
   "sendsTraffic": true,
   "samples": [
     {
-      "atMs": 15014,
-      "entries": 6,
+      "atMs": 60006,
+      "entries": 16,
       "instances": 1,
-      "ticks": 1,
+      "ticks": 6,
       "last": {
-        "at": 1787990576967,
+        "at": 1788156000800,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 30016,
-      "entries": 9,
+      "atMs": 120007,
+      "entries": 28,
       "instances": 1,
-      "ticks": 3,
+      "ticks": 12,
       "last": {
-        "at": 1787990596967,
-        "event": "tick",
-        "instance": "g1qhw2",
-        "readyState": 1
+        "at": 1788156060800,
+        "event": "message",
+        "frame": "time.reply",
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 45018,
-      "entries": 12,
+      "atMs": 180011,
+      "entries": 40,
       "instances": 1,
-      "ticks": 4,
+      "ticks": 18,
       "last": {
-        "at": 1787990606967,
+        "at": 1788156120800,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 60026,
-      "entries": 14,
+      "atMs": 240017,
+      "entries": 52,
       "instances": 1,
-      "ticks": 5,
+      "ticks": 24,
       "last": {
-        "at": 1787990616967,
+        "at": 1788156180800,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 75033,
-      "entries": 18,
+      "atMs": 300018,
+      "entries": 64,
       "instances": 1,
-      "ticks": 7,
+      "ticks": 30,
       "last": {
-        "at": 1787990636967,
+        "at": 1788156240800,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 90038,
-      "entries": 22,
+      "atMs": 360024,
+      "entries": 76,
       "instances": 1,
-      "ticks": 9,
+      "ticks": 36,
       "last": {
-        "at": 1787990656968,
+        "at": 1788156300800,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 105042,
-      "entries": 24,
+      "atMs": 420025,
+      "entries": 88,
       "instances": 1,
-      "ticks": 10,
+      "ticks": 42,
       "last": {
-        "at": 1787990666968,
+        "at": 1788156360801,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 120045,
-      "entries": 26,
+      "atMs": 480029,
+      "entries": 100,
       "instances": 1,
-      "ticks": 11,
+      "ticks": 48,
       "last": {
-        "at": 1787990676968,
+        "at": 1788156420801,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 135047,
-      "entries": 30,
+      "atMs": 540036,
+      "entries": 112,
       "instances": 1,
-      "ticks": 13,
+      "ticks": 54,
       "last": {
-        "at": 1787990696968,
+        "at": 1788156480801,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     },
     {
-      "atMs": 150049,
-      "entries": 32,
+      "atMs": 600039,
+      "entries": 124,
       "instances": 1,
-      "ticks": 14,
+      "ticks": 60,
       "last": {
-        "at": 1787990706968,
+        "at": 1788156540801,
         "event": "message",
         "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 165056,
-      "entries": 36,
-      "instances": 1,
-      "ticks": 16,
-      "last": {
-        "at": 1787990726968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 180058,
-      "entries": 38,
-      "instances": 1,
-      "ticks": 17,
-      "last": {
-        "at": 1787990736968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 195063,
-      "entries": 42,
-      "instances": 1,
-      "ticks": 19,
-      "last": {
-        "at": 1787990756968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 210068,
-      "entries": 44,
-      "instances": 1,
-      "ticks": 20,
-      "last": {
-        "at": 1787990766968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 225072,
-      "entries": 48,
-      "instances": 1,
-      "ticks": 22,
-      "last": {
-        "at": 1787990786968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
-      }
-    },
-    {
-      "atMs": 240073,
-      "entries": 50,
-      "instances": 1,
-      "ticks": 23,
-      "last": {
-        "at": 1787990796968,
-        "event": "message",
-        "frame": "time.reply",
-        "instance": "g1qhw2"
+        "instance": "c0kgw2"
       }
     }
   ],
   "log": [
     {
-      "at": 1787990564978,
+      "at": 1788155933691,
       "event": "worker-start",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990566965,
+      "at": 1788155940798,
       "event": "room-created",
-      "instance": "g1qhw2",
-      "roomId": "el0rexGumU58TWZWNB_Tzg"
+      "instance": "c0kgw2",
+      "roomId": "DYYZ8DGvWTwz3ecsYskZQA"
     },
     {
-      "at": 1787990566968,
+      "at": 1788155940800,
       "event": "open",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990566968,
+      "at": 1788155940801,
       "event": "message",
       "frame": "welcome",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990576967,
+      "at": 1788155950799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990576967,
+      "at": 1788155950800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990586967,
+      "at": 1788155960800,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990586967,
+      "at": 1788155960801,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990596967,
+      "at": 1788155970800,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990596967,
+      "at": 1788155970801,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990606967,
+      "at": 1788155980800,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990606967,
+      "at": 1788155980801,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990616967,
+      "at": 1788155990800,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990616967,
+      "at": 1788155990802,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990626967,
+      "at": 1788156000799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990626968,
+      "at": 1788156000800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990636967,
+      "at": 1788156010799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990636967,
+      "at": 1788156010800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990646967,
+      "at": 1788156020799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990646967,
+      "at": 1788156020800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990656967,
+      "at": 1788156030800,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990656968,
+      "at": 1788156030800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990666967,
+      "at": 1788156040799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990666968,
+      "at": 1788156040800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990676967,
+      "at": 1788156050799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990676968,
+      "at": 1788156050800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990686967,
+      "at": 1788156060799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990686968,
+      "at": 1788156060800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990696967,
+      "at": 1788156070799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990696968,
+      "at": 1788156070800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990706967,
+      "at": 1788156080799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990706968,
+      "at": 1788156080800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990716967,
+      "at": 1788156090799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990716968,
+      "at": 1788156090800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990726967,
+      "at": 1788156100799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990726968,
+      "at": 1788156100800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990736967,
+      "at": 1788156110799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990736968,
+      "at": 1788156110800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990746967,
+      "at": 1788156120799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990746968,
+      "at": 1788156120800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990756967,
+      "at": 1788156130799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990756968,
+      "at": 1788156130800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990766967,
+      "at": 1788156140799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990766968,
+      "at": 1788156140800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990776967,
+      "at": 1788156150799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990776968,
+      "at": 1788156150800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990786967,
+      "at": 1788156160799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990786968,
+      "at": 1788156160800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
     },
     {
-      "at": 1787990796967,
+      "at": 1788156170799,
       "event": "tick",
-      "instance": "g1qhw2",
+      "instance": "c0kgw2",
       "readyState": 1
     },
     {
-      "at": 1787990796968,
+      "at": 1788156170800,
       "event": "message",
       "frame": "time.reply",
-      "instance": "g1qhw2"
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156180799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156180800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156190799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156190800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156200799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156200800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156210799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156210800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156220799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156220800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156230799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156230800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156240799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156240800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156250799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156250801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156260799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156260800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156270799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156270800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156280799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156280800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156290801,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156290802,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156300799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156300800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156310799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156310800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156320799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156320800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156330799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156330800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156340799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156340801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156350800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156350801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156360799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156360801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156370800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156370800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156380800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156380801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156390799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156390800,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156400800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156400801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156410800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156410801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156420800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156420801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156430799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156430801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156440800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156440801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156450800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156450801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156460800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156460801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156470800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156470803,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156480800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156480801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156490800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156490801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156500799,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156500801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156510800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156510801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156520800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156520801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156530800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156530806,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
+    },
+    {
+      "at": 1788156540800,
+      "event": "tick",
+      "instance": "c0kgw2",
+      "readyState": 1
+    },
+    {
+      "at": 1788156540801,
+      "event": "message",
+      "frame": "time.reply",
+      "instance": "c0kgw2"
     }
   ],
   "verdict": {
@@ -501,9 +873,9 @@
     "workerRestarted": false,
     "opens": 1,
     "closes": [],
-    "ticks": 23,
-    "maxTickGapMs": 10000,
+    "ticks": 60,
+    "maxTickGapMs": 10002,
     "lastReadyState": 1,
-    "survivedMs": 229999
+    "survivedMs": 600000
   }
 }

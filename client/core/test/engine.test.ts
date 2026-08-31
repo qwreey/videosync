@@ -625,3 +625,70 @@ describe('the element being replaced under us', () => {
     assert.equal(h.tr.sentOf('hello').at(-1)!.mediaKey, 'yt:two');
   });
 });
+
+describe('applying transitions is serialised', () => {
+  it('a command arriving mid-seek cannot invert an earlier one', async () => {
+    // drain() awaits applyScheduled, which awaits seekTo. A frame arriving in
+    // that window re-arms the timer and a SECOND drain runs concurrently. The
+    // bookkeeping stays monotonic -- lastAppliedSeq is set synchronously -- but
+    // the effects can land out of order, leaving the player paused with an
+    // anchor that says playing and nothing that will ever notice: the corrector
+    // only ever seeks or nudges, it never presses play.
+    //
+    // The adapter makes the overlap concrete rather than theoretical: two
+    // in-flight seekTo calls both resolve on the same `seeked` event.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+
+    const gate: { release: (() => void) | null } = { release: null };
+    const original = h.player.seekTo.bind(h.player);
+    h.player.seekTo = (pos: number) => {
+      if (gate.release) return original(pos);
+      return new Promise<void>((res) => {
+        gate.release = () => { void original(pos).then(res); };
+      });
+    };
+
+    const when1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when: when1, emittedAt: when1,
+      anchor: { positionMs: 500_000, atServerMs: when1, paused: true, mediaKey: 'yt:abc' },
+      by: 'other', kind: 'pause',
+    });
+    await h.vt.advance(50);          // seq 1 is now parked inside seekTo
+
+    const when2 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 2, when: when2, emittedAt: when2,
+      anchor: { positionMs: 500_000, atServerMs: when2, paused: false, mediaKey: 'yt:abc' },
+      by: 'other', kind: 'play',
+    });
+    await h.vt.advance(200);
+    gate.release?.();                // seq 1 finally completes
+    await h.vt.advance(500);
+
+    assert.equal(h.engine.appliedSeq, 2);
+    assert.equal(h.engine.currentAnchor.paused, false);
+    assert.equal(h.player.paused, false,
+      'the player is paused while the room plays, and nothing in the design will ever press play');
+  });
+});
+
+describe('going absent', () => {
+  it('hands the playback rate back before it stops being judged', async () => {
+    // A member the server has stopped judging keeps whatever rate the servo
+    // last set -- including onto whatever they navigate to next, because a site
+    // that reuses its <video> keeps its playbackRate. Watching an unrelated
+    // episode at 1.05x forever, with nothing that will ever notice.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    h.tr.deliver({ t: 'correct', mode: 'nudge', rate: 1.05, when: h.vt.now + OFFSET });
+    await h.vt.advance(300);
+    assert.equal(h.player.rate, 1.05);
+
+    h.engine.setLocalMediaKey('yt:somewhere-else');
+    await h.vt.advance(1200);
+    assert.equal(h.player.rate, 1, 'left the player running fast on media the room is not watching');
+    assert.equal(h.tr.sentOf('hb').at(-1)!.suspended, true);
+  });
+});

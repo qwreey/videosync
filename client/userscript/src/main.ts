@@ -12,6 +12,22 @@ import { WebSocketTransport } from '@videosync/core/engine/transport.ts';
 import { load, save } from './gm.ts';
 
 /**
+ * Is this hostname in a private address space?
+ *
+ * Not exhaustive and does not need to be -- it exists to catch the common
+ * self-hosting mistake early and say why, not to be a security boundary. A
+ * name that resolves privately but does not look private will still fail, just
+ * with the browser's silence instead of ours.
+ */
+function isPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === '::1' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  return h === '0.0.0.0';
+}
+
+/**
  * Why this server is unreachable from this page, if it is.
  *
  * Measured (docs/BROWSER-FINDINGS.md §8): from a page on a public origin a
@@ -28,12 +44,11 @@ import { load, save } from './gm.ts';
 function unreachable(serverUrl: string): string | null {
   let u: URL;
   try { u = new URL(serverUrl); } catch { return null; }
-  const pageIsLocal = location.protocol === 'http:'
-    || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  const targetIsPrivate =
-    /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|169\.254\.|\[?::1)/.test(u.hostname)
-    || /^172\.(1[6-9]|2\d|3[01])\./.test(u.hostname);
-  if (!pageIsLocal && targetIsPrivate) {
+  // The block keys off the page's ADDRESS SPACE, not its scheme: an http page
+  // on a public host is still public, and Chrome still refuses. Using the
+  // scheme as a proxy would let exactly the case this function exists to catch
+  // -- an http OTT site pointed at a LAN server -- straight through.
+  if (!isPrivateHost(location.hostname) && isPrivateHost(u.hostname)) {
     return '브라우저가 이 페이지에서 로컬/사설 주소로 나가는 요청을 아예 막아요 (스킴과 무관해요). ' +
       '서버를 공개 주소 + 실제 인증서로 두거나, 터널을 쓰거나, 확장 프로그램 쪽을 쓰세요 — ' +
       '확장의 서비스 워커는 이 제한을 받지 않아요.';
