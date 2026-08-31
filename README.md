@@ -100,4 +100,11 @@ came out the other way round.
 
 ## Licence
 
-MIT.
+**Not chosen yet — this needs a decision.** There is no `LICENSE` file, and
+without one the default is "all rights reserved", which is probably not what a
+self-hostable tool wants.
+
+One place already asserts an answer: `client/userscript/meta.txt` carries
+`@license MIT`, because a userscript metadata block conventionally has that
+field and it was filled in while writing the header. That was not a considered
+choice. Either add the matching `LICENSE` file or change that line.

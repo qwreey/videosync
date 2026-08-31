@@ -209,6 +209,10 @@ certificate, or a tunnel that gives you one:
   `GATE_TIMEOUT`. The common case is a friend joining and someone pressing play, so this is a real
   trade and not an oversight — if it turns out to matter, the fix is a short "joined, not yet
   heard from" grace state rather than treating silence as unready.
+- **No licence has been chosen.** There is no `LICENSE` file, so the default is "all rights
+  reserved" — probably not the intent for a self-hostable tool. `client/userscript/meta.txt`
+  already declares `@license MIT` because a userscript metadata block conventionally has that
+  field; that was filled in while writing the header, not decided. Needs the user.
 - **`hub` has no persistence and no clustering.** Deliberate (D2): one process, in-memory, idle
   expiry. Two videosyncd processes do not share rooms.
 
