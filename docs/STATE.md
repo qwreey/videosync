@@ -44,7 +44,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 63 unit tests, plus 10 end-to-end tests that drive real engines over real WebSockets
+  build step. 63 unit tests, plus 11 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`).
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
 - `client/extension` — the Chrome MV3 build (`npm run build` → `dist/`, load unpacked).
@@ -206,6 +206,15 @@ certificate, or a tunnel that gives you one:
   interface or not at all.
 
 ## Open questions that block things
+
+- **Is the 500 ms `CMD_DELAY` floor right?** Raised by the user after the first live session:
+  with two or more members, whoever presses play or pause has their own picture moved by the whole
+  delay when the transition lands (`PROTOCOL.md` §3 calls this out as the price of scheduling).
+  On a fast link `2 * p95_ping` is well under the floor, so the floor alone sets the size of that
+  jump. It is a *chosen* safety margin, not a measured one (SYNTHESIS §2 amendment fixed the
+  ceiling and the percentile, not the floor). Lowering it trades simultaneity for responsiveness
+  and needs a decision; the solo case is already fixed (POC-FINDINGS §40b) and does not depend on
+  the answer.
 
 - ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube; still open on Laftel.** hls.js held 1.1
   exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.99 s of media in 10 s of

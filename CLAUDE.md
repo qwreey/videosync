@@ -100,6 +100,15 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **A `hello` never changes room state.** Only the first member's `mediaKey` names the media, and
   only while the room is empty. Any later change is a `media` command — it takes a `seq` and
   reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.
+- **Nothing may be judged between a command's apply and its `when`.** The anchor moves the instant
+  a command applies; every player stays in the state it is leaving until `when`. For that whole
+  `CMD_DELAY` window every member honestly reports a residual of up to the full delay, and the
+  corrector reads it as error — issuing a "free seek" that yanks the room backwards right before
+  the transition it already had scheduled. `lastCmdWhen` guards this (POC-FINDINGS §40a). The
+  stale-resend guard was already built on exactly this fact and was one guard short.
+- **A room of one schedules against nobody.** `CMD_DELAY` buys simultaneity between members; with
+  one member the whole delay is spent making that member's own gesture wrong. `CmdDelay()` returns
+  0 below two members (§40b).
 - **In-buffer seeks are ~free; out-of-buffer seeks cost a segment fetch and rebuffer.** The choice
   is about price, not about the size of the error.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**

@@ -897,3 +897,79 @@ browser: **17 nudges to one member in a 20 s session**, each firing a
 client already holds (within 0.001, re-stated every 5 s in case the
 unacknowledged `correct` that set it was lost) took the same session to **4 and
 5** with the two players still 20 ms apart.
+
+## 40. Round 11 — the room judged everybody during the window it told them to wait
+
+Found from a live session, not from the harness: alone in a room, pressing play
+or pause moved the picture by the whole `CMD_DELAY`. Two separate causes, and
+only one of them was the obvious one.
+
+### 40a. Nothing may be judged between a command's apply and its `when`
+
+`r.anchor` changes the instant a command is applied, but every player stays in
+the state it is leaving until `when`. For that whole window each member honestly
+reports a residual of up to the full `CMD_DELAY`, and the corrector read it as
+error.
+
+Measured directly against `room.Room` — two members, `RTT 1200 ms` so
+`CMD_DELAY` sits at its 2 s ceiling, a `play` issued at 600 s, then an honest
+report one second later:
+
+```
+CmdDelay=2000
+anchor after play: pos=600000 paused=false when=12000
+expected(at=11000) = 599000     reports say 600000, so residual = +1000
+-> Correct{Mode:seek Why:"free seek"}   x2
+```
+
+Both members are seek-corrected **one second backwards, one second before the
+transition they already had scheduled**. The gate for it is `targetBuffered`,
+which any member who has been playing satisfies — the buffer extends behind
+them. So the room lurches back and then transitions.
+
+This is the same fact the stale-resend guard was already built on ("a member
+that has not applied a command that is not due yet is early, not wrong"), one
+guard short of being applied to judgement as well.
+
+Deferring judgement while `now < lastCmdWhen`, across the eleven scenarios,
+`servo` only (`anchorErr` / `p95`, ms):
+
+| scenario | before | after |
+|---|---|---|
+| asymmetry+cmds | 294 / 593 | 295 / 597 |
+| tab-suspension | 30 / 35 | 30 / 40 |
+| reconnect | 257 / 68 | **249 / 50** |
+| late-join | 12 / 18 | **10 / 18** |
+| slow-to-buffer | 14 / 20 | **0 / 0** |
+| command-storm | 22 / 35 | **20 / 38** |
+
+Better or unchanged on alignment everywhere, `slow-to-buffer` to zero, no new
+out-of-buffer seeks and no BAD rows. It costs a little more time at a corrected
+rate (`command-storm` 273 → 352 ms, `asymmetry+cmds` 84 → 121 ms): corrections
+the seek used to take are now left to the servo, which is the cheaper of the
+two.
+
+### 40b. A room of one was scheduling against nobody
+
+`CMD_DELAY` buys simultaneity between members. With one member there are none,
+and the whole delay is spent making that member's own gesture wrong: the anchor
+transitions `CMD_DELAY` after the press and the player is then moved to meet it.
+
+End to end against a real `videosyncd`, one member, on the 500 ms floor:
+
+| | before | after |
+|---|---|---|
+| pause at 103.20 s | picture jumps to **103.70 s** | stays at 103.23 s |
+| then press play | runs to 104.31 s, snaps back to **103.80 s** | monotonic, no rewind |
+
+`CmdDelay()` now returns 0 for a room of one. The clamp is unchanged for
+everyone else and still has its test.
+
+### What this does NOT fix
+
+With two or more members the originator of a play/pause is still moved by
+`CMD_DELAY` when the transition lands — that is `PROTOCOL.md`'s "your own
+gesture landing `CMD_DELAY` ahead", and it is the price of scheduling. The
+floor of 500 ms is what sets its size on a fast link, and the floor is a
+*chosen* safety margin, not a measured one (SYNTHESIS §2 amendment). Lowering
+it is a live option and needs a decision, not a patch.

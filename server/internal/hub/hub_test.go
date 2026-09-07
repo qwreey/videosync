@@ -210,15 +210,35 @@ func TestSenderIsAckedWithTheSameWhenEveryoneElseGets(t *testing.T) {
 
 func TestCommandDelayIsClampedEvenWithNoPingData(t *testing.T) {
 	// CMD_DELAY = clamp(2*p95_ping, 500, 2000). A brand-new room has no ping
-	// samples at all; the floor is what makes that safe.
+	// samples at all; the floor is what makes that safe. Two members, because
+	// a room of one schedules nothing -- see the test below.
 	f := start(t, nil)
 	id, secret := f.createRoom("yt:abc")
 	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
 	a.send(room.Cmd{ReqID: "r1", Kind: "play"})
 	ack := a.await("ack")
 	lead := num(ack, "when") - num(ack, "emittedAt")
 	if lead < 500 || lead > 2000 {
 		t.Fatalf("command lead time %v ms, want it clamped to [500, 2000]", lead)
+	}
+	_ = b
+}
+
+func TestASoloRoomSchedulesNothing(t *testing.T) {
+	// The delay buys simultaneity between members. Alone there are none, and
+	// it is spent entirely on making your own gesture wrong: the anchor moves
+	// CMD_DELAY after you press and your player is dragged to meet it. Alone
+	// on the 500 ms floor that was measured end to end as pausing at 103.20 s
+	// and landing at 103.70 s.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	a.send(room.Cmd{ReqID: "r1", Kind: "play"})
+	ack := a.await("ack")
+	if lead := num(ack, "when") - num(ack, "emittedAt"); lead != 0 {
+		t.Fatalf("lead time %v ms for a room of one; nobody is on the other end of it", lead)
 	}
 }
 

@@ -126,6 +126,7 @@ type Room struct {
 	GatesWaived      int // members dropped from the gate by GATE_TIMEOUT
 	NudgesSuppressed int // rate commands the client was already holding
 	CmdsHeld         int // commands the gate held before applying
+	JudgingDeferred  int // reports not judged because a command was not due yet
 	GateHoldMs       int64
 
 	// GateDisabled turns the hold off, as a control: the gate is still
@@ -252,6 +253,16 @@ func (r *Room) Broadcast(except string, m Msg) {
 // CmdDelay is clamp(2*p95_ping, 500, 2000). Capped because there is no host:
 // one bad connection must not make every pause in the room sluggish.
 func (r *Room) CmdDelay() int64 {
+	// Alone, there is nobody to be simultaneous with, and the delay is pure
+	// latency imposed on your own gesture: the anchor transitions CMD_DELAY
+	// after you press, and your player is then moved to meet it -- a visible
+	// jump of the whole delay, in whichever direction you were going. Measured
+	// end to end, alone in a room on the 500 ms floor: pausing at 103.20 s put
+	// the player at 103.70 s, and pressing play then pulled it from 104.31 s
+	// back to 103.80 s. Neither jump synchronises anything with anybody.
+	if len(r.ids) <= 1 {
+		return 0
+	}
 	vals := make([]int64, 0, len(r.ids))
 	for _, id := range r.ids {
 		if m := r.members[id]; m.hasRTT {
@@ -414,6 +425,27 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		r.StaleResends++
 		r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,
 			Anchor: r.anchor, By: "server", Kind: "resync"})
+		return
+	}
+
+	// Nothing may be judged between a command's apply and its `when`.
+	//
+	// `r.anchor` changes the moment a command is applied, but every player is
+	// still in the state it is leaving until `when` -- so for the whole
+	// CMD_DELAY window every member honestly reports a residual of up to the
+	// full delay, and the corrector reads that as error. Measured: a `play`
+	// from 600 s with a 2 s delay issues a "free seek" to EVERY member one
+	// second before the transition they already had scheduled, so the room
+	// lurches backwards and then transitions. Any member whose buffer extends
+	// behind them -- which is every member who has been playing -- qualifies
+	// for that seek.
+	//
+	// This is the same reasoning the stale-resend guard above is built on: a
+	// member that has not applied a command that is not due yet is early, not
+	// wrong. Bookkeeping above still runs, so the readiness gate keeps working
+	// through the window; only judgement is deferred.
+	if now < r.lastCmdWhen {
+		r.JudgingDeferred++
 		return
 	}
 

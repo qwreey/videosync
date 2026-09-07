@@ -369,6 +369,49 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     }
   });
 
+  // What the user actually feels, alone in a room: their own play/pause must
+  // not move the picture. It used to move it by the whole CMD_DELAY -- pausing
+  // at 103.20 s landed the player at 103.70 s, and pressing play ran to
+  // 104.31 s and was then pulled back to 103.80 s. Both were the scheduled
+  // transition doing its job against an anchor placed CMD_DELAY in the future,
+  // for the benefit of nobody: the room had one member.
+  it('does not move the picture when the only member pauses and plays', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
+    try {
+      await joined(a);
+      await waitFor(() => a.engine.appliedSeq >= 2, 6000, 'the creator to seed the room');
+      await sleep(3000); // let the servo settle
+
+      // The USER pauses on the site's own player: it stops at once, and only
+      // then does the detector notice and send the command.
+      const atPause = a.player.readState().positionS;
+      await a.player.pause();
+      await sleep(2500); // longer than the old CMD_DELAY floor
+      const afterPause = a.player.readState().positionS;
+      assert.ok(Math.abs(afterPause - atPause) < 0.1,
+        `paused at ${atPause.toFixed(2)}s and the picture moved to ${afterPause.toFixed(2)}s`);
+
+      // And play must not rewind. Sampled throughout, because the jump was a
+      // single backward step in the middle of otherwise correct playback --
+      // comparing only the endpoints would not have seen it.
+      await a.player.play();
+      let prev = a.player.readState().positionS;
+      let worst = 0;
+      for (let i = 0; i < 25; i++) {
+        await sleep(100);
+        const now = a.player.readState().positionS;
+        worst = Math.min(worst, now - prev);
+        prev = now;
+      }
+      assert.ok(worst > -0.1, `the picture jumped back ${(-worst).toFixed(2)}s after pressing play`);
+      assert.equal(a.engine.stats.correctionsSeek, 0, 'the room seek-corrected its only member');
+    } finally {
+      a.engine.stop();
+    }
+  });
+
   // A joiner is NOT a creator: the anchor is truth and they must conform to it,
   // however loudly their own player disagrees.
   it('does not let a joining member seed a room that already has one', async function () {
