@@ -17,7 +17,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **partly done in the field** — BROWSER-FINDINGS §12; `playbackRate` still unmeasured |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
-| Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (11/11) |
+| Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (12/12) |
+| Observability for a live session | **built and browser-validated** — `VideoSync.dump()`, `videosyncd -verbose` |
 
 ## What exists and works
 
@@ -37,15 +38,17 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   idle expiry, CORS, the HTTP surface. 40 integration tests that assert **against the wire**,
   because the simulation's tests all passed while the `ack`-has-no-`when` bug was present.
 - `server/cmd/videosyncd` — the binary. `mise run server`. `POST /api/rooms`, `GET /ws`,
-  `GET /healthz`; `-tls-cert`/`-tls-key` for a real deployment. Three tests run the actual
+  `GET /healthz`; `-tls-cert`/`-tls-key` for a real deployment; `-verbose` logs every frame in and
+  out plus joins and leaves, which is how a local agent reads the server half of a live session. Three tests run the actual
   binary and ask whether it answers — a refactor once dropped `ListenAndServe` from the
   plaintext path and every handler-level test still passed.
 - `client/core` — everything both shims share: `Html5Adapter`, `SeekDetector`, `ServerClock`,
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 63 unit tests, plus 12 end-to-end tests that drive real engines over real WebSockets
-  against a real `videosyncd` (`mise run test-e2e`).
+  build step. 63 unit tests, plus 13 end-to-end tests that drive real engines over real WebSockets
+  against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
+  250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
 - `client/extension` — the Chrome MV3 build (`npm run build` → `dist/`, load unpacked).
   The service worker is a 1.7 kB frame relay; everything else runs in the content script.
@@ -59,7 +62,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   |---|---|---|
   | `probe-detector.mjs` | the shipping detector against a real `<video>` (`mise run probe`) | 8/8 |
   | `probe-userscript.mjs` | the whole stack, two real browsers | 17/17 |
-  | `probe-extension.mjs` | the same with the extension shim | 11/11 |
+  | `probe-extension.mjs` | the same with the extension shim, `dump()` included | 12/12 |
   | `probe-youtube.mjs` | the real YouTube player | 9/9 |
   | `probe-csp.mjs` | can a page reach a private-address server? | no — §8 |
   | `probe-ext.mjs` | what an MV3 content script may do | §9 |
@@ -106,62 +109,126 @@ server that strips CORS headers would put the permission back.
 
 ## The next task, concretely
 
-**The first live session (2026-08-31, Laftel + extension + tunnel) happened and
-found one real bug, now fixed:** a freshly created room anchors at `paused@0`,
-and the detector reports play-state *transitions* only, so a creator whose video
-was already playing never announced itself — the room fought its own creator
-forever, alone in the room. The creator now seeds the room
-(`adoptLocalStateOnJoin`, e2e-tested with a control). What that session did and
-did not settle about Laftel is BROWSER-FINDINGS §12.
+**Development moved to the user's own machine (2026-09-07)** so that the agent
+and a logged-in browser session are on the same host. Relaying observations by
+hand — read `status()`, expand it in DevTools, copy the fields, paste them —
+was the binding constraint on the last two sessions, and it lost data every
+time. Read "Measuring a live session" below before doing anything else; it
+exists because of that.
 
-Everything that can be validated without your accounts and your browser has
-been. Both remaining items need you, and **the extension makes them much
-easier** than the userscript does — its service worker can reach a server on
-your own machine, so there is no domain, no certificate and no tunnel to arrange
-first (BROWSER-FINDINGS §8, §9).
+### 0. Start here, locally
 
 ```bash
-cd server && go build -o videosyncd ./cmd/videosyncd && ./videosyncd -addr 127.0.0.1:8787
-cd client/extension && npm run build          # -> dist/, then "Load unpacked"
+mise run test          # Go + TS + both shims' typecheck
+mise run test-e2e      # 13 tests, real engines over real sockets against a real videosyncd
+
+cd server && go build -o videosyncd ./cmd/videosyncd
+./videosyncd -addr 127.0.0.1:8787 -verbose -idle-ttl 30m
+
+cd client/extension && npm run build     # -> dist/, then chrome://extensions "Load unpacked"
 ```
+
+Use the **extension**, not the userscript: its service worker can reach a server
+on your own machine, so there is no domain, no certificate and no tunnel to
+arrange (BROWSER-FINDINGS §8, §9). `-idle-ttl 30m` stops the room evaporating
+three minutes after you close a tab mid-experiment.
+
+The panel appears bottom-right on any page in `manifest.json`'s `matches`
+(youtube.com, m.youtube.com, laftel.net). The server URL goes in its first
+field; it is only saved once a join succeeds.
+
+### Measuring a live session
+
+Two halves, and the whole point is that neither needs anybody to read numbers
+aloud.
+
+**Client — `VideoSync.dump()`.** In DevTools pick the **"VideoSync"** context in
+the console's context dropdown (the API lives in the content script's isolated
+world; the page context cannot see it, by design), then:
+
+```js
+copy(VideoSync.dump())      // straight to the clipboard, paste it into a file
+```
+
+One JSON object: status, every `stats` counter, the clock, the current anchor,
+the roster, the player's own state and capabilities, and **the last 250 wire
+frames in both directions**. The trace is always recording — it is not behind a
+flag — because every field bug so far has been one-shot and a trace you have to
+enable first would have missed all of them. Validated in a real browser through
+the real extension (`probe-extension.mjs`, 12/12).
+
+**Server — `-verbose`.** Every frame in and out, plus joins and leaves, on
+stdout, which an agent on the same machine can simply read. Without it the
+server records nothing per connection, so "the client never sent it" and "the
+server dropped it" are indistinguishable — that ambiguity cost a whole round of
+guessing. Note the heartbeat bucket drops excess *silently* while the command
+bucket answers `rate_limited`, so a missing `hb` in the log is not proof of
+anything; a missing `cmd` is.
 
 ### 1. Laftel — the last unmeasured provider
 
 `research/provider-player-control.md` says the player is a plain scriptable
-`<video>` on the strength of one Korean dev blog. Nothing has confirmed it, and
-Laftel is a D1 priority provider.
+`<video>` on the strength of one Korean dev blog. The first live session
+narrowed it but did not close it (BROWSER-FINDINGS §12). Three questions
+remain, in order of how much rests on them. Run each in the "VideoSync" console
+context, and **write the number into `docs/BROWSER-FINDINGS.md`** — not an
+inference from a capability flag.
 
-Open a Laftel episode with the extension loaded and check three things. The
-extension's API lives in the content script's **isolated world**, so in DevTools
-pick the "VideoSync" context in the console's context dropdown first — the page
-context cannot see it, by design.
+1. **Does a programmatic `pause()` stick?** The load-bearing one.
 
-- `VideoSync.mediaKey()` — does it differ per episode? The generic rule is
-  `host:pathname`, which is an assumption for Laftel, not a measurement. If the
-  episode turns out to live in a query parameter,
-  `client/core/src/adapter/mediakey.ts` needs a rule the way YouTube has one.
-- `VideoSync.adapter.setRate(1.1)`, wait 10 s, then
-  `VideoSync.adapter.readState().rate` — does Laftel's player reset it? YouTube
-  does not (§8). If Laftel does, its `supportsPlaybackRateNudge` goes false and
-  the correction law needs a measured seek-only path.
-- `VideoSync.adapter.seekTo(120)` — does a raw `currentTime` write stick, or
-  does the player fight it the way Netflix reportedly does?
-  **Answered in the field: it sticks** (BROWSER-FINDINGS §12).
-- `VideoSync.adapter.pause()` — **does a programmatic pause stick?** Added after
-  the first live session, and it is the load-bearing one. Two mechanisms rest
-  entirely on it: the reconciler (the anchor is truth about pause state, and
-  nothing in the correction table can press pause) and every `media` command,
-  whose anchor deliberately starts paused so the readiness gate decides when the
-  room may start. Both are e2e-tested against a player that honours `pause()`.
-  If Laftel resumes itself, both loop forever and that is a bigger finding than
-  any of the above. Check `VideoSync.engine().stats.reconciles` on the next live
-  run: climbing while the player never actually pauses is the signature.
+   ```js
+   VideoSync.adapter.play(); await new Promise(r => setTimeout(r, 2000));
+   VideoSync.adapter.pause(); await new Promise(r => setTimeout(r, 3000));
+   VideoSync.adapter.readState().paused        // must still be true
+   ```
 
-Then actually watch something with somebody, which is the only test that covers
-ads, mid-session navigation, and a second account.
+   Two mechanisms rest entirely on it: the reconciler (the anchor is truth about
+   pause state, and nothing in the correction table can press pause) and every
+   `media` command, whose anchor deliberately starts paused so the readiness
+   gate decides when the room may start. Both are e2e-tested against a player
+   that honours `pause()`. If Laftel resumes itself, both loop forever, and that
+   is a bigger finding than anything else on this list. The signature during a
+   real session is `VideoSync.engine().stats.reconciles` climbing while the
+   player never actually stops.
 
-Record each as a number in `docs/BROWSER-FINDINGS.md`, not as an inference from
-a capability flag.
+2. **Does Laftel reset `playbackRate`?**
+
+   ```js
+   VideoSync.adapter.setRate(1.1); await new Promise(r => setTimeout(r, 10000));
+   VideoSync.adapter.readState().rate          // 1.1, or has the player taken it back?
+   ```
+
+   Still open. The last session saw nudges being *sent* (`correctionsNudge`
+   climbing), which says nothing about whether the rate was held. If Laftel
+   fights it, `supportsPlaybackRateNudge` goes false and the correction law
+   needs a measured seek-only path.
+
+3. **Does `mediaKey` differ per episode?** Open two episodes and compare
+   `VideoSync.mediaKey()`. The one sample so far was
+   `laftel:/player/45462/93304`, so the ids are in the path and the generic
+   `host:pathname` rule looks right — but two episodes have never been compared
+   side by side. If an episode turns out to live in a query parameter,
+   `client/core/src/adapter/mediakey.ts` is the one place that changes.
+
+### 1b. The `play` jump — needs two people, and only two people
+
+The one substantive design question still open, and **the harness cannot answer
+it**: it applies commands at `when`, so it is insensitive by construction to how
+far ahead `when` is (POC-FINDINGS §40c — a floor sweep of 500/300/200/100 ms
+moved nothing, and that is not evidence).
+
+Pause was fixed properly: it carries no lead and anchors where the pauser
+stopped. **`play` still moves whoever pressed it** by `CMD_DELAY` when the
+transition lands, because everybody has to start moving at the same instant from
+the same position and one of them has to give. On a fast link the 500 ms floor
+alone sets the size of that, and the floor is a chosen safety margin, not a
+measured one (SYNTHESIS §2 amendment fixed the ceiling and the percentile, not
+the floor).
+
+What to measure, with two members in a room: press play, and record how far the
+picture moves. `dump()` from both sides captures it — the `cmd`/`ack` pair in
+the trace carries `when` and `emittedAt`, so the lead is in the data. Then
+decide whether to lower the floor. Do not answer it from the simulation.
 
 ### 2. Tampermonkey itself
 
@@ -280,6 +347,16 @@ incorrectly:
    target's **address**: a public-origin page cannot reach loopback or a private address by *any*
    scheme, so adding TLS to a `localhost` server does not help. Mixed content was an assumption
    that happened to fit data taken only over `http`/`ws`. (`docs/BROWSER-FINDINGS.md` §8.)
+
+## Stats whose meaning changed, so old numbers are not comparable
+
+- **`lateApplies`** now counts only commands that were actually scheduled ahead
+  (`when > emittedAt`). Since some commands deliberately carry no lead, leaving it alone would
+  have made the counter read "every pause is late". Any figure quoted for it before 2026-09-07
+  is on the old definition.
+- **`StaleResends`** dropped sharply for a reason that is not a regression: the resend now waits
+  for the command to have had time to arrive (POC-FINDINGS §40a), so the ones it used to emit
+  against members that were merely mid-flight are gone. `asymmetry+cmds` 18 → 0.
 
 ## Notes on the harness numbers
 

@@ -26,6 +26,10 @@ func main() {
 	idle := flag.Duration("idle-ttl", 3*time.Minute, "delete a room this long after its last member leaves")
 	maxMembers := flag.Int("max-members", 32, "members per room")
 	maxRooms := flag.Int("max-rooms", 10000, "rooms held in memory")
+	verbose := flag.Bool("verbose", false,
+		"log every frame in and out, plus joins and leaves. Off by default; worth having on "+
+			"for a live session, because without it the server records nothing per connection "+
+			"and a frame the client never sent looks exactly like one the server dropped")
 	tlsCert := flag.String("tls-cert", "", "PEM certificate chain; serving https/wss")
 	tlsKey := flag.String("tls-key", "", "PEM private key for -tls-cert")
 	flag.Parse()
@@ -38,6 +42,7 @@ func main() {
 	cfg.IdleTTL = *idle
 	cfg.MaxMembersPerRoom = *maxMembers
 	cfg.MaxRooms = *maxRooms
+	cfg.Verbose = *verbose
 
 	hcfg := hub.DefaultHTTPConfig()
 	if *origins != "" {

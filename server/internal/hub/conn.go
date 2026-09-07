@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"log"
 	"time"
 
 	"github.com/qwreey/videosync/server/internal/room"
@@ -65,6 +66,12 @@ func (c *conn) sendNow(m room.Msg) error {
 	b, err := wire.Encode(m)
 	if err != nil {
 		return err
+	}
+	// `welcome` takes this path rather than the outbox, so a trace that only
+	// covered Live.Send would be missing the one frame that establishes the
+	// session -- the anchor the member starts from.
+	if c.live != nil && c.live.hub.cfg.Verbose {
+		log.Printf("[%s] -> %s %s", c.live.id, c.id, b)
 	}
 	return c.sock.WriteText(b)
 }

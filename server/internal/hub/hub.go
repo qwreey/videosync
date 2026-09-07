@@ -38,6 +38,15 @@ type Config struct {
 	MaxMembersPerRoom int
 	// MaxChatLen truncates rather than refuses, like cytube (320 chars).
 	MaxChatLen int
+
+	// Verbose logs every frame in and out, plus joins and leaves.
+	//
+	// Off by default and worth having on for any live session: without it the
+	// server records nothing per connection, so "the client never sent it" and
+	// "the server dropped it" are indistinguishable from the outside. That
+	// ambiguity cost a whole round of guessing once already. The client half of
+	// the same picture is `VideoSync.dump()`.
+	Verbose bool
 }
 
 func DefaultConfig() Config {

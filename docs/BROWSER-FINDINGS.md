@@ -504,6 +504,23 @@ alone in a room: `cmdsSent: 0`, `expectedMs: 0`, `positionS` sawtoothing between
 `expectedMs` came back `0` rather than `null`, which proves the clock was
 settled and made the diagnosis unambiguous.
 
+## 13. The diagnostic path itself (`probe-extension.mjs`)
+
+`VideoSync.dump()` is what a live session hands back instead of somebody reading
+`status()` aloud, so it is checked in a real browser through the real extension
+shim rather than only in the Node suite: **12/12**, with
+`dump() returns parseable JSON with a live wire trace` reporting 17 traced
+frames in 3870 bytes at the point it is called.
+
+The trace is always on. Every bug this design has produced in the field was
+one-shot — a room that fought its own creator, a pause that jumped — and a trace
+that had to be switched on first would have missed all of them. It is bounded at
+250 frames, asserted in the e2e suite.
+
+The server half is `videosyncd -verbose`, tested through the real binary on real
+stderr, because a diagnostic that silently records nothing is worse than none:
+"the server saw no such frame" would look like evidence.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

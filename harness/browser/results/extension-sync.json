@@ -17,17 +17,22 @@
     {
       "name": "the service worker reached a loopback server the page cannot",
       "ok": true,
-      "detail": "CLBuuP1oJdOHDZvvD02rrA"
+      "detail": "QYSNxABQS2YsB8OBlkkqHA"
     },
     {
       "name": "the relayed clock exchange still settles tightly",
       "ok": true,
-      "detail": "bestRTT 0.6999998092651367 ms through the port, uncertainty ±0.34999990463256836 ms"
+      "detail": "bestRTT 0.5 ms through the port, uncertainty ±0.25 ms"
+    },
+    {
+      "name": "dump() returns parseable JSON with a live wire trace",
+      "ok": true,
+      "detail": "17 traced frames, 3870 bytes"
     },
     {
       "name": "the two players stayed together through the relay",
       "ok": true,
-      "detail": "40 ms apart (sampling skew 1 ms)"
+      "detail": "18 ms apart (sampling skew 1 ms)"
     },
     {
       "name": "a pause reached the other browser without echoing back",
@@ -54,24 +59,24 @@
     }
   ],
   "measurements": {
-    "relayedRttMs": 0.6999998092651367,
-    "relayedUncertaintyMs": 0.34999990463256836,
-    "playbackGapMs": 39.6,
-    "serviceWorkerTarget": "chrome-extension://inkjlckcbdfggjkooolfcdciinnklblb/sw.js",
+    "relayedRttMs": 0.5,
+    "relayedUncertaintyMs": 0.25,
+    "playbackGapMs": 17.6,
+    "serviceWorkerTarget": "chrome-extension://ciegfeopocegcofebpepfcpajgkfdccn/sw.js",
     "reconnectAfterWorkerKill": {
       "before": 0,
       "after": 1
     },
     "stats": {
       "a": {
-        "cmdsSent": 4,
-        "statesApplied": 0,
-        "acksApplied": 4,
-        "correctionsSeek": 1,
-        "correctionsNudge": 4,
+        "cmdsSent": 5,
+        "statesApplied": 1,
+        "acksApplied": 5,
+        "correctionsSeek": 0,
+        "correctionsNudge": 5,
         "nudgesUnsupported": 0,
-        "reportsSent": 11,
-        "timeSamples": 11,
+        "reportsSent": 9,
+        "timeSamples": 10,
         "reconnects": 1,
         "lateApplies": 0,
         "echoesSuppressed": 0,
@@ -84,10 +89,10 @@
       },
       "b": {
         "cmdsSent": 0,
-        "statesApplied": 4,
+        "statesApplied": 5,
         "acksApplied": 0,
         "correctionsSeek": 0,
-        "correctionsNudge": 4,
+        "correctionsNudge": 2,
         "nudgesUnsupported": 0,
         "reportsSent": 8,
         "timeSamples": 6,

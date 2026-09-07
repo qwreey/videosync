@@ -12,7 +12,7 @@ import { SeekDetector } from '../detector/detector.ts';
 import type { DetectorConfig } from '../detector/types.ts';
 import { type Anchor, expectedAt, ServerClock } from './clock.ts';
 import type {
-  CmdKind, HbFrame, MemberInfo, ServerFrame,
+  ClientFrame, CmdKind, HbFrame, MemberInfo, ServerFrame,
 } from './protocol.ts';
 import type { Transport } from './transport.ts';
 
@@ -168,6 +168,25 @@ export interface EngineStats {
   reconciles: number;
 }
 
+/**
+ * One line of the wire trace.
+ *
+ * Kept deliberately small and always on. Every bug this design has produced in
+ * the field was one-shot -- a room that fought its creator, a pause that jumped
+ * -- and a trace you have to switch on first would have missed all of them. The
+ * cost of always recording is a bounded array of small objects.
+ */
+export interface TraceEntry {
+  /** Client-monotonic ms, the same clock `now()` returns. */
+  at: number;
+  dir: 'tx' | 'rx';
+  t: string;
+  /** Whatever of `seq`/`when`/`kind`/`positionMs`/`mode` the frame carried. */
+  detail: Record<string, unknown>;
+}
+
+const TRACE_MAX = 250;
+
 export class SyncEngine {
   readonly cfg: EngineConfig;
   readonly clock = new ServerClock();
@@ -225,6 +244,9 @@ export class SyncEngine {
   /** One-shot: the creator's seed, consumed by the first settled evaluation. */
   private pendingAdopt = false;
 
+  /** The last TRACE_MAX frames in either direction. See `TraceEntry`. */
+  private readonly traceRing: TraceEntry[] = [];
+
   /**
    * Every mutation of the player runs through here, one at a time.
    *
@@ -248,6 +270,30 @@ export class SyncEngine {
    * starts the video playing seconds after the user left the room.
    */
   private epoch = 0;
+
+  /**
+   * The one place a frame leaves this engine, so the trace cannot miss one.
+   *
+   * It lives here rather than in the transport because the two shims have
+   * different transports -- the extension relays through its service worker --
+   * and `dump()` has to mean the same thing in both.
+   */
+  private tx(f: ClientFrame): void {
+    this.record('tx', f.t, f as unknown as Record<string, unknown>);
+    this.d.transport.send(f);
+  }
+
+  private record(dir: 'tx' | 'rx', t: string, f: Record<string, unknown>): void {
+    const detail: Record<string, unknown> = {};
+    for (const k of ['seq', 'when', 'kind', 'positionMs', 'mode', 'rate', 'code', 'reqId'] as const) {
+      if (f[k] !== undefined) detail[k] = f[k];
+    }
+    // The anchor is the thing you actually want when reading a trace back.
+    const a = f['anchor'] as Anchor | undefined;
+    if (a) detail['anchor'] = `${a.positionMs}${a.paused ? 'P' : '-'}@${a.atServerMs}`;
+    this.traceRing.push({ at: Math.round(this.d.now()), dir, t, detail });
+    if (this.traceRing.length > TRACE_MAX) this.traceRing.shift();
+  }
 
   private serialise(fn: () => Promise<void>): Promise<void> {
     const next = this.applyChain.then(fn).catch(() => { /* one failure must not wedge the chain */ });
@@ -365,7 +411,7 @@ export class SyncEngine {
   private onOpen(): void {
     this.reconnectAttempt = 0;
     this.setStatus('joining');
-    this.d.transport.send({
+    this.tx({
       t: 'hello', room: this.cfg.room, secret: this.cfg.secret,
       name: this.cfg.name,
       // The CURRENT media, not the one we joined with: a reconnect after a
@@ -425,7 +471,7 @@ export class SyncEngine {
     // the session stayed joined, the clock never settled, and therefore no
     // correction ever fired. Found by the end-to-end test; nothing that mocks
     // one side of the wire could have found it.
-    this.d.transport.send({ t: 'time', t0: Math.round(this.d.now()) });
+    this.tx({ t: 'time', t0: Math.round(this.d.now()) });
   }
 
   private timeLoop(): void {
@@ -438,6 +484,7 @@ export class SyncEngine {
   // --- inbound --------------------------------------------------------------
 
   private onFrame(f: ServerFrame): void {
+    this.record('rx', f.t, f as unknown as Record<string, unknown>);
     switch (f.t) {
       case 'welcome':
         this.selfId = f.you;
@@ -828,7 +875,7 @@ export class SyncEngine {
       // them and do not seek them in circles.
       suspended: absent,
     };
-    this.d.transport.send(hb);
+    this.tx(hb);
     this.stats.reportsSent++;
     this.lastReportAt = now;
     if (dueHeartbeat) this.lastHbAt = now;
@@ -855,7 +902,7 @@ export class SyncEngine {
 
   private send(kind: CmdKind, positionMs: number, mediaKey?: string): string {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;
-    this.d.transport.send({
+    this.tx({
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),
       ...(mediaKey === undefined ? {} : { mediaKey }),
     });
@@ -870,8 +917,8 @@ export class SyncEngine {
   setMedia(mediaKey: string, positionMs = 0): string {
     return this.send('media', positionMs, mediaKey);
   }
-  chat(text: string): void { this.d.transport.send({ t: 'chat', text }); }
-  rotateSecret(): void { this.d.transport.send({ t: 'rotate' }); }
+  chat(text: string): void { this.tx({ t: 'chat', text }); }
+  rotateSecret(): void { this.tx({ t: 'rotate' }); }
 
   // --- introspection --------------------------------------------------------
 
@@ -884,6 +931,9 @@ export class SyncEngine {
   get mediaKey(): string { return this.localMediaKey; }
   /** True when this member is watching what the room is watching. */
   get followingRoom(): boolean { return this.onRoomMedia(); }
+  /** The wire trace, oldest first. See `TraceEntry`. */
+  get trace(): readonly TraceEntry[] { return this.traceRing; }
+
   /** Where the room should be right now, or null before the clock settles. */
   expectedMs(): number | null {
     return this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;

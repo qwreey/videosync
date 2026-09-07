@@ -1,12 +1,14 @@
 package main_test
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -15,8 +17,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/qwreey/videosync/server/internal/ws"
 )
 
 // The binary itself, run as a process.
@@ -78,6 +83,52 @@ func TestBinaryServesPlaintext(t *testing.T) {
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 	waitHealthy(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/healthz", port), cmd)
+}
+
+func TestVerboseActuallyLogsAFrame(t *testing.T) {
+	// A diagnostic that silently records nothing is worse than none: it makes
+	// "the server saw no such frame" look like evidence. So the flag is tested
+	// through the real binary, on real stderr.
+	bin := build(t)
+	port := freePort(t)
+	cmd := exec.Command(bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port), "-verbose")
+	var logs bytes.Buffer
+	cmd.Stderr = &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitHealthy(t, http.DefaultClient, base+"/healthz", cmd)
+
+	resp, err := http.Post(base+"/api/rooms", "application/json",
+		strings.NewReader(`{"mediaKey":"yt:abc"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var made struct{ RoomID, Secret string }
+	json.NewDecoder(resp.Body).Decode(&made)
+	resp.Body.Close()
+
+	c, err := ws.Dial(fmt.Sprintf("ws://127.0.0.1:%d/ws", port),
+		http.Header{"Origin": []string{"http://localhost"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close(ws.CloseNormal, "")
+	hello := fmt.Sprintf(`{"t":"hello","room":%q,"secret":%q,"name":"a","mediaKey":"yt:abc"}`,
+		made.RoomID, made.Secret)
+	if err := c.WriteText([]byte(hello)); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logs.String(), "join ") && strings.Contains(logs.String(), "-> ") {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("-verbose logged neither a join nor an outbound frame; got:\n%s", logs.String())
 }
 
 func TestBinaryServesTLS(t *testing.T) {

@@ -55,6 +55,15 @@ export interface VideoSyncApi {
   createRoom(serverUrl: string, name: string): Promise<{ roomId: string; secret: string }>;
   join(serverUrl: string, roomId: string, secret: string, name: string): void;
   leave(): void;
+  /**
+   * Everything worth knowing about this session, in one object, as JSON.
+   *
+   * Exists because relaying a diagnosis by hand -- read `status()`, expand it,
+   * copy the fields, paste them -- is lossy and slow, and every bug this design
+   * has produced in the field was one-shot. The wire trace is always recording,
+   * so this can be called AFTER the thing went wrong.
+   */
+  dump(): string;
   status(): {
     state: string; selfId: string; seq: number; blocked: boolean;
     positionS: number; paused: boolean; readyState: number;
@@ -288,6 +297,41 @@ export function start(p: Platform): App {
     createRoom: (serverUrl, name) => createRoom(serverUrl, name),
     join: (serverUrl, roomId, secret, name) => { join(serverUrl, roomId, secret, name); },
     leave,
+    dump() {
+      const s = adapter.readState();
+      return JSON.stringify({
+        at: new Date().toISOString(),
+        url: location.href,
+        mediaKey,
+        roomMediaKey,
+        engine: engine ? {
+          state: engine.state,
+          selfId: engine.id,
+          appliedSeq: engine.appliedSeq,
+          autoplayBlocked: engine.blocked,
+          followingRoom: engine.followingRoom,
+          expectedMs: engine.expectedMs(),
+          anchor: engine.currentAnchor,
+          clock: {
+            ready: engine.clock.ready,
+            rttMs: engine.clock.rttMs,
+            uncertaintyMs: engine.clock.uncertaintyMs,
+            samples: engine.clock.sampleCount,
+          },
+          stats: engine.stats,
+          members: engine.roster,
+          waitingOn,
+          trace: engine.trace,
+        } : null,
+        player: {
+          adapter: adapter.current?.id ?? null,
+          capabilities: adapter.capabilities,
+          positionS: s.positionS, paused: s.paused, rate: s.rate,
+          readyState: s.readyState, muted: s.muted,
+          bufferedAheadS: s.bufferedAheadS, bufferedBehindS: s.bufferedBehindS,
+        },
+      }, null, 2);
+    },
     status() {
       const s = adapter.readState();
       return {

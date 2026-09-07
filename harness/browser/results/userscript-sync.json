@@ -17,17 +17,17 @@
     {
       "name": "playbackRate is honoured and holds on a real MSE player",
       "ok": true,
-      "detail": "rate stayed 1.1, advanced 5.48s in 5s (implied 1.096x)"
+      "detail": "rate stayed 1.1, advanced 5.47s in 5s (implied 1.094x)"
     },
     {
       "name": "two browsers joined one room",
       "ok": true,
-      "detail": "CfGxjk0x8CZEYl01gWpFDg"
+      "detail": "WE-QxzqTs5RIj7D3SFn_9g"
     },
     {
       "name": "the clock settled from real round trips",
       "ok": true,
-      "detail": "bestRTT 0.39999961853027344 ms"
+      "detail": "bestRTT 0.20000076293945312 ms"
     },
     {
       "name": "a play by one member started both",
@@ -36,12 +36,12 @@
     {
       "name": "the two players stayed together",
       "ok": true,
-      "detail": "40 ms apart (sampling skew 1 ms), a=23.980s b=23.939s"
+      "detail": "4 ms apart (sampling skew 1 ms), a=23.931s b=23.935s"
     },
     {
       "name": "the sender scheduled its own command against the ack",
       "ok": true,
-      "detail": "2 acks applied"
+      "detail": "3 acks applied"
     },
     {
       "name": "a pause on the element itself reached the other browser",
@@ -55,7 +55,7 @@
     {
       "name": "a scrubber drag on one element moved the other",
       "ok": true,
-      "detail": "b at 60.00s rs=4 seq=4 (a sent 4 commands)"
+      "detail": "b at 60.00s rs=4 seq=5 (a sent 5 commands)"
     },
     {
       "name": "the room saw the buffering member",
@@ -78,7 +78,7 @@
     {
       "name": "no correction storm",
       "ok": true,
-      "detail": "seeks a=2 b=1, nudges a=10 b=6"
+      "detail": "seeks a=0 b=1, nudges a=6 b=3"
     }
   ],
   "measurements": {
@@ -86,22 +86,22 @@
       "requested": 1.1,
       "held": 1.1,
       "windowMs": 5000,
-      "advancedS": 5.478,
-      "impliedRate": 1.096
+      "advancedS": 5.468,
+      "impliedRate": 1.094
     },
-    "loopbackRttMs": 0.39999961853027344,
-    "playbackGapMs": 40.4,
+    "loopbackRttMs": 0.20000076293945312,
+    "playbackGapMs": 3.6,
     "samplingSkewMs": 1,
-    "senderAcks": 2,
+    "senderAcks": 3,
     "stats": {
       "a": {
-        "cmdsSent": 5,
-        "statesApplied": 0,
-        "acksApplied": 5,
-        "correctionsSeek": 2,
-        "correctionsNudge": 10,
+        "cmdsSent": 6,
+        "statesApplied": 3,
+        "acksApplied": 6,
+        "correctionsSeek": 0,
+        "correctionsNudge": 6,
         "nudgesUnsupported": 0,
-        "reportsSent": 23,
+        "reportsSent": 20,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,
@@ -115,12 +115,12 @@
       },
       "b": {
         "cmdsSent": 0,
-        "statesApplied": 5,
+        "statesApplied": 6,
         "acksApplied": 0,
         "correctionsSeek": 1,
-        "correctionsNudge": 6,
+        "correctionsNudge": 3,
         "nudgesUnsupported": 0,
-        "reportsSent": 51,
+        "reportsSent": 49,
         "timeSamples": 8,
         "reconnects": 0,
         "lateApplies": 0,

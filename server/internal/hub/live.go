@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"log"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -48,6 +49,9 @@ func (l *Live) Send(clientID string, m room.Msg) {
 	if err != nil {
 		return
 	}
+	if l.hub.cfg.Verbose {
+		log.Printf("[%s] -> %s %s", l.id, clientID, b)
+	}
 	select {
 	case c.out <- b:
 	default:
@@ -68,6 +72,10 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	now := l.hub.clock.NowMs()
 	l.conns[c.id] = c
 	l.room.Join(now, c.id, h.Name)
+	if l.hub.cfg.Verbose {
+		log.Printf("[%s] join %s name=%q mediaKey=%q members=%d",
+			l.id, c.id, h.Name, h.MediaKey, len(l.conns))
+	}
 
 	var extra []room.Msg
 	a := l.room.Anchor()
@@ -111,6 +119,9 @@ func (l *Live) leave(c *conn) {
 	delete(l.conns, c.id)
 	now := l.hub.clock.NowMs()
 	l.room.Leave(now, c.id)
+	if l.hub.cfg.Verbose {
+		log.Printf("[%s] leave %s members=%d", l.id, c.id, len(l.conns))
+	}
 	if len(l.conns) == 0 {
 		l.emptySinceMs = now
 		return
@@ -123,6 +134,12 @@ func (l *Live) handle(c *conn, m room.Msg) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.hub.clock.NowMs()
+	if l.hub.cfg.Verbose {
+		// Logged before the rate limiters, deliberately: a frame the server
+		// silently dropped is exactly the case this exists to make visible.
+		// The heartbeat bucket drops without telling anybody.
+		log.Printf("[%s] <- %s %T %+v", l.id, c.id, m, m)
+	}
 	switch v := m.(type) {
 	case room.TimeReq:
 		// Not rate limited by the command bucket: clock sync is 5 s plus a

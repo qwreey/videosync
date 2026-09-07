@@ -133,6 +133,23 @@ try {
   check('the relayed clock exchange still settles tightly', rtt >= 0 && rtt < 50,
     `bestRTT ${rtt} ms through the port, uncertainty ±${unc} ms`);
 
+  // --- the diagnostic a live session actually hands back ---------------------
+  //
+  // `dump()` is what replaces reading `status()` aloud, so it has to work in a
+  // real browser through a real shim, not only in the Node e2e suite. If it
+  // returned something unparseable or empty, the first anyone would know is
+  // during the session it was meant to rescue.
+  const dumped = await ev(a, 'window.VideoSync.dump()');
+  let parsed = null;
+  try {
+    parsed = JSON.parse(dumped);
+  } catch { /* left null, reported below */ }
+  check('dump() returns parseable JSON with a live wire trace',
+    !!parsed && Array.isArray(parsed.engine?.trace) && parsed.engine.trace.length > 0 &&
+      parsed.engine.trace.some((e) => e.dir === 'rx' && e.t === 'welcome') &&
+      typeof parsed.player?.positionS === 'number',
+    parsed ? `${parsed.engine.trace.length} traced frames, ${dumped.length} bytes` : 'unparseable');
+
   // --- sync, over the relay --------------------------------------------------
   await ev(a, 'window.VideoSync.engine().seek(20)');
   await a.s.waitFor('window.VideoSync.status().seq >= 1', { isolated: true });

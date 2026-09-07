@@ -448,6 +448,39 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     }
   });
 
+  // The trace is what a live session hands back instead of retyping `status()`
+  // by hand, and it is always on because every field bug so far was one-shot.
+  // A trace that silently recorded nothing would be worse than none: "the
+  // client never sent it" would look like evidence.
+  it('records both directions of the wire, always, and stays bounded', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a');
+    try {
+      await joined(a);
+      a.engine.seek(42);
+      await waitFor(() => a.engine.appliedSeq >= 1, 4000, 'the seek to apply');
+
+      const kinds = (dir: string) =>
+        new Set(a.engine.trace.filter((e) => e.dir === dir).map((e) => e.t));
+      await waitFor(() => kinds('tx').has('hb'), 3000, 'a heartbeat to be traced');
+      assert.ok(kinds('tx').has('hello'), 'no hello in the trace');
+      assert.ok(kinds('tx').has('cmd'), 'no outbound command in the trace');
+      assert.ok(kinds('rx').has('welcome'), 'no welcome in the trace');
+      assert.ok(kinds('rx').has('ack'), 'no ack in the trace');
+
+      const ack = a.engine.trace.find((e) => e.dir === 'rx' && e.t === 'ack');
+      assert.ok(ack?.detail['anchor'], 'the ack recorded no anchor -- the useful half');
+      assert.equal(ack?.detail['kind'], 'seek');
+
+      // Bounded: a session lasting hours must not grow this without limit.
+      for (let i = 0; i < 400; i++) a.engine.chat(`x${i}`);
+      assert.ok(a.engine.trace.length <= 250, `trace grew to ${a.engine.trace.length}`);
+    } finally {
+      a.engine.stop();
+    }
+  });
+
   // A joiner is NOT a creator: the anchor is truth and they must conform to it,
   // however loudly their own player disagrees.
   it('does not let a joining member seed a room that already has one', async function () {
