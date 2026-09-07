@@ -94,6 +94,30 @@ everyone else's — larger than the clock bias we spend so much effort on, and f
 connection must not make every pause in the room sluggish (§2 amendment). A member slower than the
 cap is handled by the readiness gate, not by stretching the delay.
 
+### Amendment: a command that leaves the room STOPPED carries no lead, and `pause` anchors where the pauser stopped
+
+Simultaneity is only worth paying for while the clock is running. Once every member is stopped at
+the same position there is nothing left to happen at the same instant, so `when = emittedAt` for
+`pause`, for `media`, and for a `seek` that finds the room paused. `CMD_DELAY` applies to `play`
+and to a `seek` during playback, where the instant is the whole point.
+
+`pause` also **anchors at the `positionMs` the sender reported**, rather than advancing the anchor
+to where playback would have reached at `when`. The pause and the position it happened at are the
+thing being synchronised.
+
+What the old rule cost: the person pressing pause stopped on a frame, and then their own picture
+jumped `CMD_DELAY` forward into media they never saw — the displacement `SkippedMs` exists to
+count, imposed on the one member who chose the transition. Measured alone in a room on the 500 ms
+floor, pausing at 103.20 s put the picture at 103.70 s.
+
+What it costs instead: a remote member keeps playing until the command reaches them and then
+rewinds by up to one downlink delay, instead of arriving exactly on time. In `command-storm` that
+shows as one client's convergence going 50 ms → 250 ms, against `anchorErr` 22 → 12 ms and time
+spent at a corrected rate 273 → 191 ms (POC-FINDINGS §40c).
+
+A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two members, because the
+delay buys simultaneity with people who are not there.
+
 Clients discard any `state` with `seq <= lastAppliedSeq`.
 
 A `kind` the server does not implement, or a `media` command with no `mediaKey`, is refused with
@@ -383,7 +407,7 @@ client is `bad_frame`, because either would move room state without passing the 
 | `TOLERANCE` | 500 ms | do-nothing band |
 | `NUDGE_MAX_RESIDUAL` | 3000 ms | above this, seek instead of nudge |
 | `NUDGE_RATE_RANGE` | [0.95, 1.10] | playbackRate clamp |
-| `CMD_DELAY` | clamp(2*p95_ping, 500, 2000) ms | scheduled-command lead time |
+| `CMD_DELAY` | clamp(2*p95_ping, 500, 2000) ms | scheduled-command lead time. 0 for a room of one, and 0 for any command that leaves the room stopped (§3 amendment) |
 | `HB_INTERVAL` | 1000 ms | heartbeat |
 | `EVAL_INTERVAL` | 100 ms | local evaluation loop |
 | `TIME_SYNC_INTERVAL` | 5000 ms | clock resync |

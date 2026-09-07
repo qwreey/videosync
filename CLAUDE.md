@@ -106,6 +106,13 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   corrector reads it as error — issuing a "free seek" that yanks the room backwards right before
   the transition it already had scheduled. `lastCmdWhen` guards this (POC-FINDINGS §40a). The
   stale-resend guard was already built on exactly this fact and was one guard short.
+- **Simultaneity is only worth paying for while the clock is running.** A command that leaves the
+  room *stopped* — `pause`, `media`, a `seek` onto a paused room — carries **no** `CMD_DELAY`, and
+  `pause` anchors at the position the sender reported rather than where playback would have reached
+  at `when`. Scheduling a pause into the future makes the person who pressed it jump forward into
+  media they never saw, which is what `SkippedMs` counts, imposed on the one member who chose the
+  transition. `play` and a seek during playback keep the full lead (POC-FINDINGS §40c,
+  PROTOCOL §3 amendment).
 - **A room of one schedules against nobody.** `CMD_DELAY` buys simultaneity between members; with
   one member the whole delay is spent making that member's own gesture wrong. `CmdDelay()` returns
   0 below two members (§40b).

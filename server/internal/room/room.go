@@ -343,16 +343,50 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 	r.announceGate()
 }
 
+// leavesRoomStopped reports whether the room will be paused once this command
+// has been applied. `media` always lands paused by construction; a `seek`
+// inherits the pause state it found.
+func leavesRoomStopped(kind string, a vsync.Anchor) bool {
+	switch kind {
+	case "pause", "media":
+		return true
+	case "seek":
+		return a.Paused
+	}
+	return false
+}
+
 // apply performs a command that has already been validated and cleared by the
 // gate. Split out of OnCmd so a held command takes exactly the same path when
 // it is finally released.
 func (r *Room) apply(now int64, id string, m Cmd) {
 	r.seq++
+
+	// Simultaneity only buys anything while the clock is running.
+	//
+	// A command that leaves the room STOPPED needs no lead time: once everyone
+	// is paused at the same position there is nothing left to happen at the
+	// same instant, and the lead is spent entirely on making the person who
+	// pressed pause watch their own picture jump forward -- into media they
+	// never saw, which is the thing `SkippedMs` exists to count. So `when` is
+	// now, and every member stops as soon as the command reaches them.
+	//
+	// A command that leaves the room PLAYING keeps the full lead, because from
+	// then on everybody's clock is running and the instant is the whole point.
 	when := now + r.CmdDelay()
+	if leavesRoomStopped(m.Kind, r.anchor) {
+		when = now
+	}
+
 	switch m.Kind {
 	case "pause":
-		r.anchor = r.anchor.Advance(when)
-		r.anchor.Paused = true
+		// Anchor where the person actually stopped, not where the room would
+		// have been at `when`. The pause and the position it happened at are
+		// the thing being synchronised; projecting it forward invents a
+		// position nobody chose and that the pauser never saw. `positionMs`
+		// has always been on the wire for this command and was being thrown
+		// away.
+		r.anchor = r.anchor.Reanchor(m.PositionMs, when, true)
 	case "play":
 		r.anchor = r.anchor.Advance(when)
 		r.anchor.Paused = false

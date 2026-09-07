@@ -965,11 +965,61 @@ End to end against a real `videosyncd`, one member, on the 500 ms floor:
 `CmdDelay()` now returns 0 for a room of one. The clamp is unchanged for
 everyone else and still has its test.
 
+### 40c. The lead time was the wrong thing to argue about
+
+With two or more members the originator of a play/pause was still moved by
+`CMD_DELAY` when the transition landed. The obvious lever was the 500 ms floor,
+so it was swept in the harness — 500 / 300 / 200 / 100 ms, all twelve scenarios,
+every strategy — and it moved **nothing**, to within 1 ms. That result is not
+the good news it looks like: the harness applies a command when its `when`
+arrives, so it is insensitive *by construction* to how far ahead `when` is. It
+can show a second-order cost and it showed none. It cannot measure the
+first-order one, which is what a person sees.
+
+The user rejected the framing, and was right: the size of the jump was never
+the problem. **Pause means "stop here", and `here` is a position.** The room was
+scheduling the pause into the future and anchoring where playback *would* have
+reached — so the person who pressed pause stopped on a frame, and then their own
+picture jumped forward into media they never saw. That is exactly the
+displacement `SkippedMs` was introduced to count (§38), imposed on the one
+member who chose the transition.
+
+The rule that falls out generalises: **simultaneity is only worth paying for
+while the clock is running.** A command that leaves the room stopped — `pause`,
+`media`, and a `seek` that finds the room paused — needs no lead at all, because
+once everybody is stationary at the same position there is nothing left to
+happen at the same instant. `play`, and a `seek` during playback, keep the full
+`CMD_DELAY`.
+
+`servo`, against the round-10 baseline:
+
+| scenario | before | after |
+|---|---|---|
+| asymmetry+cmds | 294 / 593 | 294 / 594 |
+| tab-suspension | 30 / 35 | 27 / 40 |
+| reconnect | 257 / 68 | 253 / 73 |
+| late-join | 12 / 18 | 13 / 18 |
+| slow-to-buffer | 14 / 20 | 14 / 20 |
+| **command-storm** | 22 / 35 | **12 / 35** |
+
+`command-storm` is the scenario built out of play/pause traffic, and it is the
+one that moves: `anchorErr` 22 → 12 ms and time at a corrected rate 273 → 191 ms.
+Convergence in `asymmetry+cmds` improves 1600 → 1300 ms.
+
+The cost, stated plainly: a remote member now keeps playing until the pause
+reaches them and then rewinds by up to one downlink delay, rather than arriving
+exactly on time. In `command-storm` one client's convergence goes 50 → 250 ms,
+and the scenario takes 3 → 5 gate events. That is the trade — the member who
+pressed pause is right, and everybody else absorbs the difference — and it is
+the correct way round, because only one of those members chose the transition.
+
+End to end with two members: the pauser stays on the frame they stopped on and
+the other member converges to within 350 ms of it.
+
 ### What this does NOT fix
 
-With two or more members the originator of a play/pause is still moved by
-`CMD_DELAY` when the transition lands — that is `PROTOCOL.md`'s "your own
-gesture landing `CMD_DELAY` ahead", and it is the price of scheduling. The
-floor of 500 ms is what sets its size on a fast link, and the floor is a
-*chosen* safety margin, not a measured one (SYNTHESIS §2 amendment). Lowering
-it is a live option and needs a decision, not a patch.
+Nothing changes for `play`: whoever presses play still has their picture pulled
+back by `CMD_DELAY` when the transition lands, because everyone must start
+moving at the same instant from the same position and one of them has to give.
+The 500 ms floor still sets the size of that on a fast link, and it remains a
+chosen safety margin rather than a measured one (SYNTHESIS §2 amendment).

@@ -186,7 +186,10 @@ func TestSenderIsAckedWithTheSameWhenEveryoneElseGets(t *testing.T) {
 	b, _, _ := f.dial(id, secret, "b", "yt:abc")
 	a.await("members") // b's join
 
-	a.send(room.Cmd{ReqID: "r1", Kind: "pause", PositionMs: 1000})
+	// `play`, deliberately: a command that leaves the room stopped is applied
+	// with no lead (there is nothing left to be simultaneous about), so pause
+	// would test the `when` equality below against two zeros.
+	a.send(room.Cmd{ReqID: "r1", Kind: "play", PositionMs: 1000})
 
 	ack := a.await("ack")
 	st := b.await("state")
@@ -224,6 +227,46 @@ func TestCommandDelayIsClampedEvenWithNoPingData(t *testing.T) {
 		t.Fatalf("command lead time %v ms, want it clamped to [500, 2000]", lead)
 	}
 	_ = b
+}
+
+func TestPauseStopsWhereThePauserStopped(t *testing.T) {
+	// Against the wire, because this is a change in what the protocol MEANS.
+	// The pause and the position it happened at are the thing being
+	// synchronised. Projecting it to `when` invented a position nobody chose
+	// and made the pauser's own picture jump forward into media they never saw.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	a.send(room.Cmd{ReqID: "r1", Kind: "play", PositionMs: 0})
+	a.await("ack")
+	b.await("state")
+
+	a.send(room.Cmd{ReqID: "r2", Kind: "pause", PositionMs: 90_000})
+	ack := a.await("ack")
+	st := b.await("state")
+
+	if lead := num(ack, "when") - num(ack, "emittedAt"); lead != 0 {
+		t.Fatalf("pause scheduled %v ms out; everyone is stopped afterwards, "+
+			"so the lead only moves the pauser off what they paused on", lead)
+	}
+	for _, m := range []map[string]any{ack, st} {
+		anchor, ok := m["anchor"].(map[string]any)
+		if !ok {
+			t.Fatalf("no anchor on %v", m["t"])
+		}
+		if got := num(anchor, "positionMs"); got != 90_000 {
+			t.Fatalf("room paused at %v ms, not the 90000 ms the pauser stopped on", got)
+		}
+		if anchor["paused"] != true {
+			t.Fatalf("anchor is not paused after a pause")
+		}
+	}
+	if num(ack, "when") != num(st, "when") {
+		t.Fatalf("ack when=%v, broadcast when=%v", ack["when"], st["when"])
+	}
 }
 
 func TestASoloRoomSchedulesNothing(t *testing.T) {

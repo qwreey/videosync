@@ -412,6 +412,42 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     }
   });
 
+  // What "pause" means, with somebody else in the room. The pause and the
+  // position it happened at ARE the thing being synchronised: the person who
+  // pressed it must stay on the frame they stopped on, and everybody else
+  // converges to that frame. Previously the room pushed the pause CMD_DELAY
+  // into the future and anchored where playback WOULD have reached, so the
+  // pauser's own picture jumped forward into media they never saw.
+  it('stops both members on the frame the pauser actually stopped on', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: true, positionS: 0 });
+    const b = peer(roomId, secret, 'b', { paused: true, positionS: 0 });
+    try {
+      await joined(a, b);
+      a.engine.seek(300);
+      await waitFor(() => a.engine.appliedSeq >= 1 && b.engine.appliedSeq >= 1, 4000, 'the seek');
+      a.engine.play();
+      await waitFor(() => !a.player.paused && !b.player.paused, 4000, 'both to play');
+      await sleep(1500);
+
+      // `a` pauses on their own player, the way a user does.
+      await a.player.pause();
+      const stoppedOn = a.player.readState().positionS;
+      await sleep(2500);
+
+      assert.ok(Math.abs(a.player.readState().positionS - stoppedOn) < 0.1,
+        `the pauser stopped on ${stoppedOn.toFixed(2)}s and was moved to ` +
+        `${a.player.readState().positionS.toFixed(2)}s`);
+      assert.equal(b.player.paused, true, 'the other member never stopped');
+      assert.ok(Math.abs(b.player.readState().positionS - stoppedOn) < 0.35,
+        `the pauser is on ${stoppedOn.toFixed(2)}s but the room stopped at ` +
+        `${b.player.readState().positionS.toFixed(2)}s`);
+    } finally {
+      a.engine.stop(); b.engine.stop();
+    }
+  });
+
   // A joiner is NOT a creator: the anchor is truth and they must conform to it,
   // however loudly their own player disagrees.
   it('does not let a joining member seed a room that already has one', async function () {

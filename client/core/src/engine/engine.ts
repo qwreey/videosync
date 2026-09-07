@@ -133,6 +133,10 @@ export interface EngineDeps {
 interface Scheduled {
   seq: number;
   whenServerMs: number;
+  /** When the server emitted it. Equal to `when` for a command applied with no
+   *  lead, which is how a genuinely late apply stays distinguishable from one
+   *  that was never scheduled ahead at all. */
+  emittedAtServerMs: number;
   anchor: Anchor;
   kind: string;
 }
@@ -454,7 +458,10 @@ export class SyncEngine {
         break;
 
       case 'state':
-        this.schedule({ seq: f.seq, whenServerMs: f.when, anchor: f.anchor, kind: f.kind });
+        this.schedule({
+          seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
+          anchor: f.anchor, kind: f.kind,
+        });
         this.stats.statesApplied++;
         break;
 
@@ -462,7 +469,10 @@ export class SyncEngine {
         // The originator's copy takes the SAME path. Excluding the sender from
         // the broadcast for echo suppression must not exclude it from the
         // simultaneity the timebase exists to provide.
-        this.schedule({ seq: f.seq, whenServerMs: f.when, anchor: f.anchor, kind: f.kind });
+        this.schedule({
+          seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
+          anchor: f.anchor, kind: f.kind,
+        });
         this.stats.acksApplied++;
         break;
 
@@ -595,7 +605,13 @@ export class SyncEngine {
       // passes while waiting for it. (The server-side twin of this bug made
       // every correction land one downlink delay behind.)
       const serverNow = this.serverNow();
-      if (serverNow > p.whenServerMs + this.cfg.seekToleranceMs) this.stats.lateApplies++;
+      // Only a command that WAS scheduled ahead can be applied late. One that
+      // leaves the room stopped carries `when == emittedAt` by design, and
+      // counting those would make this diagnostic read "every pause is late".
+      if (p.whenServerMs > p.emittedAtServerMs &&
+        serverNow > p.whenServerMs + this.cfg.seekToleranceMs) {
+        this.stats.lateApplies++;
+      }
       const targetMs = expectedAt(p.anchor, Math.max(serverNow, p.anchor.atServerMs));
       await this.applyTransition(targetMs, p.anchor.paused);
     });
