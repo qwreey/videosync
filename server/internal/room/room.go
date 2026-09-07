@@ -443,44 +443,43 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// timestamps, so it carries no offset error.
 	m.RTTMs, m.hasRTT = rep.RTTMs, true
 
+	// A member that has not applied the newest command is mid-transition, and
+	// there are exactly two things that can be true of it.
+	//
 	// A lagging lastAppliedSeq is the only signal that distinguishes "in sync"
-	// from "confidently wrong about what it is syncing to". It is already on
-	// the wire and nothing was reading it.
+	// from "confidently wrong about what it is syncing to": a client on a stale
+	// anchor measures its residual against that same stale anchor, so it
+	// reports ~0 while arbitrarily out of position. It is already on the wire
+	// and nothing was reading it. Worth 115 603 ms -> 250 ms.
 	//
-	// But it cannot, on its own, distinguish "missed the command" from "has it
-	// scheduled and has not reached `when` yet" -- the client advances the field
-	// at apply time, CMD_DELAY after the broadcast. Resending during that window
-	// is actively harmful: the resend carries `when: now`, the client replaces
-	// its correctly-scheduled entry with it and transitions CMD_DELAY early,
-	// which is precisely the simultaneity this timebase exists to provide. With
-	// a 1 Hz heartbeat and a 500 ms floor that fired on roughly half of all
-	// commands. So a member is stale only once the command is actually due.
-	if !r.NoStaleResend && rep.LastAppliedSeq < r.seq && now >= r.lastCmdWhen {
-		r.StaleResends++
-		r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,
-			Anchor: r.anchor, By: "server", Kind: "resync"})
-		return
-	}
-
-	// Nothing may be judged between a command's apply and its `when`.
+	// But until it catches up, it is also measuring against a different anchor
+	// than the one being judged against here -- so whatever residual it reports
+	// is about that disagreement and not about drift. Judging it anyway issued
+	// a "free seek" to every member one downlink before the transition they
+	// already had scheduled (POC-FINDINGS 40a).
 	//
-	// `r.anchor` changes the moment a command is applied, but every player is
-	// still in the state it is leaving until `when` -- so for the whole
-	// CMD_DELAY window every member honestly reports a residual of up to the
-	// full delay, and the corrector reads that as error. Measured: a `play`
-	// from 600 s with a 2 s delay issues a "free seek" to EVERY member one
-	// second before the transition they already had scheduled, so the room
-	// lurches backwards and then transitions. Any member whose buffer extends
-	// behind them -- which is every member who has been playing -- qualifies
-	// for that seek.
-	//
-	// This is the same reasoning the stale-resend guard above is built on: a
-	// member that has not applied a command that is not due yet is early, not
-	// wrong. Bookkeeping above still runs, so the readiness gate keeps working
-	// through the window; only judgement is deferred.
-	if now < r.lastCmdWhen {
-		r.JudgingDeferred++
-		return
+	// Telling the two apart needs a grace period, and CMD_DELAY used to supply
+	// one implicitly: a command was never due for at least 500 ms, which is
+	// longer than delivery. A command that leaves the room stopped carries no
+	// lead at all, so every remote member looked stale for one downlink delay
+	// and drew a resend on every single pause -- command-storm StaleResends
+	// 1 -> 4. Make the grace explicit and derive it from the member's own
+	// measured round trip: it cannot be stale until the command has had time to
+	// reach it.
+	if rep.LastAppliedSeq < r.seq {
+		switch {
+		case r.NoStaleResend:
+			// The control arm: judge it anyway, which is what produced the
+			// 115 603 ms figure the resend exists to fix.
+		case now >= r.lastCmdWhen+m.RTTMs:
+			r.StaleResends++
+			r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,
+				Anchor: r.anchor, By: "server", Kind: "resync"})
+			return
+		default:
+			r.JudgingDeferred++
+			return
+		}
 	}
 
 	cs := &m.corr

@@ -112,8 +112,12 @@ floor, pausing at 103.20 s put the picture at 103.70 s.
 
 What it costs instead: a remote member keeps playing until the command reaches them and then
 rewinds by up to one downlink delay, instead of arriving exactly on time. In `command-storm` that
-shows as one client's convergence going 50 ms → 250 ms, against `anchorErr` 22 → 12 ms and time
-spent at a corrected rate 273 → 191 ms (POC-FINDINGS §40c).
+shows as one client's convergence going 50 ms → 150 ms and the scenario taking 3 → 5 gate events,
+against `anchorErr` 22 → 8 ms and p95 35 → 20 ms (POC-FINDINGS §40c).
+
+Because a no-lead command is due the instant it is issued, the stale-anchor resend can no longer
+use "is it due yet?" to tell a member that missed a command from one that is still receiving it.
+It uses the member's own measured RTT as the grace period instead (§40a).
 
 A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two members, because the
 delay buys simultaneity with people who are not there.

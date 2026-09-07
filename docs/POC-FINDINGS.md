@@ -898,18 +898,21 @@ client already holds (within 0.001, re-stated every 5 s in case the
 unacknowledged `correct` that set it was lost) took the same session to **4 and
 5** with the two players still 20 ms apart.
 
-## 40. Round 11 — the room judged everybody during the window it told them to wait
+## 40. Round 11 — the room judged members it had told to wait, and pause meant the wrong thing
 
 Found from a live session, not from the harness: alone in a room, pressing play
-or pause moved the picture by the whole `CMD_DELAY`. Two separate causes, and
-only one of them was the obvious one.
+or pause moved the picture by the whole `CMD_DELAY`. Three separate causes, and
+the obvious one was the least important.
 
-### 40a. Nothing may be judged between a command's apply and its `when`
+All numbers below are against the round-10 baseline, `servo` (the shipping
+strategy), `anchorErr / p95` in ms.
 
-`r.anchor` changes the instant a command is applied, but every player stays in
-the state it is leaving until `when`. For that whole window each member honestly
-reports a residual of up to the full `CMD_DELAY`, and the corrector read it as
-error.
+### 40a. A member mid-transition must not be judged
+
+`r.anchor` changes the instant a command is applied, but a member is still on
+the previous anchor until it applies the new one. Everything it reports in
+between is measured against a different anchor than the server is judging
+against, so the residual describes that disagreement and not drift.
 
 Measured directly against `room.Room` — two members, `RTT 1200 ms` so
 `CMD_DELAY` sits at its 2 s ceiling, a `play` issued at 600 s, then an honest
@@ -922,32 +925,26 @@ expected(at=11000) = 599000     reports say 600000, so residual = +1000
 -> Correct{Mode:seek Why:"free seek"}   x2
 ```
 
-Both members are seek-corrected **one second backwards, one second before the
+Both members seek-corrected **one second backwards, one second before the
 transition they already had scheduled**. The gate for it is `targetBuffered`,
-which any member who has been playing satisfies — the buffer extends behind
-them. So the room lurches back and then transitions.
+which any member who has been playing satisfies.
 
-This is the same fact the stale-resend guard was already built on ("a member
-that has not applied a command that is not due yet is early, not wrong"), one
-guard short of being applied to judgement as well.
+The room already had the same fact expressed once, for the stale-anchor resend:
+a lagging `lastAppliedSeq` is the only signal that a client is confidently
+wrong about what it is syncing to. Both guards now key off that one field:
 
-Deferring judgement while `now < lastCmdWhen`, across the eleven scenarios,
-`servo` only (`anchorErr` / `p95`, ms):
+- lagging **and** the command has had time to arrive → the anchor is stale,
+  resend it.
+- lagging and it has not → mid-transition, defer judgement.
 
-| scenario | before | after |
-|---|---|---|
-| asymmetry+cmds | 294 / 593 | 295 / 597 |
-| tab-suspension | 30 / 35 | 30 / 40 |
-| reconnect | 257 / 68 | **249 / 50** |
-| late-join | 12 / 18 | **10 / 18** |
-| slow-to-buffer | 14 / 20 | **0 / 0** |
-| command-storm | 22 / 35 | **20 / 38** |
+"Has had time to arrive" needs a grace period, and `CMD_DELAY` used to supply
+one implicitly — nothing was due for at least 500 ms. §40c removes the lead for
+some commands, so the grace is now explicit and comes from the member's own
+measured RTT.
 
-Better or unchanged on alignment everywhere, `slow-to-buffer` to zero, no new
-out-of-buffer seeks and no BAD rows. It costs a little more time at a corrected
-rate (`command-storm` 273 → 352 ms, `asymmetry+cmds` 84 → 121 ms): corrections
-the seek used to take are now left to the servo, which is the cheaper of the
-two.
+That grace turns out to matter on its own: spurious resends in `asymmetry+cmds`
+(a 1200 ms one-way path) go **18 → 0**, and the only resend left anywhere is the
+one in `reconnect`, which is the genuine stale anchor the mechanism exists for.
 
 ### 40b. A room of one was scheduling against nobody
 
@@ -962,64 +959,79 @@ End to end against a real `videosyncd`, one member, on the 500 ms floor:
 | pause at 103.20 s | picture jumps to **103.70 s** | stays at 103.23 s |
 | then press play | runs to 104.31 s, snaps back to **103.80 s** | monotonic, no rewind |
 
-`CmdDelay()` now returns 0 for a room of one. The clamp is unchanged for
-everyone else and still has its test.
+`CmdDelay()` returns 0 below two members. The clamp is unchanged for everyone
+else and keeps its test.
 
 ### 40c. The lead time was the wrong thing to argue about
 
-With two or more members the originator of a play/pause was still moved by
-`CMD_DELAY` when the transition landed. The obvious lever was the 500 ms floor,
-so it was swept in the harness — 500 / 300 / 200 / 100 ms, all twelve scenarios,
-every strategy — and it moved **nothing**, to within 1 ms. That result is not
-the good news it looks like: the harness applies a command when its `when`
-arrives, so it is insensitive *by construction* to how far ahead `when` is. It
-can show a second-order cost and it showed none. It cannot measure the
-first-order one, which is what a person sees.
+With two or more members the originator was still moved by `CMD_DELAY` when the
+transition landed. The obvious lever was the 500 ms floor, so it was swept in
+the harness — 500 / 300 / 200 / 100 ms, all twelve scenarios, every strategy —
+and it moved **nothing**, to within 1 ms.
 
-The user rejected the framing, and was right: the size of the jump was never
-the problem. **Pause means "stop here", and `here` is a position.** The room was
-scheduling the pause into the future and anchoring where playback *would* have
-reached — so the person who pressed pause stopped on a frame, and then their own
-picture jumped forward into media they never saw. That is exactly the
-displacement `SkippedMs` was introduced to count (§38), imposed on the one
-member who chose the transition.
+That result is not the good news it looks like. The harness applies a command
+when its `when` arrives, so it is insensitive *by construction* to how far ahead
+`when` is. It can show a second-order cost and it showed none; it cannot measure
+the first-order one, which is the only one a person sees. **Recorded because the
+sweep looks like evidence and is not.**
 
-The rule that falls out generalises: **simultaneity is only worth paying for
-while the clock is running.** A command that leaves the room stopped — `pause`,
-`media`, and a `seek` that finds the room paused — needs no lead at all, because
-once everybody is stationary at the same position there is nothing left to
-happen at the same instant. `play`, and a `seek` during playback, keep the full
-`CMD_DELAY`.
+The framing was wrong. The size of the jump was never the problem: **pause means
+"stop here", and `here` is a position.** The room was scheduling the pause into
+the future and anchoring where playback *would* have reached — so the person who
+pressed pause stopped on a frame and their own picture then jumped forward into
+media they never saw. (That is the quantity `SkippedMs` was introduced to count
+in §38; the harness table does not report it, so this is reasoning from its
+definition, not a measurement of it.) `positionMs` had always been on the wire
+for `pause` and was being discarded.
 
-`servo`, against the round-10 baseline:
+The rule that falls out: **simultaneity is only worth paying for while the clock
+is running.** A command that leaves the room stopped — `pause`, `media`, a
+`seek` that finds the room paused — needs no lead, because once everybody is
+stationary at the same position there is nothing left to happen at the same
+instant. `play`, and a `seek` during playback, keep the full `CMD_DELAY`.
+`pause` anchors at the position the sender reported.
+
+### The three together
 
 | scenario | before | after |
 |---|---|---|
-| asymmetry+cmds | 294 / 593 | 294 / 594 |
-| tab-suspension | 30 / 35 | 27 / 40 |
-| reconnect | 257 / 68 | 253 / 73 |
-| late-join | 12 / 18 | 13 / 18 |
+| steady/rate-drift | 14 / 26 | 14 / 26 |
+| transient-hiccup | 12 / 29 | 12 / 29 |
+| long-stalls | 54 / 45 | 54 / 45 |
+| one-slow-client | 82 / 291 | 82 / 291 |
+| clock-skew | 23 / 56 | 23 / 56 |
+| latency-asymmetry | 194 / 585 | 194 / 585 |
+| asymmetry+cmds | 294 / 593 | 294 / 595 |
+| tab-suspension | 30 / 35 | 28 / 40 |
+| reconnect | 257 / 68 | 257 / 68 |
+| late-join | 12 / 18 | 12 / 18 |
 | slow-to-buffer | 14 / 20 | 14 / 20 |
-| **command-storm** | 22 / 35 | **12 / 35** |
+| **command-storm** | 22 / 35 | **8 / 20** |
 
-`command-storm` is the scenario built out of play/pause traffic, and it is the
-one that moves: `anchorErr` 22 → 12 ms and time at a corrected rate 273 → 191 ms.
-Convergence in `asymmetry+cmds` improves 1600 → 1300 ms.
+`command-storm` is the scenario built out of play/pause traffic and it is the
+one that moves — `anchorErr` 22 → 8 ms, p95 35 → 20 ms, time at a corrected rate
+273 → 237 ms. Convergence in `asymmetry+cmds` improves 1600 → 1300 ms. Nothing
+else moves at all, which is the point: this is a change to what commands mean,
+not to the control loop.
 
 The cost, stated plainly: a remote member now keeps playing until the pause
 reaches them and then rewinds by up to one downlink delay, rather than arriving
-exactly on time. In `command-storm` one client's convergence goes 50 → 250 ms,
-and the scenario takes 3 → 5 gate events. That is the trade — the member who
-pressed pause is right, and everybody else absorbs the difference — and it is
-the correct way round, because only one of those members chose the transition.
+exactly on time. `command-storm`'s slowest client converges in 150 ms instead of
+50, and the scenario takes 3 → 5 gate events (3 → 6 under every other strategy,
+so it is a property of the new timing and not of the corrector): a pause that
+lands immediately is followed by a `play` that finds members still settling, and
+the readiness gate does its job.
 
-End to end with two members: the pauser stays on the frame they stopped on and
-the other member converges to within 350 ms of it.
+That is the trade — whoever pressed pause is now right, and everybody else
+absorbs the difference — and it is the correct way round, because only one of
+those members chose the transition.
 
 ### What this does NOT fix
 
 Nothing changes for `play`: whoever presses play still has their picture pulled
-back by `CMD_DELAY` when the transition lands, because everyone must start
+back by `CMD_DELAY` when the transition lands, because everybody has to start
 moving at the same instant from the same position and one of them has to give.
 The 500 ms floor still sets the size of that on a fast link, and it remains a
-chosen safety margin rather than a measured one (SYNTHESIS §2 amendment).
+chosen safety margin rather than a measured one (SYNTHESIS §2 amendment). The
+harness cannot answer it, for the reason in §40c. It needs two people and a
+number.

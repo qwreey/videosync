@@ -100,12 +100,14 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **A `hello` never changes room state.** Only the first member's `mediaKey` names the media, and
   only while the room is empty. Any later change is a `media` command — it takes a `seq` and
   reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.
-- **Nothing may be judged between a command's apply and its `when`.** The anchor moves the instant
-  a command applies; every player stays in the state it is leaving until `when`. For that whole
-  `CMD_DELAY` window every member honestly reports a residual of up to the full delay, and the
-  corrector reads it as error — issuing a "free seek" that yanks the room backwards right before
-  the transition it already had scheduled. `lastCmdWhen` guards this (POC-FINDINGS §40a). The
-  stale-resend guard was already built on exactly this fact and was one guard short.
+- **A member that has not applied the newest `seq` must not be judged.** It is still on the
+  previous anchor, so its residual describes that disagreement and not drift — judging it anyway
+  issues a "free seek" that yanks the room backwards right before the transition it already had
+  scheduled. Lagging `lastAppliedSeq` means one of two things and the *only* thing separating them
+  is whether the command has had time to arrive: past that, the anchor is stale and the answer is a
+  resend; before it, defer. `CMD_DELAY` used to supply that grace implicitly; since some commands
+  now carry no lead it comes from the member's own RTT. Getting the grace wrong is what made every
+  pause draw a resend from every member (POC-FINDINGS §40a).
 - **Simultaneity is only worth paying for while the clock is running.** A command that leaves the
   room *stopped* — `pause`, `media`, a `seek` onto a paused room — carries **no** `CMD_DELAY`, and
   `pause` anchors at the position the sender reported rather than where playback would have reached
