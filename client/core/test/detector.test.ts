@@ -203,6 +203,97 @@ describe('SeekDetector', () => {
     assert.ok(d.stallDetections > 0, 'control: a frozen, unready element mid-video is a stall');
   });
 
+  test('pressing play at a slow playback rate is reported, not read as a stall', () => {
+    // At 0.25x the position advances a quarter of wall time. A freeze test
+    // that ignores the rate reads every such sample as frozen, and the stall
+    // branch never reports a play-state change -- so the play never reaches
+    // the room, and the room then pauses the member back.
+    for (const rate of [0.25, 0.5, 1]) {
+      for (let seed = 1; seed <= 5; seed++) {
+        const d = new SeekDetector(visible);
+        let t = 0;
+        let pos = 10_000;
+        let rnd = seed;
+        const jitter = () => { rnd = (rnd * 16807) % 2147483647; return (rnd / 2147483647 - 0.5) * 40; };
+        const kinds: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          kinds.push(d.evaluate(state({ positionS: pos / 1000, paused: true, rate }), pos, t).observation.kind);
+          t += 100;
+        }
+        const roomStart = pos;
+        const playAt = t;
+        for (let i = 0; i < 30; i++) {
+          const step = 100 + jitter();
+          t += step;
+          pos += step * rate;
+          const expected = roomStart + (t - playAt) * rate;
+          kinds.push(d.evaluate(state({ positionS: pos / 1000, rate }), expected, t).observation.kind);
+        }
+        assert.equal(kinds.filter((k) => k === 'playstate').length, 1, `rate ${rate} seed ${seed}: ${kinds.join(',')}`);
+        assert.equal(d.stallDetections, 0, `rate ${rate} seed ${seed}: slow playback read as a stall`);
+      }
+    }
+    // Control: a slow element that genuinely stops moving is still a stall.
+    const d = new SeekDetector(visible);
+    run(d, [
+      ...Array.from({ length: 10 }, (_, i) => ({ positionS: 10 + i * 0.025, rate: 0.25 })),
+      ...Array.from({ length: 10 }, () => ({ positionS: 10.25, rate: 0.25, expectedS: 10.25 })),
+    ]);
+    assert.ok(d.stallDetections > 0, 'control: a frozen slow element is a stall');
+  });
+
+  test('a stall caught by a throttled evaluation is not a seek', () => {
+    // A hidden, once-audible tab keeps playing but its timer runs at ~1 Hz, so
+    // a whole second of playback can lie between the last evaluation and the
+    // one the `waiting` event triggers. Being nudged at 1.1x while 1-3 s behind
+    // is exactly when the room-diff half of the test is already satisfied. The
+    // playback in between is not a jump -- wherever in that second the stall
+    // began.
+    // Chrome throttles a hidden tab's timers to 1 Hz, and further after a
+    // while; the detector caps the gap it will trust at 5 s.
+    for (const gap of [1000, 2000, 4000]) {
+      for (const frac of [0, 0.25, 0.5, 0.75, 1]) {
+        const d = new SeekDetector(hidden);
+        const rate = 1.1;
+        let t = 0;
+        let pos = 100_000;
+        const behind = 3000;
+        for (let i = 0; i < 10; i++) {
+          d.evaluate(state({ positionS: pos / 1000, rate }), pos + behind, t);
+          t += gap;
+          pos += gap * rate;
+        }
+        // The last evaluation was one gap ago. The stall began `frac` of the
+        // way through the interval since then.
+        pos -= gap * rate;
+        pos += gap * rate * frac;
+        const { observation } = d.evaluate(
+          state({ positionS: pos / 1000, rate, readyState: 2, bufferedAheadS: 0 }), pos + behind + gap, t,
+        );
+        assert.equal(observation.kind, 'stall',
+          `gap ${gap} ms: stall at ${frac} of the interval read as ${observation.kind}`);
+        assert.equal(d.seekDetections, 0);
+      }
+    }
+    // Control: at the same cadence, a real jump while unready is still a seek,
+    // forward or back.
+    for (const jumpMs of [30_000, -30_000]) {
+      const d = new SeekDetector(hidden);
+      let t = 0;
+      let pos = 100_000;
+      for (let i = 0; i < 10; i++) {
+        d.evaluate(state({ positionS: pos / 1000 }), pos, t);
+        t += 2000;
+        pos += 2000;
+      }
+      pos += jumpMs;
+      const { observation } = d.evaluate(
+        state({ positionS: pos / 1000, readyState: 1, bufferedAheadS: 0 }), pos - jumpMs, t,
+      );
+      assert.equal(observation.kind, 'seek', `a ${jumpMs} ms jump at 0.5 Hz was not a seek`);
+    }
+  });
+
   test('slope measures the rate error and is immune to a constant offset', () => {
     const d = new SeekDetector(visible);
     // The element runs 1% slow: residual grows by 10 ms per second. A constant

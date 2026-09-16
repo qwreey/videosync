@@ -120,10 +120,19 @@ export class SeekDetector {
     // A video sitting at its end has a frozen currentTime too. That is not a
     // stall and the room must not gate on it -- the member has finished.
     const ended = s.durationS > 0 && s.positionS >= s.durationS - 0.25;
+    // "Moved less than half of what it should have" -- at the rate it is
+    // playing at. Against wall time alone, anything at 0.5x or slower reads as
+    // frozen on every sample, and a stall never reports a play-state change,
+    // so a play pressed at 0.25x would never reach the room. And only if it
+    // was running at the previous evaluation too: straight after a play, part
+    // of `dt` was spent paused and says nothing about progress.
     const frozen =
-      !ended && this.haveEvalPos && !s.paused && dt > 0 &&
-      posMs - this.lastEvalPos < dt * 0.5;
+      !ended && this.haveEvalPos && !s.paused && this.lastPaused === false && dt > 0 &&
+      posMs - this.lastEvalPos < dt * s.rate * 0.5;
     const wasStalled = this.stallSuspected;
+    // Whether the element was running between the previous evaluation and
+    // this one, i.e. whether the reference has playback to catch up on.
+    const wasPlaying = !wasStalled && this.lastPaused === false;
     this.stallSuspected = !ended && (s.readyState < this.cfg.minReadyState || frozen);
     this.lastEvalPos = posMs;
     this.haveEvalPos = true;
@@ -150,7 +159,17 @@ export class SeekDetector {
       // jump, so the seek never reached the room and the room then corrected
       // the user straight back (BROWSER-FINDINGS §19). Compare against the
       // held reference first: a stall leaves it where it is, a seek does not.
-      if (jumped(Math.abs(posMs - this.lastKnownPos))) {
+      //
+      // "Where it is" is a range, not a point, when the element was playing
+      // up to here: it ran for some unknown part of `dt` before it froze. In
+      // a throttled hidden tab that is a whole second or more, which alone
+      // clears the threshold -- a stall read as a seek pulls the room back.
+      // Only a position outside everything playback could have reached is a
+      // jump. (Dead-reckoning all of `dt` instead would misread a stall that
+      // began early in the interval as a backward seek.)
+      const lo = this.lastKnownPos;
+      const hi = wasPlaying ? lo + dt * Math.max(0, s.rate) : lo;
+      if (jumped(posMs < lo ? lo - posMs : posMs > hi ? posMs - hi : 0)) {
         this.seekDetections++;
         observation = { kind: 'seek', positionS: s.positionS };
       } else {
