@@ -10,7 +10,8 @@
  *   - a Chromium-family browser on CDP :9222 with client/extension/dist loaded
  *     and a tab on $VIDEO (member A);
  *   - Firefox on BiDi :9223 (`firefox --remote-debugging-port 9223`), which this
- *     probe installs dist-firefox into and opens a window in (member B);
+ *     probe installs the local-ext.mjs Firefox build into (run that first) and
+ *     opens a window in (member B);
  *   - videosyncd at $SERVER.
  *
  * Firefox gives no handle on a content script's realm, so B is driven the way
@@ -32,9 +33,9 @@ const SERVER = process.env.SERVER || 'http://127.0.0.1:8787';
 const LOCAL = !!process.env.LOCAL;
 const VIDEO = LOCAL ? 'http://127.0.0.1:8898/watch/1' : 'https://www.youtube.com/watch?v=aqz-KE-bpKQ'; // Big Buck Bunny
 const ELSEWHERE = LOCAL ? 'http://127.0.0.1:8898/watch/2' : 'https://www.youtube.com/watch?v=eRsGyueVLvQ'; // Sintel
-const FF_EXT = LOCAL
-  ? join(HERE, '..', '..', '.cache', 'firefox-profile', 'ext-local')
-  : join(HERE, '..', '..', 'client', 'extension', 'dist-firefox');
+// Always the local-ext.mjs build: a shipped build closes the panel's shadow
+// root, and Firefox gives this probe no other way to reach the panel.
+const FF_EXT = join(HERE, '..', '..', '.cache', 'firefox-profile', 'ext-local');
 const HOLD_S = LOCAL ? 30 : 15;
 
 const results = { when: new Date().toISOString(), checks: [], measurements: {}, notes: [] };

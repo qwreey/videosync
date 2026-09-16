@@ -2,7 +2,8 @@
 //
 // Test-only, and written under .cache/ rather than shipped: the real manifests
 // list the providers a user installs this for, and a content script on every
-// loopback page is not something to ask a user for.
+// loopback page is not something to ask a user for. These builds also leave
+// the panel's shadow root open, which a shipped build must not.
 //
 //   node harness/browser/local-ext.mjs
 //   -> .cache/ext-local/chromium        (--load-extension=...)
@@ -22,5 +23,12 @@ for (const [from, to] of [
   const m = JSON.parse(readFileSync(p, 'utf8'));
   for (const cs of m.content_scripts) if (!cs.matches.includes(LOCAL)) cs.matches.push(LOCAL);
   writeFileSync(p, JSON.stringify(m, null, 2));
+  // The panel's shadow root is closed in shipped builds. Firefox gives a probe
+  // no way into the content script's world, so the probe build opens it.
+  const js = join(root, to, 'content.js');
+  const src = readFileSync(js, 'utf8');
+  const marker = '["videosync-panel:closed"]';
+  if (!src.includes(marker)) throw new Error(`${js}: panel marker not found -- was content.ts changed?`);
+  writeFileSync(js, src.replace(marker, '["videosync-panel:open"]'));
   console.log(`${to}: ${m.content_scripts[0].matches.join(' ')}`);
 }

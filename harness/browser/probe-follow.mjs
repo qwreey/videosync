@@ -123,7 +123,7 @@ async function main() {
   check('A still in the room after its own SPA navigation', stA.state === 'joined', stA.roomMediaKey);
   // Press the panel's button, as the user would.
   const pressed = await iso(a, `
-    const root = document.getElementById('videosync-root').shadowRoot;
+    const root = VideoSync.panelRoot();
     const btn = [...root.querySelectorAll('button')].find(x => x.textContent === '이 영상으로 방 옮기기');
     if (!btn) return false; btn.click(); return true;`);
   check('A is offered "move the room here", and presses it', pressed);
@@ -151,7 +151,7 @@ async function main() {
   const stB = await iso(b, 'return VideoSync.status()');
   check('a member\'s own navigation is not undone by the room', still.endsWith(away) && stB.state === 'joined',
     `B at ${still}, room on ${stB.roomMediaKey}`);
-  const offered = await iso(b, `const r = document.getElementById('videosync-root').shadowRoot;
+  const offered = await iso(b, `const r = VideoSync.panelRoot();
     return [...r.querySelectorAll('button')].some((x) => x.textContent === '이 영상으로 방 옮기기' && x.offsetParent !== null);`);
   check('it is offered "move the room here" instead', offered);
 
@@ -162,7 +162,7 @@ async function main() {
   await b.waitFor('!!window.VideoSync', { isolated: true, timeoutMs: 20000 });
   await iso(b, `VideoSync.join(${JSON.stringify(SERVER)}, ${JSON.stringify(room.roomId)}, ${JSON.stringify(room.secret)}, 'b'); return 1`);
   const stayed = await iso(b, `
-    const r = document.getElementById('videosync-root').shadowRoot;
+    const r = VideoSync.panelRoot();
     for (let i = 0; i < 40; i++) {
       const btn = [...r.querySelectorAll('button')].find((x) => x.textContent === '여기 있기');
       if (btn) { btn.click(); return true; }

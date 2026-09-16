@@ -52,8 +52,16 @@ function wsUrl(serverUrl: string): string {
   return u.toString();
 }
 
+/**
+ * False in every shipped build. harness/browser/local-ext.mjs rewrites the
+ * first string in a copy of the built bundle, so its probe build -- and only
+ * that -- leaves the panel reachable from the page (see Platform.openPanel).
+ */
+const OPEN_PANEL = ['videosync-panel:closed'][0] === 'videosync-panel:open';
+
 const platform = async (): Promise<Platform> => ({
   store: await hydrate(),
+  openPanel: OPEN_PANEL,
   makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
   async createRoom(serverUrl, mediaKey, mediaUrl) {
     const url = new URL('/api/rooms', serverUrl).toString();
