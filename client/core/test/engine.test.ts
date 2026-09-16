@@ -654,6 +654,21 @@ describe('the element being replaced under us', () => {
     await h.vt.advance(100);
     assert.equal(h.tr.sentOf('hello').at(-1)!.mediaKey, 'yt:two');
   });
+
+  it('says where its media can be opened, in the hello and in a media command', async () => {
+    const h = harness({}, { mediaUrl: 'https://www.youtube.com/watch?v=abc' });
+    await h.join();
+    assert.equal(h.tr.sentOf('hello')[0]!.mediaUrl, 'https://www.youtube.com/watch?v=abc');
+
+    h.engine.setLocalMediaKey('yt:two', 'https://www.youtube.com/watch?v=two');
+    h.engine.setMedia('yt:two', 0, 'https://www.youtube.com/watch?v=two');
+    const cmd = h.tr.sentOf('cmd').at(-1)!;
+    assert.deepEqual([cmd.kind, cmd.mediaKey, cmd.mediaUrl], ['media', 'yt:two', 'https://www.youtube.com/watch?v=two']);
+
+    // And nothing at all when it does not know, rather than an empty string.
+    h.engine.setMedia('yt:three');
+    assert.equal('mediaUrl' in h.tr.sentOf('cmd').at(-1)!, false);
+  });
 });
 
 describe('applying transitions is serialised', () => {

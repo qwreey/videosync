@@ -43,7 +43,12 @@ func start(t *testing.T, tune func(*Config)) *fixture {
 
 func (f *fixture) createRoom(mediaKey string) (id, secret string) {
 	f.t.Helper()
-	body := strings.NewReader(fmt.Sprintf(`{"mediaKey":%q}`, mediaKey))
+	return f.createRoomAt(mediaKey, "")
+}
+
+func (f *fixture) createRoomAt(mediaKey, mediaURL string) (id, secret string) {
+	f.t.Helper()
+	body := strings.NewReader(fmt.Sprintf(`{"mediaKey":%q,"mediaUrl":%q}`, mediaKey, mediaURL))
 	resp, err := http.Post(f.srv.URL+"/api/rooms", "application/json", body)
 	if err != nil {
 		f.t.Fatal(err)
@@ -71,6 +76,11 @@ type client struct {
 // dial opens a socket and completes the hello/welcome handshake.
 func (f *fixture) dial(roomID, secret, name, mediaKey string) (*client, map[string]any, error) {
 	f.t.Helper()
+	return f.dialHello(room.Hello{Room: roomID, Secret: secret, Name: name, MediaKey: mediaKey})
+}
+
+func (f *fixture) dialHello(h room.Hello) (*client, map[string]any, error) {
+	f.t.Helper()
 	sock, err := ws.Dial(f.srv.URL+"/ws", nil)
 	if err != nil {
 		f.t.Fatal(err)
@@ -78,7 +88,7 @@ func (f *fixture) dial(roomID, secret, name, mediaKey string) (*client, map[stri
 	sock.ReadTimeout = 5 * time.Second
 	c := &client{t: f.t, sock: sock}
 	f.t.Cleanup(func() { sock.Close(ws.CloseNormal, "") })
-	c.send(room.Hello{Room: roomID, Secret: secret, Name: name, MediaKey: mediaKey})
+	c.send(h)
 	first, err := c.read()
 	if err != nil {
 		return c, nil, err
@@ -1049,6 +1059,78 @@ func TestOnlyTheFirstMemberNamesTheMedia(t *testing.T) {
 	anchor, _ := st["anchor"].(map[string]any)
 	if anchor["mediaKey"] != "yt:abc" {
 		t.Fatalf("anchor = %v", anchor)
+	}
+}
+
+// --- where the room's media can be opened ----------------------------------
+
+func anchorURL(t *testing.T, m map[string]any) any {
+	t.Helper()
+	a, ok := m["anchor"].(map[string]any)
+	if !ok {
+		t.Fatalf("no anchor in %v", m)
+	}
+	return a["mediaUrl"]
+}
+
+func TestTheRoomCarriesWhereItsMediaCanBeOpened(t *testing.T) {
+	// A joiner on another page can only be taken to the room's media if the
+	// room knows where it is: mediaKey is lossy on purpose (`yt:abc`,
+	// `laftel:/player/1/2`) and a URL cannot be rebuilt from it.
+	const url1 = "https://laftel.net/player/45462/93304"
+	const url2 = "https://laftel.net/player/45462/93295"
+	f := start(t, nil)
+	id, secret := f.createRoomAt("laftel:/player/45462/93304", url1)
+	a, wa, _ := f.dial(id, secret, "a", "laftel:/player/45462/93304")
+	if got := anchorURL(t, wa); got != url1 {
+		t.Fatalf("welcome mediaUrl = %v, want the one the room was created with", got)
+	}
+
+	// A later joiner's hello does not change it, any more than its mediaKey does.
+	b, wb, _ := f.dialHello(room.Hello{Room: id, Secret: secret, Name: "b",
+		MediaKey: "laftel:/player/45462/93295", MediaURL: url2})
+	if got := anchorURL(t, wb); got != url1 {
+		t.Fatalf("a joiner's hello moved the room's URL to %v", got)
+	}
+	a.await("members")
+
+	// A media command moves both, for everyone.
+	b.send(room.Cmd{ReqID: "m1", Kind: "media", MediaKey: "laftel:/player/45462/93295", MediaURL: url2})
+	if got := anchorURL(t, a.await("state")); got != url2 {
+		t.Fatalf("state mediaUrl = %v", got)
+	}
+	if got := anchorURL(t, b.await("ack")); got != url2 {
+		t.Fatalf("ack mediaUrl = %v", got)
+	}
+	// And one that says nothing about where clears it rather than keeping a
+	// URL for the media the room just left.
+	b.send(room.Cmd{ReqID: "m2", Kind: "media", MediaKey: "yt:abc"})
+	if got := anchorURL(t, a.await("state")); got != nil {
+		t.Fatalf("state mediaUrl = %v after a media command without one", got)
+	}
+}
+
+func TestTheFirstMemberNamesWhereTheMediaIs(t *testing.T) {
+	f := start(t, nil)
+	id, secret := f.createRoom("")
+	_, w, _ := f.dialHello(room.Hello{Room: id, Secret: secret, Name: "a",
+		MediaKey: "yt:abc", MediaURL: "https://www.youtube.com/watch?v=abc"})
+	if got := anchorURL(t, w); got != "https://www.youtube.com/watch?v=abc" {
+		t.Fatalf("welcome mediaUrl = %v", got)
+	}
+}
+
+func TestARoomNeverRepeatsAURLNoHonestClientSends(t *testing.T) {
+	f := start(t, nil)
+	id, secret := f.createRoomAt("yt:abc", "javascript:alert(1)")
+	a, w, _ := f.dial(id, secret, "a", "yt:abc")
+	if got := anchorURL(t, w); got != nil {
+		t.Fatalf("stored %v", got)
+	}
+	a.send(room.Cmd{ReqID: "m1", Kind: "media", MediaKey: "yt:def",
+		MediaURL: "https://www.youtube.com/watch?v=def#videosync=room.secret"})
+	if got := anchorURL(t, a.await("ack")); got != nil {
+		t.Fatalf("stored %v -- a fragment is where invite secrets live", got)
 	}
 }
 

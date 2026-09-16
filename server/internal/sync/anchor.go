@@ -9,6 +9,10 @@ type Anchor struct {
 	AtServerMs int64  `json:"atServerMs"`
 	Paused     bool   `json:"paused"`
 	MediaKey   string `json:"mediaKey"`
+	// MediaURL is where a member can open MediaKey, so a joiner who is on
+	// another page can be taken to it. Advisory and set by members: a client
+	// must check that it normalises to MediaKey before following it.
+	MediaURL string `json:"mediaUrl,omitempty"`
 }
 
 // Expected returns where a perfectly-synced client should be at server time T.

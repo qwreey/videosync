@@ -25,6 +25,8 @@ export interface HelloFrame {
   secret: string;
   name: string;
   mediaKey: string;
+  /** Only the first member's is kept -- see `mediaKey`. */
+  mediaUrl?: string;
 }
 
 export interface TimeFrame {
@@ -41,6 +43,7 @@ export interface CmdFrame {
   kind: CmdKind;
   positionMs: number;
   mediaKey?: string;
+  mediaUrl?: string;
 }
 
 /**

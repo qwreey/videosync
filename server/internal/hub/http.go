@@ -90,10 +90,11 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	mux.HandleFunc("POST /api/rooms", cors(cfg.AllowedOrigins, func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			MediaKey string `json:"mediaKey"`
+			MediaURL string `json:"mediaUrl"`
 		}
 		// An empty body is fine: the first member's `hello` names the media.
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body)
-		id, secret, err := h.Create(body.MediaKey)
+		id, secret, err := h.Create(body.MediaKey, body.MediaURL)
 		if err != nil {
 			writeJSON(w, 503, map[string]any{"error": err.Error()})
 			return

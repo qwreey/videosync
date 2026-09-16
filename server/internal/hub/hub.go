@@ -87,7 +87,7 @@ func (h *Hub) Close() {
 func (h *Hub) Clock() *Clock { return h.clock }
 
 // Create makes a room and returns its id and first join secret.
-func (h *Hub) Create(mediaKey string) (id, secret string, err error) {
+func (h *Hub) Create(mediaKey, mediaURL string) (id, secret string, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.rooms) >= h.cfg.MaxRooms {
@@ -100,7 +100,8 @@ func (h *Hub) Create(mediaKey string) (id, secret string, err error) {
 		conns: map[string]*conn{}, emptySinceMs: now,
 	}
 	l.room = room.New(id, h.cfg.NewCorrector(), h.cfg.Tunables,
-		vsync.Anchor{PositionMs: 0, AtServerMs: now, Paused: true, MediaKey: mediaKey}, l)
+		vsync.Anchor{PositionMs: 0, AtServerMs: now, Paused: true, MediaKey: mediaKey,
+			MediaURL: room.SanitizeMediaURL(mediaURL)}, l)
 	h.rooms[id] = l
 	return id, secret, nil
 }

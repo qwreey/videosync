@@ -88,7 +88,7 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 		// who arrives before its adapter has resolved the page joins with an
 		// empty key and changes it afterwards with a `media` command, which
 		// takes a seq and reaches everyone.
-		l.room.SetMediaKey(h.MediaKey)
+		l.room.SetMedia(h.MediaKey, h.MediaURL)
 	case a.MediaKey == "":
 		// The room has no media yet and this is not the first member: nothing
 		// to disagree with, and nothing to announce.

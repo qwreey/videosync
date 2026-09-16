@@ -16,7 +16,10 @@ import type { Platform, Store } from '@videosync/core/app/bootstrap.ts';
 import { PortTransport } from './porttransport.ts';
 
 const PREFIX = 'videosync.';
-const KEYS = ['server', 'room', 'secret', 'name'] as const;
+// Every key the app reads must be listed: only these are hydrated, and a key
+// that is saved but not listed is written and then never seen again -- which is
+// exactly how following the room to its video first lost the session.
+const KEYS = ['server', 'room', 'secret', 'name', 'rejoin'] as const;
 
 /**
  * `chrome.storage` is async and the panel is built before anything can await,
@@ -32,12 +35,14 @@ async function hydrate(): Promise<Store> {
       if (typeof v === 'string') cache.set(k, v);
     }
   } catch { /* first run, or storage is unavailable; defaults are fine */ }
+  let pending: Promise<unknown> = Promise.resolve();
   return {
     load: (key, fallback = '') => cache.get(PREFIX + key) ?? fallback,
     save: (key, value) => {
       cache.set(PREFIX + key, value);
-      void chrome.storage.local.set({ [PREFIX + key]: value });
+      pending = Promise.all([pending, chrome.storage.local.set({ [PREFIX + key]: value }).catch(() => {})]);
     },
+    flush: () => pending.then(() => {}),
   };
 }
 
@@ -50,11 +55,11 @@ function wsUrl(serverUrl: string): string {
 const platform = async (): Promise<Platform> => ({
   store: await hydrate(),
   makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
-  async createRoom(serverUrl, mediaKey) {
+  async createRoom(serverUrl, mediaKey, mediaUrl) {
     const url = new URL('/api/rooms', serverUrl).toString();
     const r = await new Promise<{ ok: boolean; status: number; body: string; error?: string }>((res) => {
       chrome.runtime.sendMessage(
-        { t: 'createRoom', url, body: JSON.stringify({ mediaKey }) },
+        { t: 'createRoom', url, body: JSON.stringify({ mediaKey, mediaUrl }) },
         (out) => res(out ?? { ok: false, status: 0, body: '', error: String(chrome.runtime.lastError?.message) }),
       );
     });

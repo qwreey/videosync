@@ -131,6 +131,13 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   rewound by the whole lead when their own ack landed (~650 ms on Laftel). The re-pause is an
   applied transition — `applyingRemote` + `rebaseline(pos, paused)` — never a flag waiting for the
   ack, so a play the gate holds or drops just leaves a paused member in a paused room.
+- **The extension's store only reads the keys it lists.** `content.ts` hydrates `chrome.storage`
+  for a fixed `KEYS` list before anything can await; a key saved but not listed is written and never
+  seen again. And its writes are async — anything that must survive a navigation awaits
+  `store.flush()` first.
+- **`mediaUrl` comes from another member; follow it only through `followableUrl`.** It must
+  normalise to the room's `mediaKey` and be on a known provider or the current site. Only the room
+  moving (join, `media`) takes a member there — their own navigation never is undone.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
   The detector reports play-state *transitions* only, so a member who was already playing when the
   room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is

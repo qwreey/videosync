@@ -20,9 +20,12 @@ reports decide who needs correcting and whether the readiness gate fires — the
 ## Anchor — the single source of truth
 
 ```
-anchor = { positionMs, atServerMs, paused, mediaKey }
+anchor = { positionMs, atServerMs, paused, mediaKey, mediaUrl? }
 expected(T) = paused ? positionMs : positionMs + (T - atServerMs)
 ```
+
+`mediaUrl` is where a member can open `mediaKey` (see "Amendment: the room says where its media is",
+§2). It plays no part in `expected()`.
 Every position question on either side is answered by `expected()`. Nothing else.
 
 ## 1. Clock sync (§1)
@@ -47,7 +50,7 @@ Sample every 5 s, plus 5 rapid samples on connect. `serverNow = clientNow + offs
 
 ## 2. Join
 
-Client → `{"t":"hello","room":"<id>","secret":"<join secret>","name":"...","mediaKey":"..."}`
+Client → `{"t":"hello","room":"<id>","secret":"<join secret>","name":"...","mediaKey":"...","mediaUrl":"..."}`
 Server → `{"t":"welcome","you":"<clientId>","seq":<n>,"anchor":{...},"members":[...],"serverMs":<n>,"mediaKey":"..."}`
 
 `hello` **must be the first frame**; anything else closes the connection. A second `hello` on a
@@ -64,13 +67,40 @@ Join is refused with `{"t":"error","code":"join_refused"}` for both an unknown r
 secret — deliberately the same message, so an unauthenticated peer cannot probe which room ids
 exist. A full room is refused with `code:"room_full"`.
 
+### Amendment: the room says where its media is
+
+`mediaKey` is lossy on purpose (`yt:abc`, `laftel:/player/45462/93304`), so a room could say *what*
+it is watching but not *where*, and a joiner on another page had nothing to follow. The invite
+link carried the inviter's URL, which goes stale the moment the room moves on.
+
+The anchor now carries an optional `mediaUrl`, set by the same things that set `mediaKey` and
+nothing else: `POST /api/rooms`, the first member's `hello` while the room has no media, and a
+`media` command (a `media` command without one clears it, rather than keeping a URL for media the
+room has left). A later joiner's `hello.mediaUrl` is ignored, as its `mediaKey` is.
+
+What a client sends is canonical and carries nothing personal: the provider's watch URL
+(`https://www.youtube.com/watch?v=<id>`) or origin + path. Never the query string (session tokens,
+tracking) and never the fragment (where an invite keeps the room secret). The server drops
+anything that is not http(s), has credentials or a fragment, or is over 512 bytes.
+
+The URL comes from a member, so a client **checks it before following it**: it must normalise to
+exactly the anchor's `mediaKey`, and it must be on a provider the client knows or on the site the
+member is already on — otherwise anyone in a room could send everyone else to a page of their
+choosing. A site added only by a manifest `matches` entry is therefore followable from that same
+site, not from another one.
+
+A client that finds the room on other media **because it joined or because the room moved** takes
+the member there after a short grace period with a "stay here" button, and carries the session
+across the page load so it rejoins on arrival. A member who navigates away **themselves** is never
+taken back; they are offered "move the room here", as before.
+
 Membership changes are broadcast:
 `{"t":"members","members":[{"id","name","suspended","ready"}],"joined":"<id>"|"left":"<id>"}`.
 The joiner gets the roster in its `welcome` instead, so it is excluded from that broadcast.
 
 ## 3. Commands (§2, §5)
 
-Client → `{"t":"cmd","reqId":"<uuid>","kind":"play|pause|seek|media","positionMs":<n>,"mediaKey":"..."}`
+Client → `{"t":"cmd","reqId":"<uuid>","kind":"play|pause|seek|media","positionMs":<n>,"mediaKey":"...","mediaUrl":"..."}`
 
 Server takes the per-room mutex, assigns a monotonic `seq`, updates the anchor, then:
 
@@ -376,7 +406,7 @@ RFC 6455 forbids).
 Rooms: >=128-bit CSPRNG id, rotatable join secret (the no-host replacement for "kick"), in-memory,
 idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control this design has.
 
-Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"..."}` returns
+Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"...","mediaUrl":"..."}` returns
 `{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`.
 
 Both endpoints send **CORS** headers, and this is not a nicety: a userscript or

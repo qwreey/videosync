@@ -70,6 +70,11 @@ export interface Anchor {
   readonly atServerMs: number;
   readonly paused: boolean;
   readonly mediaKey: string;
+  /**
+   * Where a member can open `mediaKey`, if whoever named the media said.
+   * Advisory: follow it only through `followableUrl`.
+   */
+  readonly mediaUrl?: string;
 }
 
 export function expectedAt(a: Anchor, serverMs: number): number {

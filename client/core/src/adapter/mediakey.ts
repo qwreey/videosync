@@ -19,6 +19,11 @@ export interface MediaKeyRule {
   readonly hosts: readonly string[];
   /** Returns the key body, or null to fall through to the generic rule. */
   key(u: URL): string | null;
+  /**
+   * Where the media with this key body can be opened. Only for a provider
+   * whose identity is not simply its path; the generic rule is origin + path.
+   */
+  url?(body: string): string;
 }
 
 /** `/watch?v=ID`, `/embed/ID`, `/shorts/ID`, `/live/ID`, and youtu.be/ID. */
@@ -42,16 +47,16 @@ const YOUTUBE: MediaKeyRule = {
     // what is on screen right now, and both differ between two people who
     // reached the same video by different routes.
   },
+  url: (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`,
 };
 
 /**
  * Laftel is a priority provider (D1) and uses the generic path rule.
  *
- * This is listed explicitly rather than left implicit because it is an
- * assumption, not a measurement: `research/provider-player-control.md` confirms
- * the *player* is a plain scriptable `<video>` but says nothing about the URL
- * shape. If a Laftel watch URL turns out to carry the episode in a query
- * parameter, this is the one place that has to change.
+ * Listed explicitly because it is a priority provider, and because the rule is
+ * now measured rather than assumed: `/player/<series>/<episode>` changes per
+ * episode, including across the site's own client-side navigation, and is
+ * stable across a reload (docs/BROWSER-FINDINGS.md §14).
  */
 const LAFTEL: MediaKeyRule = {
   id: 'laftel',
@@ -102,4 +107,49 @@ export function normalizeMediaKey(href: string): string | null {
   const path = u.pathname.replace(/\/+$/, '');
   if (path === '' || path === '/') return null;
   return `${id}:${path}`;
+}
+
+/**
+ * Where the media at `href` can be opened by somebody else: the provider's
+ * canonical watch URL, or origin + path. Never the query string or fragment --
+ * a query is where sites keep session tokens and tracking, and a fragment is
+ * where an invite carries the room secret. Null where `normalizeMediaKey` is.
+ */
+export function watchUrl(href: string): string | null {
+  const key = normalizeMediaKey(href);
+  if (!key) return null;
+  const u = new URL(href);
+  const rule = providerFor(u.hostname);
+  const explicit = rule?.key(u) ?? null;
+  if (explicit && rule?.url) return rule.url(explicit);
+  return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
+}
+
+/**
+ * The URL a member may be taken to so they can watch `roomKey`, or null.
+ *
+ * The URL comes from another member, so it is checked rather than trusted: it
+ * must name exactly the room's media, and it must be on a provider this code
+ * knows or on the site the member is already on. Without that, anyone in a
+ * room could send everyone else to a page of their choosing.
+ */
+export function followableUrl(url: string | undefined, roomKey: string, currentHref: string): string | null {
+  if (!url || !roomKey) return null;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  if (u.username || u.password || u.hash) return null;
+  if (normalizeMediaKey(u.href) !== roomKey) return null;
+  let here: URL | null = null;
+  try { here = new URL(currentHref); } catch { /* no current site to compare */ }
+  const known = providerFor(u.hostname) !== null;
+  const sameSite = here !== null && here.hostname.toLowerCase() === u.hostname.toLowerCase();
+  if (!known && !sameSite) return null;
+  // Never downgrade: a known provider is https, whatever the URL says.
+  if (known && u.protocol !== 'https:') return null;
+  return u.href;
 }

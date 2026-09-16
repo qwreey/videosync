@@ -752,6 +752,31 @@ the rate-release fix. Six trials for each way of pressing
   Laftel tabs that had left their room were found playing at 0.997× and
   1.036×: `stop()` never undid the servo's last nudge.
 
+## 18. Joining takes you to the room's video (`probe-follow.mjs`)
+
+The user request from 2026-08-31, built and run end to end on 2026-09-16: a
+Laftel creator, a joiner who starts on YouTube, the real extension, the real
+server. **11/11** (`results/follow.json`).
+
+| step | measured |
+|---|---|
+| B, on YouTube, joins by code | taken to the room's Laftel episode **1.6–1.9 s** later (1.5 s of it is the "stay here" grace period) |
+| B's page loads | **rejoins the same room unprompted**, 0.3–0.4 s after arriving |
+| A moves to another episode in Laftel's SPA and presses "move the room here" | A is not navigated by its own command; B follows **1.7 s** later and rejoins |
+| B clicks a different episode itself | stays there (checked 4 s later), still in the room, and is offered "move the room here" |
+| B joins again and presses "stay here" | stays on YouTube, still in the room |
+
+The first run found that the rejoin never happened: the extension hydrates
+`chrome.storage` for a fixed list of keys, and the new `rejoin` key was written
+but never read back on the next page. It is listed now, and the store gained a
+`flush()` that the navigation awaits, because `chrome.storage.local.set` is
+asynchronous and the page is about to unload.
+
+Also learned on the way: an extension loaded with `--load-extension` does not
+survive `chrome.runtime.reload()` — it is removed rather than reloaded, and
+open tabs keep an isolated world named `VideoSync` with no `chrome.runtime.id`
+and no `window.VideoSync`. Restart the browser instead.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

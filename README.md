@@ -25,7 +25,9 @@ cd ../client/extension && npm install && npm run build
 
 Then `chrome://extensions` → Developer mode → **Load unpacked** → pick
 `client/extension/dist`. Open a YouTube video, hit **방 만들기**, and send the
-invite link to a friend.
+invite link — or just the room ID and key — to a friend. Wherever they join
+from, the room takes them to what it is watching, and takes everyone along when
+somebody moves it to another video.
 
 > **Use the extension if your server is on your own machine or your LAN.**
 > Measured: a page on a public origin — every OTT site — cannot reach a loopback

@@ -79,9 +79,9 @@ function wsUrl(serverUrl: string): string {
 const platform: Platform = {
   store: { load, save },
   makeTransport: (serverUrl) => new WebSocketTransport(wsUrl(serverUrl)),
-  async createRoom(serverUrl, mediaKey) {
+  async createRoom(serverUrl, mediaKey, mediaUrl) {
     const res = await fetch(new URL('/api/rooms', serverUrl).toString(), {
-      method: 'POST', body: JSON.stringify({ mediaKey }),
+      method: 'POST', body: JSON.stringify({ mediaKey, mediaUrl }),
     });
     if (!res.ok) throw new Error(`서버가 ${res.status}로 거절했어요`);
     return await res.json() as { roomId: string; secret: string };

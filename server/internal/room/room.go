@@ -176,10 +176,12 @@ func (r *Room) Member(id string) *Member { return r.members[id] }
 func (r *Room) Size() int                { return len(r.members) }
 func (r *Room) SetSink(s Sink)           { r.sink = s }
 
-// SetMediaKey names what the room is watching. Only meaningful before anyone
+// SetMedia names what the room is watching, and where to open it. Only meaningful before anyone
 // has committed to a media: changing it afterwards is a `media` command, which
 // takes a seq and re-anchors like every other transition.
-func (r *Room) SetMediaKey(k string) { r.anchor.MediaKey = k }
+func (r *Room) SetMedia(key, url string) {
+	r.anchor.MediaKey, r.anchor.MediaURL = key, SanitizeMediaURL(url)
+}
 
 // IDs returns the member ids in a stable order.
 func (r *Room) IDs() []string { return r.ids }
@@ -398,7 +400,7 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		// It starts paused -- nobody has loaded it yet, and the readiness gate
 		// is the mechanism that decides when the room may start.
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
-			Paused: true, MediaKey: m.MediaKey}
+			Paused: true, MediaKey: m.MediaKey, MediaURL: SanitizeMediaURL(m.MediaURL)}
 	}
 	r.lastCmdWhen = when
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}

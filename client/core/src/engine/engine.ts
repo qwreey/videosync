@@ -22,6 +22,8 @@ export interface EngineConfig {
   name: string;
   /** Normalized provider+content identity. NOT the raw URL. */
   mediaKey: string;
+  /** Where `mediaKey` can be opened (`watchUrl`), for a room this member names. */
+  mediaUrl?: string;
 
   evalIntervalMs: number;
   hbIntervalMs: number;
@@ -259,6 +261,7 @@ export class SyncEngine {
    * can change it mid-session without a reload.
    */
   private localMediaKey: string;
+  private localMediaUrl: string;
 
   private pending: Scheduled[] = [];
   private applyTimer = 0;
@@ -335,7 +338,7 @@ export class SyncEngine {
 
   private record(dir: 'tx' | 'rx', t: string, f: Record<string, unknown>): void {
     const detail: Record<string, unknown> = {};
-    for (const k of ['seq', 'when', 'kind', 'positionMs', 'mode', 'rate', 'code', 'reqId'] as const) {
+    for (const k of ['seq', 'when', 'kind', 'positionMs', 'mode', 'rate', 'code', 'reqId', 'mediaKey', 'mediaUrl'] as const) {
       if (f[k] !== undefined) detail[k] = f[k];
     }
     // The anchor is the thing you actually want when reading a trace back.
@@ -356,6 +359,7 @@ export class SyncEngine {
     this.cfg = cfg;
     this.ev = events;
     this.localMediaKey = cfg.mediaKey;
+    this.localMediaUrl = cfg.mediaUrl ?? '';
     this.pendingAdopt = cfg.adoptLocalStateOnJoin;
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
@@ -394,7 +398,8 @@ export class SyncEngine {
    * Tell the engine what this member is now watching. The room does not follow
    * -- that takes a `media` command, which somebody has to choose.
    */
-  setLocalMediaKey(key: string): void {
+  setLocalMediaKey(key: string, url = ''): void {
+    this.localMediaUrl = url;
     if (key === this.localMediaKey) return;
     this.localMediaKey = key;
     this.detector.reset();
@@ -468,6 +473,7 @@ export class SyncEngine {
       // The CURRENT media, not the one we joined with: a reconnect after a
       // navigation would otherwise announce the wrong thing.
       mediaKey: this.localMediaKey,
+      ...(this.localMediaUrl ? { mediaUrl: this.localMediaUrl } : {}),
     });
     // Rapid probes first: nothing may be scheduled against an unsettled offset.
     for (let i = 0; i < this.cfg.connectProbes; i++) {
@@ -1010,11 +1016,12 @@ export class SyncEngine {
     if (!s.paused) this.play();
   }
 
-  private send(kind: CmdKind, positionMs: number, mediaKey?: string): string {
+  private send(kind: CmdKind, positionMs: number, media?: { key: string; url?: string | undefined }): string {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;
     this.tx({
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),
-      ...(mediaKey === undefined ? {} : { mediaKey }),
+      ...(media === undefined ? {} : { mediaKey: media.key }),
+      ...(media?.url ? { mediaUrl: media.url } : {}),
     });
     this.stats.cmdsSent++;
     return reqId;
@@ -1024,8 +1031,9 @@ export class SyncEngine {
   play(): string { return this.send('play', this.d.adapter.readState().positionS * 1000); }
   pause(): string { return this.send('pause', this.d.adapter.readState().positionS * 1000); }
   seek(positionS: number): string { return this.send('seek', positionS * 1000); }
-  setMedia(mediaKey: string, positionMs = 0): string {
-    return this.send('media', positionMs, mediaKey);
+  /** Point the room at other media. `mediaUrl` is where the others can open it. */
+  setMedia(mediaKey: string, positionMs = 0, mediaUrl?: string): string {
+    return this.send('media', positionMs, { key: mediaKey, url: mediaUrl });
   }
   chat(text: string): void { this.tx({ t: 'chat', text }); }
   rotateSecret(): void { this.tx({ t: 'rotate' }); }

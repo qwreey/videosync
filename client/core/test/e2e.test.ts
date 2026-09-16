@@ -77,9 +77,9 @@ before(async () => {
 
 after(() => { proc?.kill(); });
 
-async function createRoom(mediaKey: string): Promise<{ roomId: string; secret: string }> {
+async function createRoom(mediaKey: string, mediaUrl?: string): Promise<{ roomId: string; secret: string }> {
   const r = await fetch(`${base}/api/rooms`, {
-    method: 'POST', body: JSON.stringify({ mediaKey }),
+    method: 'POST', body: JSON.stringify({ mediaKey, mediaUrl }),
   });
   assert.equal(r.status, 201);
   return await r.json() as { roomId: string; secret: string };
@@ -495,6 +495,28 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       assert.equal(a.engine.stats.playsHeld, 1, 'the press was not held');
       assert.equal(a.engine.stats.correctionsSeek, 0);
       assert.equal(a.engine.stats.cmdsSent, 2, 'the hold leaked a command (seek + play expected)');
+    } finally {
+      a.engine.stop(); b.engine.stop();
+    }
+  });
+
+  // Joining by code has to be able to take a member to the room's video, and
+  // mediaKey cannot be turned back into a URL. The URL has to survive the
+  // real server: from room creation to a joiner's anchor, and across a media
+  // command to everybody.
+  it('tells a joiner where the room\'s media can be opened, and keeps it current', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const first = 'https://laftel.net/player/45462/93304';
+    const next = 'https://laftel.net/player/45462/93295';
+    const { roomId, secret } = await createRoom('e2e:media', first);
+    const a = peer(roomId, secret, 'a');
+    const b = peer(roomId, secret, 'b');
+    try {
+      await joined(a, b);
+      assert.equal(b.engine.currentAnchor.mediaUrl, first);
+      a.engine.setMedia('laftel:/player/45462/93295', 0, next);
+      await waitFor(() => b.engine.currentAnchor.mediaUrl === next, 4000, 'the new URL to reach b');
+      assert.equal(a.engine.currentAnchor.mediaUrl, next, 'the sender\'s own ack lost the URL');
     } finally {
       a.engine.stop(); b.engine.stop();
     }

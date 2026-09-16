@@ -47,7 +47,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 74 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
+  build step. 80 unit tests, plus 15 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -66,6 +66,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   | `probe-extension.mjs` | the same with the extension shim, `dump()` included | 12/12 |
   | `probe-youtube.mjs` | the real YouTube player | 9/9 |
   | `probe-laftel.mjs` | the real Laftel player, logged in, attached over CDP (not the container) | 8/8 — §14 |
+  | `probe-follow.mjs` | joining by code takes you to the room's video, and following it when it moves | 11/11 — §18 |
   | `probe-laftel-room.mjs` | two members in one room: the `play` jump, pause, the gate; `PRESS=adapter\|click\|space`, `MATCH=` for YouTube | Laftel §15–16, YouTube §17 |
   | `probe-csp.mjs` | can a page reach a private-address server? | no — §8 |
   | `probe-ext.mjs` | what an MV3 content script may do | §9 |
@@ -123,7 +124,7 @@ exists because of that.
 
 ```bash
 mise run test          # Go + TS + both shims' typecheck
-mise run test-e2e      # 14 tests, real engines over real sockets against a real videosyncd
+mise run test-e2e      # 15 tests, real engines over real sockets against a real videosyncd
 
 cd server && go build -o videosyncd ./cmd/videosyncd
 ./videosyncd -addr 127.0.0.1:8787 -verbose -idle-ttl 30m
@@ -229,17 +230,13 @@ certificate, or a tunnel that gives you one:
 
 ### 3. Then, in rough order of value
 
-- **Joining should take you to the video (user request, 2026-08-31).** Today nothing ever
-  navigates anybody: a joiner on a different page gets a mismatch notice whose only button is
-  `이 영상으로 방 옮기기` — it moves the *room* to them. The intended flow is the invite link,
-  which carries `location.href`; the user's own testing found that fragile ("url 이 낡아") and
-  wants the Netflix-Party shape instead: **join by code in the widget, and the room takes you to
-  what it is watching, with the link kept in sync as the room's media changes.**
-  What makes this more than a button: **`mediaKey` is lossy on purpose** — `yt:abc`,
-  `laftel:/player/45462/93304` — so the room cannot reconstruct a watch URL from it. The room
-  would have to carry the real URL alongside the key, which touches `hello`, the `media` command,
-  the anchor and `PROTOCOL.md`, and it needs a rule for what a *stale* URL means when the room has
-  moved on. Deliberately backlogged, not built.
+- ~~**Joining should take you to the video (user request, 2026-08-31).**~~ **Built (2026-09-16).**
+  The anchor carries a canonical `mediaUrl` (PROTOCOL §2 amendment); a member who joins, or whose
+  room moves, is taken there after a 1.5 s "stay here" window and rejoins on arrival; a member's
+  own navigation is never undone. Validated end to end, YouTube → Laftel and episode to episode,
+  11/11 (BROWSER-FINDINGS §18). Open ends: the invite link still carries the inviter's page as
+  well as the code (harmless now — the room corrects it on join), and following only goes to a
+  provider in `mediakey.ts`'s `RULES` or to the member's current site.
 - **Firefox.** Deliberately not claimed: the manifest used to carry a gecko id
   while declaring `background.service_worker`, which Firefox has never shipped —
   the background would not have existed and every session would have died at the
@@ -352,7 +349,9 @@ reason.
   the profile persists in `.cache/`. A fresh profile has **no Widevine**; copy
   `~/.config/net.imput.helium/WidevineCdm` into it. Helium ships uBlock Origin, which injects its
   own isolated worlds, so CDP code must pick the world named `VideoSync`
-  (`Session.isolatedName` in `cdp.mjs`). The claude-in-chrome MCP also reaches the user's main
+  (`Session.isolatedName` in `cdp.mjs`). After rebuilding the extension, **restart** that
+  browser — `chrome.runtime.reload()` removes a `--load-extension` extension instead of reloading
+  it. The claude-in-chrome MCP also reaches the user's main
   Helium window, but a tab it opens there can be `hidden` and then loads no media.
 
 - The host's package manager state is **not persistent**. Anything installed with `pacman`

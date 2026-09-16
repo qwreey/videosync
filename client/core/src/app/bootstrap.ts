@@ -9,7 +9,7 @@
  * that would drift.
  */
 import { Html5Adapter } from '../adapter/html5.ts';
-import { normalizeMediaKey } from '../adapter/mediakey.ts';
+import { followableUrl, normalizeMediaKey, watchUrl } from '../adapter/mediakey.ts';
 import { PageWatcher } from '../adapter/resolve.ts';
 import { SwappableAdapter } from '../adapter/swappable.ts';
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../engine/engine.ts';
@@ -23,6 +23,11 @@ import { Panel } from '../ui/panel.ts';
 export interface Store {
   load(key: string, fallback?: string): string;
   save(key: string, value: string): void;
+  /**
+   * Resolves once every `save` so far has reached durable storage. Needed only
+   * before leaving the page; a store whose writes are synchronous omits it.
+   */
+  flush?(): Promise<void>;
 }
 
 export interface Platform {
@@ -32,7 +37,7 @@ export interface Platform {
   makeTransport(serverUrl: string): Transport;
   /** Room creation is HTTP, and the extension cannot make that call from the
    *  page either -- so it is injected alongside the transport. */
-  createRoom(serverUrl: string, mediaKey: string): Promise<{ roomId: string; secret: string }>;
+  createRoom(serverUrl: string, mediaKey: string, mediaUrl: string): Promise<{ roomId: string; secret: string }>;
   /**
    * Why this server cannot be reached from this page, if it cannot. Returns a
    * human sentence or null. The two shims have genuinely different answers:
@@ -73,6 +78,35 @@ export interface VideoSyncApi {
   };
 }
 
+/** How long a member sees "moving to the room's video" before it happens. */
+const FOLLOW_DELAY_MS = 1500;
+/** How long a pending rejoin survives, i.e. how slow a navigation may be. */
+const REJOIN_TTL_MS = 60_000;
+
+/**
+ * A session carried across a full-page navigation to the room's media. The
+ * page we arrive on is a fresh document with a fresh content script, so
+ * without this, following the room would also leave it.
+ */
+interface Rejoin {
+  server: string; roomId: string; secret: string; name: string;
+  /** The media we were sent to. Arriving anywhere else joins nothing. */
+  key: string;
+  until: number;
+}
+
+function readRejoin(store: Store): Rejoin | null {
+  const raw = store.load('rejoin', '');
+  if (!raw) return null;
+  store.save('rejoin', '');           // one use, whatever happens next
+  try {
+    const r = JSON.parse(raw) as Rejoin;
+    return typeof r.until === 'number' && Date.now() < r.until ? r : null;
+  } catch {
+    return null;
+  }
+}
+
 /** `#videosync=<room>.<secret>` -- how an invite link is shared. */
 function readInviteHash(hash: string): { roomId: string; secret: string } | null {
   const m = /[#&]videosync=([^.&]+)\.([^&]+)/.exec(hash);
@@ -84,7 +118,13 @@ export function start(p: Platform): App {
   const adapter = new SwappableAdapter();
   let engine: SyncEngine | null = null;
   let mediaKey = normalizeMediaKey(location.href) ?? '';
+  let mediaUrl = watchUrl(location.href) ?? '';
   let roomMediaKey = '';
+  let roomMediaUrl = '';
+  let followTimer = 0;
+  /** A room media this member chose not to be taken to. */
+  let stayedAwayFrom = '';
+  let session: { server: string; roomId: string; secret: string; name: string } | null = null;
   let waitingOn: readonly string[] = [];
   let members: readonly MemberInfo[] = [];
 
@@ -111,11 +151,12 @@ export function start(p: Platform): App {
     onChange: (el, href) => {
       adapter.setTarget(el ? new Html5Adapter(el, 'html5') : null);
       const key = normalizeMediaKey(href) ?? '';
+      mediaUrl = watchUrl(href) ?? '';
       if (key !== mediaKey) {
         mediaKey = key;
         // The engine has to know before its next evaluation, or it will judge
         // the new element's position against the old video's timeline.
-        engine?.setLocalMediaKey(key);
+        engine?.setLocalMediaKey(key, mediaUrl);
         onMediaChanged();
       }
       refreshStatus();
@@ -128,19 +169,80 @@ export function start(p: Platform): App {
    *
    * Tempting for the next-episode case, but with no host an accidental
    * navigation by any member would drag everybody off what they are watching
-   * and nobody could undo it. So it becomes a button.
+   * and nobody could undo it. So it becomes a button. For the same reason a
+   * LOCAL navigation never takes this member back to the room's video either:
+   * they just chose to leave it.
    */
   function onMediaChanged(): void {
+    cancelFollow();
     if (!engine || engine.state !== 'joined') return;
-    if (!mediaKey || mediaKey === roomMediaKey) return;
+    if (!mediaKey || mediaKey === roomMediaKey) {
+      panel.clearMediaAction();
+      return;
+    }
+    offerMoveRoom();
+  }
+
+  function offerMoveRoom(): void {
+    if (!mediaKey) {
+      panel.setMediaAction(`방은 다른 영상을 보고 있어요 (방: ${roomMediaKey})`, '방 영상 열기', () => {
+        stayedAwayFrom = '';
+        followRoom(0);
+      });
+      return;
+    }
     panel.setMediaAction(
       `이 영상은 방과 달라요 (방: ${roomMediaKey || '없음'})`,
       '이 영상으로 방 옮기기',
       () => {
-        engine?.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000));
+        engine?.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000), mediaUrl);
         panel.clearMediaAction();
       },
     );
+  }
+
+  function cancelFollow(): void {
+    if (followTimer) clearTimeout(followTimer);
+    followTimer = 0;
+  }
+
+  /**
+   * The room is watching something else than this page, because we just
+   * joined it or because it moved: take the member there. This is what makes
+   * joining by code work -- the invite link's own URL goes stale as soon as the
+   * room moves on, the room's does not.
+   */
+  function followRoom(delayMs = FOLLOW_DELAY_MS): void {
+    cancelFollow();
+    if (!engine || engine.state !== 'joined' || !session) return;
+    if (!roomMediaKey || roomMediaKey === mediaKey) {
+      panel.clearMediaAction();
+      return;
+    }
+    const target = followableUrl(roomMediaUrl, roomMediaKey, location.href);
+    if (!target || stayedAwayFrom === roomMediaKey) {
+      offerMoveRoom();
+      return;
+    }
+    const s = session;
+    const go = async () => {
+      followTimer = 0;
+      if (!engine || engine.state !== 'joined') return;
+      const rejoin: Rejoin = { ...s, key: roomMediaKey, until: Date.now() + REJOIN_TTL_MS };
+      p.store.save('rejoin', JSON.stringify(rejoin));
+      panel.setStatus('방이 보는 영상으로 이동하는 중…');
+      // The write is what carries the session to the next page; an async store
+      // that is still writing when the document unloads would drop it.
+      await p.store.flush?.();
+      location.assign(target);
+    };
+    if (delayMs <= 0) { void go(); return; }
+    panel.setMediaAction('방이 보는 영상으로 곧 이동해요', '여기 있기', () => {
+      cancelFollow();
+      stayedAwayFrom = roomMediaKey;
+      offerMoveRoom();
+    });
+    followTimer = setTimeout(() => { void go(); }, delayMs) as unknown as number;
   }
 
   function refreshStatus(): void {
@@ -161,7 +263,7 @@ export function start(p: Platform): App {
     if (why) { panel.setStatus(why, 'err'); throw new Error(why); }
     panel.setStatus('방을 만드는 중…');
     try {
-      const out = await p.createRoom(serverUrl, mediaKey);
+      const out = await p.createRoom(serverUrl, mediaKey, mediaUrl);
       panel.setFields(out);
       // The creator seeds the room from their own player. Only here: a joiner
       // conforms to the anchor, a creator IS the anchor.
@@ -201,6 +303,7 @@ export function start(p: Platform): App {
     p.store.save('room', roomId);
     p.store.save('secret', secret);
     p.store.save('name', name);
+    session = { server: serverUrl, roomId, secret, name };
 
     engine = new SyncEngine({
       adapter,
@@ -211,7 +314,7 @@ export function start(p: Platform): App {
       isHidden: () => document.hidden,
     }, {
       ...DEFAULT_ENGINE_CONFIG,
-      room: roomId, secret, name: name || '익명', mediaKey,
+      room: roomId, secret, name: name || '익명', mediaKey, mediaUrl,
       adoptLocalStateOnJoin: adopt,
     }, {
       onStatus: (s: EngineStatus, detail?: string) => {
@@ -236,25 +339,24 @@ export function start(p: Platform): App {
       onSecretRotated: (sec, by) => {
         panel.setFields({ secret: sec });
         p.store.save('secret', sec);
+        if (session) session = { ...session, secret: sec };
         panel.addChat('', by === engine?.id
           ? '비밀키를 교체했어요. 예전 링크로는 아무도 들어올 수 없어요.'
           : '누군가 비밀키를 교체했어요. 새 초대 링크를 공유해주세요.', true);
       },
-      onMediaMismatch: (room, yours) => {
-        roomMediaKey = room;
-        panel.setMediaAction(
-          `방은 다른 영상을 보고 있어요 (방: ${room} / 나: ${yours})`,
-          '이 영상으로 방 옮기기',
-          () => {
-            engine?.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000));
-            panel.clearMediaAction();
-          },
-        );
+      onMediaMismatch: (room) => {
+        // The welcome already carried the anchor, so this only confirms what
+        // `onAnchor` acted on. Kept for a server that sends it first.
+        if (room !== roomMediaKey) {
+          roomMediaKey = room;
+          followRoom();
+        }
       },
       onAnchor: (a) => {
+        roomMediaUrl = a.mediaUrl ?? '';
         if (a.mediaKey !== roomMediaKey) {
           roomMediaKey = a.mediaKey;
-          if (roomMediaKey && mediaKey && roomMediaKey === mediaKey) panel.clearMediaAction();
+          followRoom();
         }
       },
       onAutoplayBlocked: () => panel.showGesturePrompt(document),
@@ -272,11 +374,15 @@ export function start(p: Platform): App {
   }
 
   function leave(): void {
+    cancelFollow();
     engine?.stop();
     engine = null;
+    session = null;
     members = [];
     waitingOn = [];
     roomMediaKey = '';
+    roomMediaUrl = '';
+    stayedAwayFrom = '';
     panel.setJoined(false);
     panel.setMembers([], '', []);
     panel.clearMediaAction();
@@ -289,6 +395,18 @@ export function start(p: Platform): App {
   window.addEventListener('pagehide', onPageHide);
 
   refreshStatus();
+
+  // Arriving from `followRoom`: pick the session back up, but only on the page
+  // we were sent to. A redirect to a login page joins nothing.
+  const rejoin = readRejoin(p.store);
+  if (rejoin) {
+    if (rejoin.key === mediaKey) {
+      panel.setFields({ roomId: rejoin.roomId, secret: rejoin.secret });
+      join(rejoin.server, rejoin.roomId, rejoin.secret, rejoin.name);
+    } else {
+      panel.setStatus('방 영상으로 이동하지 못했어요. 로그인이 필요한지 확인한 뒤 다시 참가해주세요.', 'warn');
+    }
+  }
 
   const api: VideoSyncApi = {
     engine: () => engine,
@@ -303,7 +421,9 @@ export function start(p: Platform): App {
         at: new Date().toISOString(),
         url: location.href,
         mediaKey,
+        mediaUrl,
         roomMediaKey,
+        roomMediaUrl,
         engine: engine ? {
           state: engine.state,
           selfId: engine.id,

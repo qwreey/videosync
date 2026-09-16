@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { normalizeMediaKey, providerId } from '../src/adapter/mediakey.ts';
+import { followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
 import { pickVideo } from '../src/adapter/resolve.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, VirtualTime } from './fakes.ts';
@@ -153,5 +153,62 @@ describe('an adapter whose element gets replaced', () => {
     s.on('elementreplaced', () => { swaps++; });
     s.setTarget(new FakePlayer(new VirtualTime()));
     assert.equal(swaps, 1);
+  });
+});
+
+describe('where a room\'s media can be opened', () => {
+  it('is the canonical watch URL, with nothing personal in it', () => {
+    assert.equal(watchUrl('https://www.youtube.com/watch?v=abc123&t=90s&list=PL1&si=tracking'),
+      'https://www.youtube.com/watch?v=abc123');
+    assert.equal(watchUrl('https://youtu.be/abc123?t=4'), 'https://www.youtube.com/watch?v=abc123');
+    assert.equal(watchUrl('https://laftel.net/player/45462/93304?token=secret#videosync=room.key'),
+      'https://laftel.net/player/45462/93304');
+    assert.equal(watchUrl('https://laftel.net/'), null, 'a front page names no media');
+  });
+
+  it('round-trips: the URL names the same media as the page it came from', () => {
+    for (const href of [
+      'https://www.youtube.com/watch?v=abc123&t=90s',
+      'https://m.youtube.com/watch?v=abc123',
+      'https://laftel.net/player/45462/93304/',
+      'https://example.org/videos/42?x=1',
+    ]) {
+      assert.equal(normalizeMediaKey(watchUrl(href)!), normalizeMediaKey(href), href);
+    }
+  });
+
+  it('is followed only when it names exactly the room\'s media', () => {
+    const here = 'https://laftel.net/player/45462/93295';
+    const room = 'laftel:/player/45462/93304';
+    assert.equal(followableUrl('https://laftel.net/player/45462/93304', room, here),
+      'https://laftel.net/player/45462/93304');
+    // Another episode, a lookalike host, and a different provider altogether.
+    assert.equal(followableUrl('https://laftel.net/player/45462/99999', room, here), null);
+    assert.equal(followableUrl('https://laftel.net.evil.example/player/45462/93304', room, here), null);
+    assert.equal(followableUrl('https://www.youtube.com/watch?v=x', room, here), null);
+  });
+
+  it('takes a member across known providers, but nowhere unknown', () => {
+    // Joining a YouTube room from a Laftel page is the ordinary case.
+    assert.equal(followableUrl('https://www.youtube.com/watch?v=abc', 'yt:abc', 'https://laftel.net/'),
+      'https://www.youtube.com/watch?v=abc');
+    // An unknown site only from that same site: a room cannot send people off to it.
+    assert.equal(followableUrl('https://evil.example/v/1', 'evil.example:/v/1', 'https://laftel.net/'), null);
+    assert.equal(followableUrl('https://video.example/v/1', 'video.example:/v/1', 'https://video.example/v/2'),
+      'https://video.example/v/1');
+  });
+
+  it('refuses what no honest member sends', () => {
+    const room = 'laftel:/player/1/2';
+    const here = 'https://laftel.net/';
+    for (const u of [
+      undefined, '', 'not a url', 'javascript:alert(1)',
+      'http://laftel.net/player/1/2',                 // a known provider is never downgraded
+      'https://user:pw@laftel.net/player/1/2',
+      'https://laftel.net/player/1/2#videosync=a.b',
+    ]) {
+      assert.equal(followableUrl(u, room, here), null, String(u));
+    }
+    assert.equal(followableUrl('https://laftel.net/player/1/2', '', here), null, 'a room with no media');
   });
 });

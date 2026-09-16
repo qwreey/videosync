@@ -22,6 +22,7 @@ type Hello struct {
 	Secret   string `json:"secret"`
 	Name     string `json:"name"`
 	MediaKey string `json:"mediaKey"`
+	MediaURL string `json:"mediaUrl,omitempty"`
 }
 
 // TimeReq is one clock-sync probe. The client does all the arithmetic; the
@@ -37,6 +38,7 @@ type Cmd struct {
 	Kind       string `json:"kind"` // play | pause | seek | media
 	PositionMs int64  `json:"positionMs"`
 	MediaKey   string `json:"mediaKey,omitempty"`
+	MediaURL   string `json:"mediaUrl,omitempty"`
 }
 
 // Report is the heartbeat / anomaly report (section 4). vsync.Report is
