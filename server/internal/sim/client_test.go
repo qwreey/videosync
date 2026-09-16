@@ -43,6 +43,41 @@ func TestScheduledCommandsNeverApplyAnOlderSeqOverANewerOne(t *testing.T) {
 	}
 }
 
+// A scheduled seek pays for the buffer exactly like a corrective one. Moving
+// the playhead from 30 s to 300 s without touching the buffer model left the
+// member playing at 1.0x while reporting readyState 2 and nothing buffered for
+// about 90 s -- every corrector gated on it and the detector assumed a stall.
+func TestScheduledSeekOutsideTheBufferRebuffersOnce(t *testing.T) {
+	c := readyClient(ClientProfile{ID: "b", Link: Link{UpMs: 80, DownMs: 80}}, 30000, false)
+	c.Deliver(MsgState{Seq: 1, When: 30000,
+		Anchor: vsync.Anchor{PositionMs: 300000, AtServerMs: 30000}, Kind: "seek"}, 30000)
+
+	settle := int64(30000 + c.segFetchMs() + 1000)
+	for now := int64(30000); now <= 60000; now += stepMs {
+		c.RunScheduled(now)
+		before := c.Pos()
+		c.Advance(now, stepMs)
+		playing := c.Pos() > before
+		if now >= settle && c.readyState < 3 {
+			t.Fatalf("t=%d: readyState %d with %.2f s buffered, %d ms after a %d ms segment fetch",
+				now, c.readyState, c.bufferedS, now-30000, c.segFetchMs())
+		}
+		if playing && now < 30000+c.segFetchMs() {
+			t.Fatalf("t=%d: playing during the fetch an out-of-buffer seek costs", now)
+		}
+	}
+	if c.OutOfBufferSeeks != 1 {
+		t.Errorf("out-of-buffer seeks %d, want 1", c.OutOfBufferSeeks)
+	}
+	// A pause is not a seek: it re-anchors where the player already is.
+	c.Deliver(MsgState{Seq: 2, When: 60000,
+		Anchor: vsync.Anchor{PositionMs: int64(c.Pos()), AtServerMs: 60000, Paused: true}, Kind: "pause"}, 60000)
+	c.RunScheduled(60000)
+	if c.OutOfBufferSeeks != 1 {
+		t.Errorf("a pause in place was charged as a seek: %d", c.OutOfBufferSeeks)
+	}
+}
+
 // The same pair, both already due when the client looks. Sorting by `when` is
 // what the engine does and it puts the older play last, so the seq guard is
 // what keeps it from winning.

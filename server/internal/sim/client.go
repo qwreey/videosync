@@ -175,6 +175,26 @@ func (c *Client) inBuffer(posMs float64) bool {
 	return posMs/1000 >= backS && posMs/1000 <= c.bufEndS
 }
 
+// payForSeek charges the buffer model for moving the playhead to posMs and
+// reports whether that was the expensive kind. An out-of-buffer seek costs one
+// segment fetch and rebuffers for the same duration: the client is MORE out of
+// position before it is less.
+//
+// Every seek goes through here, scheduled or corrective. A scheduled seek used
+// to move the position and leave the buffer where it was, so a member sent from
+// 30 s to 300 s played on at 1.0x while its buffer end crawled up from 41 s at
+// net 3 s/s -- reporting readyState 2 and nothing buffered for a minute and a
+// half, which gated every corrector and disabled seek detection.
+func (c *Client) payForSeek(posMs float64, serverMs int64) bool {
+	if c.inBuffer(posMs) {
+		return false
+	}
+	c.OutOfBufferSeeks++
+	c.seekStallUntil = serverMs + c.segFetchMs()
+	c.bufEndS = posMs / 1000
+	return true
+}
+
 // Offline reports whether this member is unreachable right now.
 func (c *Client) Offline(serverMs int64) bool {
 	if serverMs < c.P.JoinAtMs {
@@ -441,14 +461,8 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 		if v.Mode == "seek" {
 			// Re-derive at apply time from our own anchor and clock estimate.
 			target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
-			if c.inBuffer(target) {
+			if !c.payForSeek(target, serverMs) {
 				c.InBufferSeeks++ // ~free, measured at ~20 ms regardless of link
-			} else {
-				// Costs one segment fetch and rebuffers for the same duration:
-				// the client is MORE out of position before it is less.
-				c.OutOfBufferSeeks++
-				c.seekStallUntil = serverMs + c.segFetchMs()
-				c.bufEndS = target / 1000
 			}
 			// A forward correction is content this member never saw. That is
 			// the cost the readiness gate exists to prevent, and no other
@@ -491,7 +505,9 @@ func (c *Client) RunScheduled(serverMs int64) {
 			c.anchor = p.Anchor
 			c.lastAppliedSeq = p.Seq
 			c.paused = p.Anchor.Paused
-			c.posMs = float64(p.Anchor.Expected(est))
+			target := float64(p.Anchor.Expected(est))
+			c.payForSeek(target, serverMs)
+			c.posMs = target
 			c.lastKnownPos = c.posMs
 			c.residualHist = nil
 			continue
