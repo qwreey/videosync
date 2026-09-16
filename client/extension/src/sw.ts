@@ -39,9 +39,13 @@ chrome.runtime.onConnect.addListener((port) => {
         // A malformed frame is not a reason to tear the session down.
       }
     });
+    const sock = ws;
     ws.addEventListener('close', (ev: CloseEvent) => {
       ws = null;
-      post({ t: 'closed', clean: closedByUs, reason: `${ev.code} ${ev.reason}` });
+      // The URL the socket actually used, which is not always the one asked
+      // for: a browser that upgrades ws:// to wss:// reports 1015 and nothing
+      // else, and the reason is the only place a user can see it.
+      post({ t: 'closed', clean: closedByUs, reason: `${ev.code} ${ev.reason} ${sock.url}`.replace(/\s+/g, ' ') });
     });
     ws.addEventListener('error', () => {
       // `error` on a WebSocket carries nothing useful and is always followed by

@@ -66,6 +66,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   | `probe-extension.mjs` | the same with the extension shim, `dump()` included | 12/12 |
   | `probe-youtube.mjs` | the real YouTube player | 9/9 |
   | `probe-laftel.mjs` | the real Laftel player, logged in, attached over CDP (not the container) | 8/8 — §14 |
+  | `probe-firefox.mjs` | the Firefox build in a room with Chromium (`LOCAL=1`: on `local-media.mjs`) | 10/10 local, §19 |
   | `probe-follow.mjs` | joining by code takes you to the room's video, and following it when it moves | 11/11 — §18 |
   | `probe-laftel-room.mjs` | two members in one room: the `play` jump, pause, the gate; `PRESS=adapter\|click\|space`, `MATCH=` for YouTube | Laftel §15–16, YouTube §17 |
   | `probe-csp.mjs` | can a page reach a private-address server? | no — §8 |
@@ -237,10 +238,9 @@ certificate, or a tunnel that gives you one:
   11/11 (BROWSER-FINDINGS §18). Open ends: the invite link still carries the inviter's page as
   well as the code (harmless now — the room corrects it on join), and following only goes to a
   provider in `mediakey.ts`'s `RULES` or to the member's current site.
-- **Firefox.** Deliberately not claimed: the manifest used to carry a gecko id
-  while declaring `background.service_worker`, which Firefox has never shipped —
-  the background would not have existed and every session would have died at the
-  port. It needs a second manifest using `background.scripts`, and a real run.
+- ~~**Firefox.**~~ **Built and validated (2026-09-16)** — `dist-firefox/`, Manifest V2 because
+  Firefox's MV3 background upgrades `ws://` to TLS (BROWSER-FINDINGS §19). Chromium ↔ Firefox
+  10/10 on local media. Not yet run on Laftel in Firefox (needs that profile logged in).
 - **A second provider adapter**, if Laftel turns out to need one. The seam is
   `ProviderAdapter` in `client/core/src/adapter/types.ts`; `Html5Adapter` is the
   generic implementation and so far it has been enough for YouTube.
@@ -269,10 +269,7 @@ certificate, or a tunnel that gives you one:
   the main world via CDP. That is the pessimistic side of the CSP question (a pass there implies a
   pass in the sandbox), but the `@grant` sandbox, `GM_setValue`, and the panel's behaviour inside a
   real extension have never been run.
-- **Firefox is not supported at all**, and deliberately does not claim to be. Its MV3 wants
-  `background.scripts`; it has never shipped `background.service_worker`, so with the manifest as
-  written the background would not exist and every session would die at the port. Supporting it is
-  a second manifest and a real run, not a field.
+- ~~**Firefox is not supported at all**~~ — supported since 2026-09-16 as an MV2 build, §19.
 
 ## Known gaps in what is built
 
@@ -351,7 +348,11 @@ reason.
   own isolated worlds, so CDP code must pick the world named `VideoSync`
   (`Session.isolatedName` in `cdp.mjs`). After rebuilding the extension, **restart** that
   browser — `chrome.runtime.reload()` removes a `--load-extension` extension instead of reloading
-  it. The claude-in-chrome MCP also reaches the user's main
+  it. Firefox is the flatpak (`org.mozilla.firefox`), launched with
+  `--profile .cache/firefox-profile --remote-debugging-port 9223` and a `--filesystem` grant for
+  whatever it must read; it allows one BiDi session, so always `await bidi.close()`. YouTube
+  stops playing in an automated Firefox after ~40 s — use `local-media.mjs` +
+  `local-ext.mjs` for anything longer. The claude-in-chrome MCP also reaches the user's main
   Helium window, but a tab it opens there can be `hidden` and then loads no media.
 
 - The host's package manager state is **not persistent**. Anything installed with `pacman`

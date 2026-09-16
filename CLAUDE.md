@@ -138,6 +138,10 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **`mediaUrl` comes from another member; follow it only through `followableUrl`.** It must
   normalise to the room's `mediaKey` and be on a known provider or the current site. Only the room
   moving (join, `media`) takes a member there — their own navigation never is undone.
+- **Firefox's MV3 background cannot open `ws://`.** It goes out as TLS (close 1015), `localhost`
+  included, whatever the manifest CSP says. That is why the Firefox build is MV2. And a detector
+  that treats "unready" as "stalled" swallows real seeks — a seek drops `readyState` itself;
+  compare the held reference before re-baselining.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
   The detector reports play-state *transitions* only, so a member who was already playing when the
   room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is
@@ -156,8 +160,9 @@ client/core/     Platform-agnostic TS: adapters, detector, sync engine, protocol
   src/app/, src/ui/   The wiring and the panel, shared VERBATIM by both shims. The shims
                  differ in three injected pieces: storage, transport, room creation.
 client/userscript/  Tampermonkey shim. Ships. Needs the server on a public address (see Traps).
-client/extension/   Chrome MV3 shim. Ships. Its service worker is a frame relay and nothing else —
-                 which is the only way to reach a server on your own machine. Firefox unsupported.
+client/extension/   Chrome MV3 shim (dist/) and Firefox MV2 (dist-firefox/). Ships. Its background is
+                 a frame relay and nothing else — the only way to reach a server on your own
+                 machine from Chromium.
 harness/browser/    Risk-B: a pinned container with a real Chromium, a media server that can
                  starve the player on demand, and the probes behind every measured number.
 refs/            Gitignored shallow clones of the 9 references. NOT durable —

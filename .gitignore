@@ -9,6 +9,7 @@ tmp/
 # Node
 node_modules/
 dist/
+dist-firefox/
 build/
 *.tsbuildinfo
 .npm/

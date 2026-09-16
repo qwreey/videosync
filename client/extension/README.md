@@ -1,4 +1,4 @@
-# VideoSync extension (Chrome MV3, Firefox untested)
+# VideoSync extension (Chrome MV3, Firefox MV2)
 
 Watch the same video together on your own accounts. Only the URL, position,
 play state and chat cross the wire — **never the video itself**.
@@ -63,13 +63,19 @@ The one thing that depends on: if you put the server behind a proxy that strips
 CORS headers, the extension will need `host_permissions` for that origin. The
 server itself always sends them.
 
-## Firefox is not supported yet
+## Firefox
 
-The manifest used to carry a `browser_specific_settings.gecko` id, which was a
-claim this build cannot keep: Firefox has never shipped
-`background.service_worker`, so the background would simply not exist, the
-content script's `chrome.runtime.connect()` would find no receiver, and every
-session would die at the port. Firefox MV3 wants `background.scripts` and treats
-`host_permissions` as opt-in.
+`npm run build` also writes `dist-firefox/`: the same two scripts under a
+**Manifest V2** manifest. Load it from `about:debugging` → This Firefox →
+Load Temporary Add-on → `dist-firefox/manifest.json`.
 
-Supporting it is a separate manifest and a real test run, not a field.
+Why V2, measured (`docs/BROWSER-FINDINGS.md` §19): every MV3 extension page in
+Firefox carries `upgrade-insecure-requests`, so the relay's `ws://127.0.0.1`
+goes out as a TLS handshake and closes with 1015 — for `localhost` too, and a
+manifest `content_security_policy` does not remove it. MV2's background has no
+such rule, runs from `background.scripts` (Firefox never shipped
+`service_worker`), and Firefox has committed to keeping it.
+
+Validated against a Chromium member in the same room: join, being taken to the
+room's video and rejoining, play and pause both ways, seeks, 30 s together
+within 81 ms, and the rate handed back on leaving (10/10 on local media).

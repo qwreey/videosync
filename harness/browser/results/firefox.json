@@ -1,0 +1,63 @@
+{
+  "when": "2026-09-16T09:50:32.170Z",
+  "checks": [
+    {
+      "name": "the Firefox build loads and mounts its panel",
+      "ok": true,
+      "detail": "영상을 찾았어요. 방을 만들거나 참가하세요."
+    },
+    {
+      "name": "Firefox is taken to the room's video",
+      "ok": true,
+      "detail": "after 1822 ms"
+    },
+    {
+      "name": "and rejoins there (the rejoin survived Firefox's storage)",
+      "ok": true,
+      "detail": "after 3631 ms"
+    },
+    {
+      "name": "B conformed to the room: paused at A's position",
+      "ok": false,
+      "detail": "A 30.00 B 30.32 B paused=false"
+    },
+    {
+      "name": "Chromium presses play, Firefox follows",
+      "ok": true,
+      "detail": "gap -20 ms"
+    },
+    {
+      "name": "Firefox pauses, Chromium follows",
+      "ok": true,
+      "detail": "gap -7 ms"
+    },
+    {
+      "name": "Firefox presses play, both run together",
+      "ok": true,
+      "detail": "gap 254 ms"
+    },
+    {
+      "name": "Chromium seeks, Firefox follows",
+      "ok": true,
+      "detail": "target 45: A 47.32 B 47.29, gap 36 ms"
+    },
+    {
+      "name": "still together 15 s later",
+      "ok": false,
+      "detail": "gap 2403 ms"
+    },
+    {
+      "name": "Firefox hands back its playback rate on leaving",
+      "ok": true,
+      "detail": "rate 1"
+    }
+  ],
+  "measurements": {
+    "gapAfterPlayMs": -20,
+    "gapAfterFirefoxPlayMs": 254,
+    "gapAfter15sMs": 2403
+  },
+  "notes": [],
+  "chromium": "Chrome/153.0.8010.36",
+  "firefox": "Session already started"
+}

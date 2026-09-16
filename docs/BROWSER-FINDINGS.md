@@ -777,6 +777,61 @@ survive `chrome.runtime.reload()` — it is removed rather than reloaded, and
 open tabs keep an isolated world named `VideoSync` with no `chrome.runtime.id`
 and no `window.VideoSync`. Restart the browser instead.
 
+## 19. Firefox (`probe-firefox.mjs`, `bidi.mjs`)
+
+Firefox 156 (flatpak), driven over WebDriver BiDi — it removed CDP in 129 —
+in a room with Helium over CDP. Firefox gives no handle on a content script's
+realm, so its member is driven through the panel, like a person.
+
+**MV3 cannot reach a plaintext server from the background, in Firefox.** A
+minimal extension, three sockets each, sniffed at the listener:
+
+| where the `ws://127.0.0.1` socket is opened | what arrives |
+|---|---|
+| MV3 background (`background.scripts`) | a **TLS ClientHello** (close 1015 in the page) |
+| MV3 content script | plain `GET` |
+| MV2 background | plain `GET` |
+| an https page's own script (YouTube) | plain `GET` — Firefox does not block public → loopback, unlike Chromium (§8) |
+
+`localhost` is upgraded the same way, the socket's `url` still reads `ws://`,
+and adding `content_security_policy.extension_pages` without
+`upgrade-insecure-requests` to the MV3 manifest changed nothing. The Firefox
+build is therefore **Manifest V2**, same scripts. One more trap from getting
+there: after an MV3 build had been installed under the add-on id, an MV2 build
+under the same id in the same profile *still* upgraded; the same MV2 build under
+a fresh id, or in a fresh profile, did not. Test Firefox changes in a fresh
+profile.
+
+**Results, Chromium ↔ Firefox**, on `local-media.mjs` with the `local-ext.mjs`
+builds (`results/firefox-local.json`), **10/10**:
+
+- Firefox joins through the panel from another page, is taken to the room's
+  video 1.6 s later and rejoins on arrival — the rejoin survives Firefox's
+  `storage.local`;
+- it conforms to the paused room (30.00 s both);
+- play from Chromium: gap −2 ms; pause from Firefox: 9 ms; play from Firefox
+  (the hold): 53 ms; a seek from Chromium to 200 s, well past the buffer: 49 ms;
+- then 30 s together at **29–81 ms**, and rate 1 after leaving.
+
+**YouTube in an automated Firefox is not usable for this.** With no extension
+involved at all, playback runs to ~41 s and then the player resets the element
+to 0 and stops, with 60 s buffered. Any seek past the buffer — a raw
+`currentTime` write *or* YouTube's own `movie_player.seekTo` — sits at
+readyState 1 until that reset. That is YouTube and `navigator.webdriver`, not
+this code; the YouTube run (`results/firefox.json`, 8/10) fails exactly the two
+checks that need more than that. It also found the bug below.
+
+**The detector swallowed seeks.** A real seek drops `readyState` (~100 ms at 1
+on Laftel, §14; seconds on a YouTube out-of-buffer seek), and the stall guard
+re-baselined onto the new position on any unready evaluation — so a user's seek
+never became a command, and the room corrected them back. The Chromium member's
+seek to 120 s was undone this way. Fixed in `detector.ts`: while unready, the
+held reference is compared first; a stall leaves the position there, a seek
+does not.
+
+Not covered: Laftel in Firefox (needs a login and Widevine in that profile),
+autoplay refusal, and Firefox for Android.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
