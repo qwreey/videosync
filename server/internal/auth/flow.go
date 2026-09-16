@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -264,7 +265,11 @@ type pageData struct {
 	// ProxyMissing: proxy login is enabled but this request did not come
 	// through the proxy.
 	ProxyMissing bool
-	Done         bool
+	// Key and Password offer the forms for those methods.
+	Key, Password bool
+	// Error is why the last submission was refused; the forms stay.
+	Error string
+	Done  bool
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html>
@@ -278,6 +283,9 @@ p{margin:8px 0;color:#c9cbd4}
 .code{font:600 28px ui-monospace,monospace;letter-spacing:.12em;text-align:center;padding:12px;margin:16px 0;border:1px solid #303138;border-radius:8px;background:#101116}
 a.btn,button{display:block;box-sizing:border-box;width:100%;margin-top:12px;padding:10px;border-radius:8px;border:1px solid #2a5cff;background:#2a5cff;color:#fff;font:600 15px system-ui,sans-serif;text-align:center;text-decoration:none;cursor:pointer}
 .warn{color:#e0b23a}
+form{margin-top:16px}
+label{display:block;margin-top:8px;color:#c9cbd4}
+input:not([type=hidden]){display:block;box-sizing:border-box;width:100%;margin-top:4px;padding:9px;border-radius:8px;border:1px solid #303138;background:#101116;color:#e9e9ea;font:15px system-ui,sans-serif}
 </style></head><body><main>
 <h1>{{.Title}}</h1>
 {{if .Message}}<p>{{.Message}}</p>{{end}}
@@ -286,6 +294,14 @@ a.btn,button{display:block;box-sizing:border-box;width:100%;margin-top:12px;padd
 <div class="code">{{.Code}}</div>
 {{if .OIDC}}<a class="btn" href="/auth/oidc/start?flow={{.FlowID}}">계정으로 로그인</a>{{end}}
 {{if .Proxy}}<form method="post" action="/auth/login"><input type="hidden" name="flow" value="{{.FlowID}}"><button type="submit">{{if .ProxyUser}}{{.ProxyUser}}(으)로 {{end}}이 기기 로그인</button></form>{{end}}
+{{if .Error}}<p class="warn">{{.Error}}</p>{{end}}
+{{if .Password}}<form method="post" action="/auth/login"><input type="hidden" name="flow" value="{{.FlowID}}"><input type="hidden" name="method" value="password">
+<label>사용자<input name="user" autocomplete="username" required></label>
+<label>비밀번호<input name="password" type="password" autocomplete="current-password" required></label>
+<button type="submit">비밀번호로 로그인</button></form>{{end}}
+{{if .Key}}<form method="post" action="/auth/login"><input type="hidden" name="flow" value="{{.FlowID}}"><input type="hidden" name="method" value="token">
+<label>접속 키<input name="key" type="password" autocomplete="off" required></label>
+<button type="submit">접속 키로 로그인</button></form>{{end}}
 {{if .ProxyMissing}}<p class="warn">프록시 로그인은 서버 앞의 인증 프록시를 거쳐 이 페이지를 열어야 해요.</p>{{end}}
 {{end}}
 </main></body></html>
@@ -307,22 +323,91 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setFlowCookie(w, r, f)
+	s.render(w, http.StatusOK, s.loginPage(r, f, ""))
+}
+
+func (s *Server) loginPage(r *http.Request, f flow, why string) pageData {
 	user, byProxy := s.proxyUser(r)
 	if user == "proxy" {
 		user = ""
 	}
-	s.render(w, http.StatusOK, pageData{
+	return pageData{
 		Title: "VideoSync 로그인", Code: f.code, FlowID: f.id,
 		OIDC:  s.oidc != nil,
 		Proxy: byProxy, ProxyUser: user,
-		ProxyMissing: s.has(MethodProxy) && !byProxy && s.oidc == nil,
-	})
+		ProxyMissing: s.has(MethodProxy) && !byProxy && s.oidc == nil &&
+			!s.has(MethodToken) && !s.has(MethodPassword),
+		Key: s.has(MethodToken), Password: s.has(MethodPassword),
+		Error: why,
+	}
 }
 
-// handleLoginConfirm is the proxy's login: the gateway in front of this page
+func expiredPage() pageData {
+	return pageData{
+		Title:   "로그인 링크가 만료됐어요",
+		Message: "VideoSync 패널에서 로그인을 다시 시작하세요.",
+	}
+}
+
+// handleLoginConfirm finishes a flow: with a key or a password typed into this
+// page, or -- with neither -- on the proxy's word. Every branch is under
+// CrossOriginProtection and needs the flow cookie of the browser that opened
+// the page, so a link someone forwarded does not sign its sender in.
+func (s *Server) handleLoginConfirm(w http.ResponseWriter, r *http.Request) {
+	switch r.PostFormValue("method") {
+	case "":
+		s.confirmProxy(w, r)
+	case MethodToken, MethodPassword:
+		s.confirmSecret(w, r)
+	default:
+		s.render(w, http.StatusBadRequest, pageData{Title: "로그인할 수 없어요", Message: "알 수 없는 로그인 방법이에요."})
+	}
+}
+
+func (s *Server) confirmSecret(w http.ResponseWriter, r *http.Request) {
+	id, method := r.PostFormValue("flow"), r.PostFormValue("method")
+	now := s.cfg.Now()
+	f, ok := s.flows.pending(id, now)
+	if !ok || !bindingOK(f.binding, flowCookie(r, id)) {
+		s.render(w, http.StatusNotFound, expiredPage())
+		return
+	}
+	if !s.has(method) {
+		s.render(w, http.StatusForbidden, s.loginPage(r, f, "이 서버는 그 방법으로 로그인할 수 없어요."))
+		return
+	}
+	// The API's bucket: the page must not be a way around it.
+	if ok, wait := s.limSession.allow(s.peers.client(r), now); !ok {
+		w.Header().Set("Retry-After", fmt.Sprint((max(wait.Milliseconds(), 1)+999)/1000))
+		s.render(w, http.StatusTooManyRequests, s.loginPage(r, f, "시도가 너무 많아요 — 잠시 후 다시 해주세요."))
+		return
+	}
+	var sub string
+	switch method {
+	case MethodToken:
+		if matchKey(s.cfg.Keys, strings.TrimSpace(r.PostFormValue("key"))) {
+			sub = "key"
+		}
+	case MethodPassword:
+		if u := r.PostFormValue("user"); u != "" && s.checkPassword(u, r.PostFormValue("password")) {
+			sub = u
+		}
+	}
+	if sub == "" {
+		s.render(w, http.StatusUnauthorized, s.loginPage(r, f, "키나 비밀번호가 맞지 않아요."))
+		return
+	}
+	if !s.flows.finish(id, flowCookie(r, id), sub, method, "", now) {
+		s.render(w, http.StatusNotFound, expiredPage())
+		return
+	}
+	s.render(w, http.StatusOK, doneData())
+}
+
+// confirmProxy is the proxy's login: the gateway in front of this page
 // already made the user sign in, so the one thing left is their say-so, from
 // the browser that opened this flow's page.
-func (s *Server) handleLoginConfirm(w http.ResponseWriter, r *http.Request) {
+func (s *Server) confirmProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PostFormValue("flow")
 	user, ok := s.proxyUser(r)
 	if !ok {
@@ -333,10 +418,7 @@ func (s *Server) handleLoginConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.flows.finish(id, flowCookie(r, id), user, MethodProxy, "", s.cfg.Now()) {
-		s.render(w, http.StatusNotFound, pageData{
-			Title:   "로그인 링크가 만료됐어요",
-			Message: "VideoSync 패널에서 로그인을 다시 시작하세요.",
-		})
+		s.render(w, http.StatusNotFound, expiredPage())
 		return
 	}
 	s.render(w, http.StatusOK, doneData())

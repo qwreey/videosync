@@ -477,8 +477,10 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ticket": t, "expiresMs": exp.UnixMilli()})
 }
 
-// browserLogin is whether a login tab has anything to offer.
-func (s *Server) browserLogin() bool { return s.has(MethodOIDC) || s.has(MethodProxy) }
+// browserLogin is whether a login tab has anything to offer. Every method
+// has one: a key or a password is typed into the tab, on this server's own
+// origin, never into the panel, which lives in the site's page.
+func (s *Server) browserLogin() bool { return len(s.cfg.Methods) > 0 }
 
 func (s *Server) handleBegin(w http.ResponseWriter, r *http.Request) {
 	if !s.browserLogin() {

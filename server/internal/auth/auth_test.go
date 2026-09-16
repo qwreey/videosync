@@ -697,11 +697,112 @@ func TestALoginFlowExpires(t *testing.T) {
 	}
 }
 
-func TestBeginSaysSoWhenThereIsNoBrowserLogin(t *testing.T) {
+// --- the browser login flow (key, password) ------------------------------------
+
+// A key or a password typed into the panel is typed into the site's page: its
+// capture listeners see every keystroke. The login tab is this server's own
+// origin, which no site can read, so that is where secrets are entered.
+
+func (g *rig) submit(f loginFlow, cookie *http.Cookie, form url.Values, extra map[string]string) reply {
+	g.t.Helper()
+	form.Set("flow", flowID(g.t, f.LoginURL))
+	hdr := map[string]string{"Content-Type": "application/x-www-form-urlencoded"}
+	if cookie != nil {
+		hdr["Cookie"] = cookie.Name + "=" + cookie.Value
+	}
+	for k, v := range extra {
+		hdr[k] = v
+	}
+	return g.do("POST", "/auth/login", client, form.Encode(), hdr)
+}
+
+func passwordRig(t *testing.T) *rig {
+	return newRig(t, func(c *Config) {
+		c.Methods = []string{MethodToken, MethodPassword}
+		c.Users = testUsers(t)
+	})
+}
+
+func TestAKeyIsEnteredOnTheServersOwnPage(t *testing.T) {
 	g := newRig(t, nil) // token only
-	r := g.do("POST", "/api/auth/begin", client, "", nil)
-	if r.code != 404 || r.body["error"] != "no_browser_login" {
-		t.Fatalf("%d %s", r.code, r.raw)
+	f := g.begin(client)
+	page, cookie := g.openPage(f, client, nil)
+	if page.code != 200 || !strings.Contains(page.raw, f.Code) {
+		t.Fatalf("page: %d", page.code)
+	}
+	if !strings.Contains(page.raw, `name="key"`) || !strings.Contains(page.raw, `type="password"`) {
+		t.Fatalf("a token server's page has no key field:\n%s", page.raw)
+	}
+	if strings.Contains(page.raw, `name="user"`) {
+		t.Fatal("a server with no passwords offered a password form")
+	}
+	key := url.Values{"method": {"token"}, "key": {testKey}}
+	if r := g.submit(f, cookie, url.Values{"method": {"token"}, "key": {"wrong"}}, nil); r.code == 200 || !strings.Contains(r.raw, f.Code) {
+		t.Fatalf("a wrong key: %d (the page must stay, so the member can retype)", r.code)
+	}
+	if r := g.poll(f.PollID); r.body["pending"] != true {
+		t.Fatalf("a wrong key ended the flow: %d %s", r.code, r.raw)
+	}
+	if r := g.submit(f, nil, key, nil); r.code == 200 {
+		t.Fatal("a browser that never opened this flow's page signed it in")
+	}
+	if r := g.submit(f, cookie, key, map[string]string{"Sec-Fetch-Site": "cross-site"}); r.code == 200 {
+		t.Fatal("a cross-site POST signed the flow in")
+	}
+	if r := g.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"hunter22"}}, nil); r.code == 200 {
+		t.Fatal("a method this server does not have signed the flow in")
+	}
+	if r := g.submit(f, cookie, key, nil); r.code != 200 {
+		t.Fatalf("the right key: %d %s", r.code, r.raw)
+	}
+	r := g.poll(f.PollID)
+	if r.code != 200 || r.body["sub"] != "key" || r.body["token"] == nil {
+		t.Fatalf("poll: %d %s", r.code, r.raw)
+	}
+	if tr := g.ticket(r.body["token"].(string)); tr.code != 200 {
+		t.Fatalf("the device the page minted: %d", tr.code)
+	}
+	if strings.Contains(r.raw, testKey) {
+		t.Fatal("the key came back to the poller")
+	}
+}
+
+func TestAPasswordIsEnteredOnTheServersOwnPage(t *testing.T) {
+	g := passwordRig(t)
+	f := g.begin(client)
+	page, cookie := g.openPage(f, client, nil)
+	for _, want := range []string{`name="user"`, `name="password"`, `autocomplete="current-password"`, `name="key"`} {
+		if !strings.Contains(page.raw, want) {
+			t.Fatalf("page lacks %s", want)
+		}
+	}
+	if r := g.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"hunter2"}}, nil); r.code == 200 {
+		t.Fatal("a wrong password signed in")
+	}
+	if r := g.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"hunter22"}}, nil); r.code != 200 {
+		t.Fatalf("the right password: %d", r.code)
+	}
+	if r := g.poll(f.PollID); r.code != 200 || r.body["sub"] != "alice" {
+		t.Fatalf("poll: %d %s", r.code, r.raw)
+	}
+}
+
+func TestGuessingOnTheLoginPageIsRateLimited(t *testing.T) {
+	g := passwordRig(t)
+	f := g.begin(client)
+	_, cookie := g.openPage(f, client, nil)
+	limited := 0
+	for range 20 {
+		if g.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"guess"}}, nil).code == 429 {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("twenty guesses in an instant were all answered")
+	}
+	// The same bucket as /api/session: the page is not a way around it.
+	if r := g.session(map[string]string{"Authorization": basic("alice", "guess")}); r.code != 429 {
+		t.Fatalf("the API was not limited by the page's guesses: %d", r.code)
 	}
 }
 
