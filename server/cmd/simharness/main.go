@@ -141,6 +141,20 @@ func scenarios() []sim.Scenario {
 			Commands: []sim.Command{{AtMs: 10000, ClientID: "a", Kind: "play"}},
 		},
 		{
+			// D8. A paused room; c arrives on a page whose site resumes from
+			// its own history (813 s) and autoplays when the player can play,
+			// 1.5 s after the join -- measured on Laftel (BROWSER-FINDINGS 20).
+			// a presses play while c is still loading.
+			Name: "site-autoplay-join", Seed: 61, DurationMs: 90000, StartPos: 60000, StartPaused: true,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: meh},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh, JoinAtMs: 20000,
+					SiteAfterMs: 1500, SiteResumeToMs: 813000, SiteAutoplay: true},
+			},
+			Commands: []sim.Command{{AtMs: 21200, ClientID: "a", Kind: "play"}},
+		},
+		{
 			Name: "command-storm", Seed: 6, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -185,6 +199,40 @@ func controlRun(tun vsync.Tunables) {
 	// anchorErr -- that metric excludes a stalled client -- so score it on the
 	// media its members were skipped past, and charge it for the delay it
 	// imposes.
+	// D8: a joiner's site resumes and autoplays. Without the acquisition guard
+	// those moves are sent as the member's and the room goes where the site
+	// put one member's player.
+	fmt.Println("CONTROL: site-autoplay-join, acquisition guard ON vs OFF (mean over seeds 1..10)")
+	for _, sc := range scenarios() {
+		if sc.Name != "site-autoplay-join" {
+			continue
+		}
+		for _, guard := range []bool{true, false} {
+			var spurious, absorbed, held, skipped, finalS float64
+			for seed := int64(1); seed <= 10; seed++ {
+				v := sc
+				v.Seed = seed
+				v.Clients = append([]sim.ClientProfile(nil), sc.Clients...)
+				for i := range v.Clients {
+					v.Clients[i].NoAcquireGuard = !guard
+				}
+				r := sim.Run(v, &vsync.ServoCorrector{}, tun)
+				spurious += float64(r.SiteSpuriousCmds) / 10
+				absorbed += float64(r.SiteMovesAbsorbed) / 10
+				held += float64(r.CmdsHeld) / 10
+				skipped += r.SkippedMs / 10
+				finalS += float64(r.FinalAnchor.Expected(v.DurationMs)) / 1000 / 10
+			}
+			label := "guard ON "
+			if !guard {
+				label = "guard OFF"
+			}
+			fmt.Printf("  %s site cmds sent %.1f   absorbed %.1f   held %.1f   skipped %6.0f ms   room ends at %6.1f s\n",
+				label, spurious, absorbed, held, skipped, finalS)
+		}
+	}
+	fmt.Println()
+
 	fmt.Println("CONTROL: slow-to-buffer, readiness gate ON vs OFF")
 	for _, sc := range scenarios() {
 		if sc.Name != "slow-to-buffer" {
