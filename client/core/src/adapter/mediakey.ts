@@ -30,6 +30,11 @@ function entryFor(hostname: string, reg: ProviderRegistry): Entry | null {
   return reg.lookup(hostname).entry;
 }
 
+/** A tie on a host a built-in describes: no media there at all (registry.ts). */
+function blocked(hostname: string, reg: ProviderRegistry): boolean {
+  return reg.lookup(hostname).blocked === true;
+}
+
 /** A stable, human-legible provider id for a host, for UI and for the key. */
 export function providerId(hostname: string, reg: ProviderRegistry = builtinRegistry()): string {
   return entryFor(hostname, reg)?.provider.keyPrefix ?? hostname.toLowerCase().replace(/^www\./, '');
@@ -47,6 +52,7 @@ export function normalizeMediaKey(href: string, reg: ProviderRegistry = builtinR
   if (!u) return null;
   const e = entryFor(u.hostname, reg);
   if (e) return e.provider.keyFor(u);
+  if (blocked(u.hostname, reg)) return null;
   // Generic: the path is the identity. Trailing slash and case in the host are
   // noise; the path's own case is not (ids are often case-sensitive).
   const path = genericPath(u);
@@ -93,6 +99,7 @@ export function watchUrl(href: string, reg: ProviderRegistry = builtinRegistry()
     // where every member of a room gets sent.
     return raw && roundTrips(e.provider, raw, key) && entryFor(new URL(raw).hostname, reg) === e ? raw : null;
   }
+  if (blocked(u.hostname, reg)) return null;
   const path = genericPath(u);
   return path ? `${u.origin}${path}` : null;
 }

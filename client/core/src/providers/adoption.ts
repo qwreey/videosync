@@ -7,7 +7,7 @@
  * change widens what the descriptor can do -- and they must decide them the
  * same way. Storage and fetching are the shims' business.
  */
-import { builtinEntries, ProviderRegistry } from './registry.ts';
+import { builtinEntries, displacedBuiltins, ProviderRegistry } from './registry.ts';
 import type { Entry } from './registry.ts';
 import { coveredBy, parseDescriptor } from './descriptor.ts';
 import type { Descriptor } from './descriptor.ts';
@@ -105,8 +105,12 @@ export function buildRegistry(s: ProviderState, granted: (hostname: string) => b
     const r = parseDescriptor(a.source);
     if (!r.ok) { notes.push(`server descriptor ${a.id} from ${a.server} is no longer valid: ${r.errors[0]}`); continue; }
     if (r.provider.id !== a.id) { notes.push(`server descriptor ${a.id} from ${a.server} changed its id`); continue; }
-    if (builtinIds.has(a.id) && !a.replaceBuiltin) {
-      notes.push(`server descriptor ${a.id} from ${a.server} is not applied: replacing the built-in needs confirmation`);
+    // Replacing a built-in is not only taking its id: a new id that claims
+    // its hosts as specifically, or mints its key prefix, displaces it too.
+    const displaced = displacedBuiltins(r.provider).map((b) => b.provider.id);
+    if ((builtinIds.has(a.id) || displaced.length) && !a.replaceBuiltin) {
+      notes.push(`server descriptor ${a.id} from ${a.server} is not applied: replacing the built-in${
+        displaced.length ? ` (${displaced.join(', ')})` : ''} needs confirmation`);
       continue;
     }
     byId.set(a.id, { provider: r.provider, tier: 'server', sha256: a.sha256, granted });

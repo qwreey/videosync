@@ -138,6 +138,16 @@ adopted copy with a built-in's id applies only when `replaceBuiltin` was confirm
 built-in stays and `dump().providerNotes` says why. A tie between different ids for a host applies
 neither; the panel says so once at start and `dump().providerConflict` lists them.
 
+*Integration (review fixes):* replacing a built-in is not only taking its id. A server descriptor
+with another id that claims a built-in's host at least as specifically (so it wins or ties there),
+or mints a built-in's `keyPrefix`, needs the same `replaceBuiltin` confirmation — in `adopt` and
+again in `buildRegistry` (`displacedBuiltins`); a user descriptor that does so is allowed (the user
+is the top tier) but `saveUser` reports it and both surfaces say so before saving. A tie on a host
+a built-in describes keys by that built-in when it is in force, and names no media when it was
+replaced; the generic path rule applies to ties only on hosts no built-in describes, because on a
+built-in's host it is F20 again. `continuesMedia()` asks the one descriptor in force that owns the
+key's prefix, and nothing when two do.
+
 **Built-ins in the bundles.** `client/core/scripts/providers.mjs` validates `providers/*.json`
 (examples run) and writes `src/providers/builtin.gen.ts` with each file's exact text and sha256,
 so no JSON import is needed and a built-in's hash is comparable with a server's. The file is

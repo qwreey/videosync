@@ -222,10 +222,11 @@ function draftSection(): HTMLElement {
         onclick: async () => {
           const r = await saveUser(state, draft);
           if (!r.ok) { draftCheck = null; status(`쓸 수 없는 설명이에요:\n${r.error}`, 'err'); render(); return; }
-          const replaces = currentFor(state, r.descriptor.id) !== null;
+          const displaces = r.displaces ?? [];
+          const replaces = currentFor(state, r.descriptor.id) !== null || displaces.length > 0;
           draftCheck = { changes: r.changes, replaces };
           status(replaces
-            ? `${r.descriptor.name}(${r.descriptor.id})를 바꾸게 돼요. 아래 차이를 확인하세요.`
+            ? `${r.descriptor.name}(${r.descriptor.id})${displaces.length ? `이(가) 내장된 ${displaces.join(', ')} 설명의 사이트를 대신하게` : '를 바꾸게'} 돼요. 아래 차이를 확인하세요.`
             : `${r.descriptor.name}: 새 설명이에요. 저장할 수 있어요.`, replaces ? 'warn' : 'ok');
           render();
         },

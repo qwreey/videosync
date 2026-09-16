@@ -85,7 +85,9 @@ async function addFromPaste(store: Store): Promise<void> {
   const state = readState(store.load);
   const r = await saveUser(state, text);
   if (!r.ok) { alert(`쓸 수 없는 설명이에요:\n${r.error}`); return; }
-  if (r.changes.length && !confirm(`${r.descriptor.name}(${r.descriptor.id}) 설명을 저장할까요?\n\n${describeChanges(r.changes)}`)) return;
+  const displaced = r.displaces?.length ? `\n\n⚠ 내장된 ${r.displaces.join(', ')} 설명의 사이트를 대신하게 돼요.` : '';
+  if ((r.changes.length || displaced) &&
+      !confirm(`${r.descriptor.name}(${r.descriptor.id}) 설명을 저장할까요?${displaced}\n\n${describeChanges(r.changes)}`)) return;
   writeState(store.save, r.state);
   afterChange(`${r.descriptor.name} 설명을 저장했어요.`, missingMatches(r.descriptor, ownMatches()));
 }

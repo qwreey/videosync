@@ -12,12 +12,16 @@ import {
 import type { FieldChange, IndexEntry, ProviderState } from './adoption.ts';
 import { parseDescriptor } from './descriptor.ts';
 import type { Descriptor } from './descriptor.ts';
-import { builtinEntries } from './registry.ts';
+import { builtinEntries, displacedBuiltins } from './registry.ts';
 import type { ProviderRegistry } from './registry.ts';
 import { hostScore } from './template.ts';
 
 export type Outcome =
-  | { ok: true; state: ProviderState; descriptor: Descriptor; changes: FieldChange[] }
+  | {
+    ok: true; state: ProviderState; descriptor: Descriptor; changes: FieldChange[];
+    /** Built-ins (names) this descriptor takes a host or the key prefix from; see `displacedBuiltins`. */
+    displaces?: string[];
+  }
   | { ok: false; error: string; needsReplaceConfirmation?: boolean; changes?: FieldChange[] };
 
 const clone = (s: ProviderState): ProviderState => structuredClone(s);
@@ -54,7 +58,10 @@ export async function saveUser(s: ProviderState, text: string): Promise<Outcome>
   }
   keep.push({ source: text, sha256: await sha256Hex(text) });
   next.user = keep;
-  return { ok: true, state: next, descriptor: d, changes };
+  // The user's own descriptor may displace a built-in (user is the top tier),
+  // but a surface must say so before saving, not only show a new id.
+  const displaces = displacedBuiltins(r.provider).map((b) => b.provider.d.name);
+  return { ok: true, state: next, descriptor: d, changes, ...(displaces.length ? { displaces } : {}) };
 }
 
 export function removeUser(s: ProviderState, id: string): ProviderState {
@@ -85,15 +92,19 @@ export async function adopt(
   if (d.id !== entry.id) return { ok: false, error: `파일의 id(${d.id})가 목록(${entry.id})과 달라요.` };
   const changes = diffDescriptors(currentFor(s, d.id), d);
   const builtin = builtinDescriptor(d.id);
-  if (builtin && !replaceBuiltin) {
+  // Not only by id: a new id that claims a built-in's host as specifically,
+  // or its key prefix, replaces it just the same (buildRegistry agrees).
+  const displaced = displacedBuiltins(r.provider).map((b) => b.provider.d.name);
+  const replaced = [...(builtin ? [builtin.name] : []), ...displaced];
+  if (replaced.length && !replaceBuiltin) {
     return {
       ok: false, needsReplaceConfirmation: true, changes,
-      error: `내장된 ${builtin.name} 설명을 바꾸게 돼요. 차이를 확인한 뒤 교체를 선택하세요.`,
+      error: `내장된 ${replaced.join(', ')} 설명을 바꾸게 돼요. 차이를 확인한 뒤 교체를 선택하세요.`,
     };
   }
   const next = clone(s);
   next.adopted = next.adopted.filter((a) => a.id !== d.id);
-  next.adopted.push({ id: d.id, server: origin, source: body, sha256: sha, replaceBuiltin: !!builtin });
+  next.adopted.push({ id: d.id, server: origin, source: body, sha256: sha, replaceBuiltin: replaced.length > 0 });
   const prefs = next.servers[origin];
   if (prefs?.declined) delete prefs.declined[d.id];
   return { ok: true, state: next, descriptor: d, changes };

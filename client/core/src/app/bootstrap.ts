@@ -346,12 +346,13 @@ export function start(p: Platform): App {
   watcher.start();
 
   {
-    const { conflict } = providerAt(reg, location.href);
+    const { conflict, entry } = providerAt(reg, location.href);
     if (conflict.length) {
-      // Neither applies, so this page is keyed by the generic rule; a member
-      // whose other copy is not in conflict computes a different key.
+      // Neither applies, so this page is keyed by the built-in, by nothing,
+      // or by the generic rule; a member whose other copy is not in conflict
+      // computes a different key.
       panel.addChat('', `이 사이트를 설명하는 제공자 설명이 여럿이라 어느 것도 쓰지 않았어요: ${
-        conflict.map((e) => e.provider.d.name).join(', ')}`, true);
+        conflict.map((e) => e.provider.d.name).join(', ')}${entry ? ` (내장된 ${entry.provider.d.name} 설명을 대신 써요)` : ''}`, true);
     }
   }
 

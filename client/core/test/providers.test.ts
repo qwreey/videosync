@@ -309,6 +309,95 @@ describe('the effective registry', () => {
     assert.equal(yes.byId('laftel')?.sha256, s.sha256);
   });
 
+  it('treats a new id that takes a built-in host or key prefix as replacing the built-in', async () => {
+    const W = 'https://www.youtube.com';
+    /** What the review built: a new id, exact www host, the built-in's prefix, every path a key. */
+    const tube = variant({
+      id: 'tube', name: 'Tube', keyPrefix: 'yt', hosts: ['www.youtube.com'], canonicalHost: 'www.youtube.com',
+      identity: [{ path: '/{p:any}/**', key: '{p}', watch: `${W}/{p}/x` }],
+      examples: [{ url: `${W}/watch/x`, key: 'yt:watch', watch: `${W}/watch/x` }],
+    });
+    /** Takes only the host, with its own prefix. */
+    const hostOnly = variant({
+      id: 'tube2', name: 'Tube2', hosts: ['www.youtube.com'], canonicalHost: 'www.youtube.com', pathFallback: true,
+      identity: [], examples: [{ url: `${W}/logout`, key: 'tube2:/logout' }],
+    });
+    /** Takes only the prefix, on a host nobody else describes. */
+    const prefixOnly = variant({ id: 'foo', keyPrefix: 'laftel', examples: [{ url: 'https://video.example/watch/a', key: 'laftel:/watch/a' }] });
+    /** A same-specificity tie on the built-in's wildcard. */
+    const tie = variant({
+      id: 'tube3', name: 'Tube3', hosts: ['youtube.com', '*.youtube.com'], canonicalHost: 'youtube.com', pathFallback: true,
+      identity: [], examples: [{ url: 'https://youtube.com/watch', key: 'tube3:/watch' }],
+    });
+    /** The control: a new id on a host no built-in describes. */
+    const unrelated = variant({ id: 'other', examples: [{ url: 'https://video.example/watch/a', key: 'other:/watch/a' }] });
+
+    const SERVER = 'https://sync.example';
+    const asAdopted = async (d: Descriptor, replaceBuiltin: boolean): Promise<ProviderState> => ({
+      ...EMPTY, adopted: [{ ...(await stored(d)), id: d.id, server: SERVER, replaceBuiltin }],
+    });
+    for (const d of [tube, hostOnly, prefixOnly, tie]) {
+      const reg = buildRegistry(await asAdopted(d, false), () => true);
+      assert.equal(reg.byId(d.id), null, `${d.id} was applied without the replace confirmation`);
+      assert.ok(reg.notes.some((n) => n.includes(d.id) && n.includes('confirmation')), reg.notes.join());
+      assert.equal(normalizeMediaKey(`${W}/watch?v=abc`, reg), 'yt:abc', d.id);
+      assert.equal(followableUrl(`${W}/logout`, 'yt:logout', 'https://laftel.net/', reg), null, d.id);
+
+      const body = JSON.stringify(d);
+      const e = { id: d.id, name: d.name, version: d.version, sha256: await sha256Hex(body), hosts: d.hosts };
+      const asked = await adopt(EMPTY, SERVER, e, body, false);
+      assert.ok(!asked.ok && asked.needsReplaceConfirmation, `${d.id}: adopted as a brand-new descriptor`);
+      const yes = await adopt(EMPTY, SERVER, e, body, true);
+      assert.ok(yes.ok && yes.state.adopted[0]!.replaceBuiltin, d.id);
+      assert.equal(buildRegistry(yes.state, () => true).byId(d.id)?.tier, 'server', `${d.id}: confirmed and still not applied`);
+
+      const saved = await saveUser(EMPTY, body);
+      assert.ok(saved.ok && saved.displaces?.length, `${d.id}: saving it did not say it displaces a built-in`);
+    }
+    const reg = buildRegistry(await asAdopted(unrelated, false), () => true);
+    assert.equal(reg.byId('other')?.tier, 'server', 'control: an unrelated new descriptor needs no confirmation');
+    const plain = await adopt(EMPTY, SERVER, { id: 'other', name: 'x', version: '1.0.0', sha256: await sha256Hex(JSON.stringify(unrelated)), hosts: [] },
+      JSON.stringify(unrelated), false);
+    assert.ok(plain.ok && !plain.state.adopted[0]!.replaceBuiltin);
+    const savedPlain = await saveUser(EMPTY, JSON.stringify(unrelated));
+    assert.ok(savedPlain.ok && !savedPlain.displaces);
+  });
+
+  it('keeps a built-in host on the built-in when two descriptors tie there, never the generic rule', async () => {
+    const W = 'https://www.youtube.com';
+    const tie = (id: string) => variant({
+      id, name: id, hosts: ['youtube.com', '*.youtube.com'], canonicalHost: 'youtube.com', pathFallback: true,
+      identity: [], examples: [{ url: 'https://youtube.com/watch', key: `${id}:/watch` }],
+    });
+    // A user descriptor may displace a built-in; tying with it applies neither.
+    const one = buildRegistry({ ...EMPTY, user: [await stored(tie('tube'))] }, () => true);
+    const l = one.lookup('www.youtube.com');
+    assert.deepEqual(l.conflict.map((e) => e.provider.id).sort(), ['tube', 'yt']);
+    assert.equal(l.entry?.provider.id, 'yt', 'the built-in stands in for the tie');
+    assert.equal(normalizeMediaKey(`${W}/watch?v=abc`, one), 'yt:abc');
+    assert.equal(normalizeMediaKey(`${W}/watch?v=def`, one), 'yt:def', 'every video keyed alike');
+    assert.equal(normalizeMediaKey(`${W}/logout`, one), null, 'F20 reopened on YouTube');
+
+    // With the built-in replaced by id and two others tying: nothing, not the path rule.
+    const yt = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'youtube.json')!.source) as Descriptor;
+    const ytUser = { ...yt, hosts: ['youtu.be'], pageHosts: undefined, canonicalHost: 'youtu.be',
+      identity: [{ path: '/{id}', key: '{id}', watch: 'https://youtu.be/{id}' }],
+      examples: [{ url: 'https://youtu.be/abc', key: 'yt:abc' }] } as unknown as Descriptor;
+    delete (ytUser as { pageHosts?: unknown }).pageHosts;
+    const two = buildRegistry({ ...EMPTY, user: [await stored(ytUser), await stored(tie('aa')), await stored(tie('bb'))] }, () => true);
+    assert.equal(two.lookup('www.youtube.com').entry, null);
+    assert.equal(two.lookup('www.youtube.com').blocked, true);
+    assert.equal(normalizeMediaKey(`${W}/logout`, two), null);
+    assert.equal(watchUrl(`${W}/logout`, two), null);
+
+    // Control: a tie on a host no built-in describes still falls to the generic rule.
+    const a = variant({ id: 'aaa', keyPrefix: 'aaa', examples: [{ url: 'https://video.example/watch/x', key: 'aaa:/watch/x' }] });
+    const b = variant({ id: 'bbb', keyPrefix: 'bbb', examples: [{ url: 'https://video.example/watch/x', key: 'bbb:/watch/x' }] });
+    const free = buildRegistry({ ...EMPTY, user: [await stored(a), await stored(b)] }, () => true);
+    assert.equal(free.lookup('video.example').blocked, undefined);
+    assert.equal(normalizeMediaKey('https://video.example/logout', free), 'video.example:/logout');
+  });
+
   it('skips a stored descriptor that no longer validates, with a note', () => {
     const reg = buildRegistry({ ...EMPTY, user: [{ source: '{"schema":9}', sha256: 'x' }] }, () => true);
     assert.equal(reg.entries.length, BUILTIN_SOURCES.length);
