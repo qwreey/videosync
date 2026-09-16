@@ -183,6 +183,19 @@ won; both on the next episode within 60 ms), where the control split them. `prob
   (`dump().engine.wiring`), and the app tests pin that the shims' shared wiring supplies them.
 - The continuation predicate is the descriptor's `continues` (D7), through `continuesMedia()`.
 
+**Integration (second review):**
+
+- A reconnect's `welcome` is a move of the room too: a seq past `lastAppliedSeq` that is not an
+  acked one of ours sets `foreignMove` for a seeder, and a changed media key starts a media epoch
+  (and *in transit*) as a `state` would. The first `welcome` is not a change of media.
+- A continuation (item 11) is dropped by a `welcome` that does not show its key, and no longer
+  starts the room once a minute has passed since it was sent (`CONTINUATION_START_MS`): a
+  `rate_limited` refusal names no command, and a lost one otherwise stayed armed for the session.
+- An element the room is more than `PAST_DURATION_SLACK_MS` past (item 12) is *absent*, not
+  acquiring, until the room comes back within it — it held every play for `GATE_TIMEOUT`.
+- The K bound (item 10) counts a seeder's absorbed site moves as well; past it the seeder is
+  FOUGHT, and a press seeds from wherever the member takes the player.
+
 **Not done:** ads (an ad in the same element bumps the epoch and, if its duration is long enough,
 is conformed — Y3 unmeasured); fullscreen consuming activation (Y4); Laftel in Firefox; Firefox
 media keys give no evidence (a media-key play while acquiring is put back once).
