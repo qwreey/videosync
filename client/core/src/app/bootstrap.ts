@@ -19,7 +19,6 @@ import type { EngineStatus } from '../engine/engine.ts';
 import type { MemberInfo } from '../engine/protocol.ts';
 import type { Transport } from '../engine/transport.ts';
 import { Panel } from '../ui/panel.ts';
-import type { SignInInput } from '../ui/panel.ts';
 import { AuthRequiredError, ServerAuth } from './auth.ts';
 import type { SignInResult } from './auth.ts';
 import type { AuthFetch } from './authfetch.ts';
@@ -298,12 +297,11 @@ export function start(p: Platform): App {
     onChat: (text) => engine?.chat(text),
     onRotate: () => engine?.rotateSecret(),
     onGesture: () => { void engine?.resumeAfterGesture(); },
-    onSignIn: (c) => { void signIn(c); },
     onBrowserSignIn: () => { void browserSignIn(); },
     onCancelSignIn: () => {
       auth.cancelBrowser();
       panel.showSignInCode(null);
-      panel.setSignInNotice('취소했어요. 다시 로그인하거나 다른 방법을 고르세요.', '');
+      panel.setSignInNotice('취소했어요. 다시 로그인할 수 있어요.', '');
     },
     onSignOut: () => { void signOut(); },
   }, p.openPanel ? 'open' : 'closed');
@@ -655,13 +653,6 @@ export function start(p: Platform): App {
     noteSignedIn(target.server, r.sub);
     panel.setStatus('로그인했어요.');
     target.retry();
-  }
-
-  async function signIn(c: SignInInput): Promise<void> {
-    const target = signInFor;
-    if (!target) return;
-    panel.setSignInNotice('로그인하는 중…', '');
-    finishSignIn(target, await auth.signIn(target.server, c));
   }
 
   async function browserSignIn(): Promise<void> {

@@ -68,6 +68,7 @@ never holds it.
 1. `GET /healthz` → methods.
 2. Need a device token and have none:
    - `token` / `password` → the panel asks for a key or user+password → `POST /api/session`.
+     *(As built: typed into the login tab instead — see "Keys and passwords" below.)*
    - `oidc`, or a `proxy` gateway that answers with a login redirect → `POST /api/auth/begin`, open
      `loginUrl` in a tab, poll until done. This path works for the userscript and both extensions
      without an identity permission.
@@ -181,6 +182,15 @@ what it left open:
   (PROTOCOL §8). A network-admitting gateway otherwise handed any page the user had open a device
   token with one bare POST, and gating `/api/session` at the proxy does not stop a request the
   gateway lets through.
+- **Keys and passwords are typed into the login tab, never the panel.** The panel is in the site's
+  DOM; key events are composed, so a capture listener on the site's `window` reads every
+  keystroke typed into its closed shadow root, `stopPropagation()` or not — and those secrets mint
+  the device token that `authfetch.ts` keeps away from the page. `/auth/login` therefore offers a
+  key form and a user/password form (same flow, cookie binding, `CrossOriginProtection`, and the
+  `session` rate bucket), `begin` works whatever methods are on, and the panel's sign-in section is
+  one button. Client flow step 2 becomes "begin, open the tab, poll" for every method; a trusted
+  network still signs in with no tab (the `proxy` step above). A bonus: the browser's password
+  manager fills the server's own origin.
 - **`-public-url` must be an origin** (no path): the rest of the flow assumes the root.
 
 ## Open, to measure before documenting

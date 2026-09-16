@@ -735,7 +735,7 @@ describe('client core against a videosyncd that requires sign-in', { concurrency
 
   after(() => { authProc?.kill(); });
 
-  function client() {
+  function client(openTab: (url: string) => void = () => {}) {
     const data = new Map<string, string>();
     const fetchAuth = makeAuthFetch(fetchHttp, memoryTokens());
     const auth = new ServerAuth(fetchAuth, {
@@ -744,7 +744,7 @@ describe('client core against a videosyncd that requires sign-in', { concurrency
     }, {
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (h) => { clearTimeout(h); },
-    }, () => {});
+    }, openTab);
     return { fetchAuth, auth };
   }
 
@@ -795,6 +795,34 @@ describe('client core against a videosyncd that requires sign-in', { concurrency
     } finally {
       a.engine.stop();
     }
+  });
+
+  it('signs in with a password typed into the server\'s own login tab', async () => {
+    // The panel takes no password (it is in the site's page); the tab does.
+    const typed: Array<{ status: number; page: string }> = [];
+    const tab = async (loginUrl: string) => {
+      const page = await fetch(loginUrl);
+      const cookie = (page.headers.get('set-cookie') ?? '').split(';')[0]!;
+      const html = await page.text();
+      const flow = /name="flow" value="([^"]+)"/.exec(html)![1]!;
+      for (const password of ['hunter2', 'hunter22']) {
+        const r = await fetch(`${server}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+          body: new URLSearchParams({ flow, method: 'password', user: 'alice', password }).toString(),
+        });
+        typed.push({ status: r.status, page: await r.text() });
+      }
+    };
+    let opened: Promise<void> = Promise.resolve();
+    const c = client((u) => { opened = tab(u); });
+    let shown = '';
+    const out = await c.auth.browserSignIn(server, (code) => { shown = code; });
+    await opened;
+    assert.deepEqual(typed.map((t) => t.status), [401, 200]);
+    assert.ok(typed[0]!.page.includes(shown), 'the page and the panel show different codes');
+    assert.deepEqual(out, { ok: true, sub: 'alice' });
+    assert.match(await c.auth.ticket(server, 'create'), /./);
   });
 
   it('refuses a member without a ticket as auth_required, and does not keep trying', async () => {

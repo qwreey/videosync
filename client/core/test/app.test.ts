@@ -635,12 +635,16 @@ describe('the engine the page builds', () => {
 });
 
 describe('signing in to a server', () => {
-  function input(h: H, placeholder: string): FakeElement {
-    const e = [...h.root().shadow!.walk()].find((x) => x.tagName === 'INPUT' && x.placeholder === placeholder);
-    if (!e) throw new Error(`no ${placeholder} field`);
-    return e;
+  /** Every input field in the panel, by placeholder. */
+  const inputs = (h: H) => [...h.root().shadow!.walk()].filter((x) => x.tagName === 'INPUT').map((x) => x.placeholder);
+
+  /** Finish the login tab the panel opened. */
+  async function signInByTab(h: H, server: FakeServer): Promise<void> {
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    server.browserDone = true;
+    await h.tick(2100);
   }
-  const shownInput = (h: H, placeholder: string) => input(h, placeholder).shown;
   const note = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'note')!;
   const signInShown = (h: H) => note(h).shown;
   const code = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className === 'code')!;
@@ -665,37 +669,48 @@ describe('signing in to a server', () => {
     assert.equal(signInShown(h), false);
   });
 
-  it('asks for a key when room creation is refused, and creates the room once signed in', async () => {
+  it('never asks for a key or a password in the page: the server\'s own tab takes them', async () => {
+    // The panel is in the site's DOM, and a capture listener on the site's
+    // window sees every key typed into it. The secrets that mint a device
+    // token are therefore typed on the server's origin.
+    for (const methods of [['token'], ['password'], ['token', 'password'], []]) {
+      const server = new FakeServer();
+      server.methods = methods.length ? methods : ['token'];
+      const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+      if (!methods.length) server.override = (p) => (p === '/healthz' ? json(200, { ok: true }) : undefined);
+      await create(h);
+      assert.ok(signInShown(h), `${methods}: nothing asked the member to sign in`);
+      // The room's own secret (D4) is not a server credential: it travels in the invite link.
+      const secrets = inputs(h).filter((p) => ['접속 키', '비밀번호', '사용자'].includes(p));
+      assert.ok(inputs(h).includes('참가 비밀키'), 'control: the walk sees the panel\'s inputs');
+      assert.deepEqual(secrets, [], `${methods}: a secret field in the site's page`);
+      assert.equal(h.visibleButton('로그인'), undefined, `${methods}: a submit for a secret typed in the page`);
+      assert.ok(h.visibleButton('브라우저에서 로그인'), `${methods}: no way to sign in at all`);
+      unload(h);
+    }
+  });
+
+  it('signs in to a key server through the tab, and creates the room once signed in', async () => {
     const server = new FakeServer();
     server.methods = ['token'];
     const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
     await create(h);
     assert.equal(h.transports.length, 0);
-    assert.ok(signInShown(h), 'nothing asked the member to sign in');
     assert.match(h.status().text, /로그인/);
-    assert.ok(shownInput(h, '접속 키'));
-    assert.equal(shownInput(h, '비밀번호'), false, 'this server has no passwords');
-    assert.equal(h.visibleButton('브라우저에서 로그인'), undefined, 'this server has no login page');
-
-    input(h, '접속 키').value = 'wrong';
-    h.visibleButton('로그인')!.click();
+    h.visibleButton('브라우저에서 로그인')!.click();
     await h.tick(50);
-    assert.match(note(h).textContent, /맞지 않아요/);
-    assert.equal(h.transports.length, 0);
-
-    input(h, '접속 키').value = KEY;
-    h.visibleButton('로그인')!.click();
-    await h.tick(50);
-    assert.equal(input(h, '접속 키').value, '', 'the key stayed in the page');
+    assert.deepEqual(h.opened, [LOGIN_URL]);
+    assert.equal(code(h).textContent, CODE);
+    server.browserDone = true;
+    await h.tick(2100);
     assert.equal(signInShown(h), false);
     assert.equal(h.transports.length, 1, 'signing in did not finish what it was for');
     const rooms = server.to('/api/rooms');
     assert.equal(rooms.length, 2);
     assert.match(String(rooms[1]!.body['ticket']), /^T/, 'the second attempt carried no ticket');
-    const signedRow = h.visibleButton('로그아웃')!.parentNode!;
-    assert.match(signedRow.textContent, new RegExp(USER), 'the ticket that followed forgot who signed in');
+    assert.ok(h.visibleButton('로그아웃'));
     assert.ok(!pageText(h).includes('DEVICE-'), 'the device token reached the page');
-    assert.ok(!pageText(h).includes(KEY), 'the access key stayed somewhere readable');
+    assert.equal(server.to('/api/session').length, 0, 'the page sent credentials of its own');
   });
 
   it('remembers what a server needs, so the next room goes straight for a ticket', async () => {
@@ -704,13 +719,7 @@ describe('signing in to a server', () => {
     const store = makeStore();
     const h = harness(ROOM_URL, store, new Map(), {}, server);
     await create(h);
-    assert.ok(shownInput(h, '비밀번호') && shownInput(h, '사용자'));
-    assert.equal(shownInput(h, '접속 키'), false);
-    input(h, '사용자').value = USER;
-    input(h, '비밀번호').value = PASSWORD;
-    h.visibleButton('로그인')!.click();
-    await h.tick(50);
-    assert.equal(input(h, '비밀번호').value, '', 'the password stayed in the page');
+    await signInByTab(h, server);
     assert.equal(h.transports.length, 1);
     unload(h);
 
@@ -738,9 +747,7 @@ describe('signing in to a server', () => {
     await h.tick(50);
     assert.doesNotMatch(h.status().text, /방 ID나 비밀키/, 'a sign-in problem was blamed on the room ID');
     assert.ok(signInShown(h));
-    input(h, '접속 키').value = KEY;
-    h.visibleButton('로그인')!.click();
-    await h.tick(50);
+    await signInByTab(h, server);
     assert.equal(h.transports.length, 3, 'one retry to learn, one join after signing in');
     h.tr().open();
     const t = h.tr().sentOf('hello')[0]!.ticket;
@@ -782,8 +789,6 @@ describe('signing in to a server', () => {
     server.methods = ['oidc'];
     const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
     await create(h);
-    assert.equal(shownInput(h, '접속 키'), false);
-    assert.equal(h.visibleButton('로그인'), undefined, 'a server with only a login page offered a password box');
     h.visibleButton('브라우저에서 로그인')!.click();
     await h.tick(50);
     assert.deepEqual(h.opened, [LOGIN_URL]);
@@ -873,14 +878,17 @@ describe('signing in to a server', () => {
     const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
     await create(h);
     assert.ok(signInShown(h));
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    // The tab finishes while the poll that will say so is on its way.
+    server.browserDone = true;
     let release: () => void = () => {};
     server.gate = new Promise((res) => { release = res; });
-    input(h, '접속 키').value = KEY;
-    h.visibleButton('로그인')!.click();
-    await flush();
+    await h.tick(2100);
     h.app.api.leave();
     release();
     await h.tick(100);
+    assert.equal(server.to('/api/auth/poll').length, 1, 'the scenario needs a poll that was in flight');
     assert.equal(server.to('/api/rooms').length, 1, 'a room was created for a member who had left');
     assert.equal(h.transports.length, 0);
   });
@@ -890,9 +898,7 @@ describe('signing in to a server', () => {
     server.methods = ['token'];
     const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
     await create(h);
-    input(h, '접속 키').value = KEY;
-    h.visibleButton('로그인')!.click();
-    await h.tick(50);
+    await signInByTab(h, server);
     assert.ok(h.visibleButton('로그아웃'));
     h.app.api.leave();
     server.devices.clear(); // the server's key was rotated
@@ -907,9 +913,7 @@ describe('signing in to a server', () => {
     const store = makeStore();
     const h = harness(ROOM_URL, store, new Map(), {}, server);
     await create(h);
-    input(h, '접속 키').value = KEY;
-    h.visibleButton('로그인')!.click();
-    await h.tick(50);
+    await signInByTab(h, server);
     h.app.api.leave();
     h.visibleButton('로그아웃')!.click();
     await h.tick(50);

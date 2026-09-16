@@ -82,19 +82,19 @@ export interface UIHandlers {
   onChat(text: string): void;
   onRotate(): void;
   onGesture(): void;
-  /** A key, or a user and password, typed into the sign-in section. */
-  onSignIn?(c: SignInInput): void;
-  /** "Sign in in the browser": a login tab. */
+  /**
+   * "Sign in in the browser": a login tab on the server's own origin. The
+   * one way to sign in from the panel, whatever the method: a key or a
+   * password typed here would be typed into the site's page (below).
+   */
   onBrowserSignIn?(): void;
   onCancelSignIn?(): void;
   onSignOut?(): void;
 }
 
-export type SignInInput = { key: string } | { user: string; password: string };
-
-/** What the sign-in section offers, by the methods the server named. */
+/** What the sign-in section says. */
 export interface SignInOffer {
-  /** Methods from the server; empty when it did not say, which offers everything. */
+  /** Methods from the server; empty when it did not say. Every one signs in through the tab. */
   methods: readonly string[];
   notice: string;
 }
@@ -195,7 +195,7 @@ export class Panel {
     const mediaWrap = mk('div');
     mediaWrap.style.display = 'none';
     mediaWrap.append(mediaNotice, mediaBtn);
-    const auth = this.buildSignIn(doc, mk);
+    const auth = this.buildSignIn(mk);
     const signed = mk('div', 'signed');
     const signedText = mk('span', '', '서버에 로그인됨');
     const signOut = mk('button', 'action secondary', '로그아웃');
@@ -262,94 +262,41 @@ export class Panel {
   }
 
   /**
-   * Hidden until a server asks. Only what that server accepts is shown: a key
-   * field for `token`, user and password for `password`, a login tab for
-   * `oidc` and `proxy`.
+   * Hidden until a server asks, and then only a button that opens the
+   * server's login page in a tab.
+   *
+   * No key or password field, on purpose. This panel is in the site's DOM, and
+   * key events are composed: a capture listener on the page's `window` runs
+   * before anything on an input inside a closed shadow root, so the site sees
+   * every keystroke typed here, `stopPropagation()` or not. Those secrets mint
+   * the device token the privileged side keeps away from this very page
+   * (authfetch.ts), and the login tab is on the server's origin, which no site
+   * can read.
    */
   private buildSignIn(
-    doc: Document,
     mk: <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => HTMLElementTagNameMap[K],
   ): HTMLElement {
-    void doc;
     const wrap = mk('div', 'auth');
     wrap.style.display = 'none';
     // Not `.status`: that class is the panel's one status line.
     const notice = mk('div', 'note warn');
-    const secretInput = (placeholder: string) => {
-      const i = mk('input');
-      i.type = 'password';
-      i.placeholder = placeholder;
-      i.autocomplete = 'off';
-      // Site hotkeys must not see a password being typed, and Enter submits
-      // unless an IME is still composing (see the chat box).
-      for (const t of ['keydown', 'keyup', 'keypress'] as const) {
-        i.addEventListener(t, (e: KeyboardEvent) => {
-          e.stopPropagation();
-          if (t === 'keydown' && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) submit();
-        });
-      }
-      return i;
-    };
-    const key = secretInput('접속 키');
-    const user = mk('input');
-    user.placeholder = '사용자';
-    user.autocomplete = 'off';
-    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
-      user.addEventListener(t, (e) => { e.stopPropagation(); });
-    }
-    const password = secretInput('비밀번호');
-    const signIn = mk('button', 'action', '로그인');
-    const browser = mk('button', 'action secondary', '브라우저에서 로그인');
+    const browser = mk('button', 'action', '브라우저에서 로그인');
     const code = mk('div', 'code');
     const cancel = mk('button', 'action secondary', '취소');
-
-    const submit = () => {
-      const u = user.value.trim();
-      // A password is never kept in the page longer than it takes to send.
-      let c: SignInInput | null = null;
-      if (this.shown.password && u && password.value) c = { user: u, password: password.value };
-      else if (this.shown.key && key.value.trim()) c = { key: key.value.trim() };
-      if (!c) {
-        this.setSignInNotice('키나 사용자·비밀번호를 입력해주세요.', 'err');
-        return;
-      }
-      password.value = '';
-      key.value = '';
-      this.h.onSignIn?.(c);
-    };
-    signIn.addEventListener('click', submit);
     browser.addEventListener('click', () => this.h.onBrowserSignIn?.());
     cancel.addEventListener('click', () => this.h.onCancelSignIn?.());
-
-    const keyWrap = mk('div');
-    keyWrap.append(mk('label', '', '접속 키'), key);
-    const pwWrap = mk('div');
-    pwWrap.append(mk('label', '', '사용자'), user, mk('label', '', '비밀번호'), password);
-    const buttons = mk('div', 'row');
-    buttons.append(signIn, browser);
-    wrap.append(notice, keyWrap, pwWrap, buttons, code, cancel);
+    wrap.append(notice, browser, code, cancel);
     Object.assign(this.el, {
-      authWrap: wrap, authNotice: notice, authKey: keyWrap, authPw: pwWrap,
-      authSignIn: signIn, authBrowser: browser, authCode: code, authCancel: cancel,
+      authWrap: wrap, authNotice: notice, authBrowser: browser, authCode: code, authCancel: cancel,
     });
     return wrap;
   }
 
-  private shown = { key: false, password: false };
-
-  /** Ask to sign in, offering what the server accepts. */
+  /** Ask to sign in. */
   showSignIn(offer: SignInOffer): void {
-    const all = offer.methods.length === 0;
-    const has = (m: string) => all || offer.methods.includes(m);
-    this.shown = { key: has('token'), password: has('password') };
-    const show = (k: string, on: boolean) => { this.el[k]!.style.display = on ? '' : 'none'; };
-    show('authKey', this.shown.key);
-    show('authPw', this.shown.password);
-    show('authSignIn', this.shown.key || this.shown.password);
-    show('authBrowser', has('oidc') || has('proxy'));
     this.showSignInCode(null);
     this.setSignInNotice(offer.notice, 'warn');
-    show('authWrap', true);
+    this.el.authWrap!.style.display = '';
   }
 
   /** The browser login is waiting on its tab; `null` when it is not. */
@@ -359,7 +306,6 @@ export class Panel {
     c.style.display = code ? '' : 'none';
     this.el.authCancel!.style.display = code !== null ? '' : 'none';
     (this.el.authBrowser as HTMLButtonElement).disabled = code !== null;
-    (this.el.authSignIn as HTMLButtonElement).disabled = code !== null;
   }
 
   setSignInNotice(text: string, level: '' | 'warn' | 'err' = 'warn'): void {

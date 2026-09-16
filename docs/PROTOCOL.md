@@ -666,11 +666,11 @@ Whatever authenticates a person, the server hands out two credentials of its own
 | `GET /healthz` | — | adds `"auth":{"methods":["token","password","proxy","oidc"],"scope":"create"\|"all"}` |
 | `POST /api/session` | `Authorization: Bearer <access key>`, or `Basic` (user:password, or any user with the key as password), or no credentials through a trusted proxy (then only with `X-VideoSync-Device: 1`, below) | `200 {"token","expiresMs","sub"}`; `401 {"error":"auth_failed","methods"}` (never a `WWW-Authenticate: Basic`, which would make a browser draw its own dialog) |
 | `POST /api/ticket` | `Authorization: Bearer <device token>` — **only** that | `200 {"ticket","expiresMs"}`; `401 {"error":"auth_required","methods"}` |
-| `POST /api/auth/begin` | — | `200 {"loginUrl","pollId","code","expiresMs"}`; `404 {"error":"no_browser_login"}` without `oidc` or `proxy` |
+| `POST /api/auth/begin` | — | `200 {"loginUrl","pollId","code","expiresMs"}`, whatever methods are enabled *(integration review: was `404 {"error":"no_browser_login"}` without `oidc` or `proxy`)* |
 | `POST /api/auth/poll` | `{"pollId"}` | `200 {"pending":true}`; once: `200 {"token","expiresMs","sub"}` or `403 {"error":"login_denied","msg"}`; then `404 {"error":"login_expired"}` |
 | `GET /api/providers`, `GET /api/providers/<id>.json` | `Authorization: Bearer <device token>` | as in §7; without a valid device token `401 {"error":"auth_required","methods"}`, in every scope, like room creation. A device token rather than a ticket: an index and its files are several requests, and a ticket is single-use. The proxy's word does not count, as on `/api/ticket`. *(Integration.)* |
-| `GET /auth/login?flow=<id>` | a browser tab | the login page: shows `code`, offers the enabled browser methods, sets `vs_flow_<id>` (`Path=/auth/`, `HttpOnly`, `SameSite=Lax`) |
-| `POST /auth/login` | form `flow`, the flow cookie, through the trusted proxy | completes a `proxy` login. Cross-origin POSTs refused (`http.CrossOriginProtection`) |
+| `GET /auth/login?flow=<id>` | a browser tab | the login page: shows `code`, offers every enabled method (a key form for `token`, user and password for `password`, the account button, the proxy confirm), sets `vs_flow_<id>` (`Path=/auth/`, `HttpOnly`, `SameSite=Lax`) |
+| `POST /auth/login` | form `flow` and the flow cookie; with `method=token` and `key`, or `method=password`, `user` and `password`; with no `method`, through the trusted proxy | completes the flow as that method; a wrong secret answers `401` with the page again and leaves the flow pending; attempts share the `session` bucket (`429`). Cross-origin POSTs refused (`http.CrossOriginProtection`) |
 | `GET /auth/oidc/start?flow=<id>` | the flow cookie | `302` to the IdP: code flow, PKCE S256, `state`, `nonce` |
 | `GET /auth/oidc/callback` | the IdP's redirect, the flow cookie | exchanges the code at the token endpoint (TLS), checks the ID token, completes the flow |
 
@@ -682,8 +682,12 @@ client is the TCP peer, or — only when that peer is in `-trusted-proxies` — 
 they must name the same address; otherwise one of them is the visitor's own (a proxy passes the
 header it does not write through untouched) and the request is charged to the proxy's address.
 
-The **browser login** is the one path for `oidc`, for a `proxy` gateway that wants a login, and for
-every shim, with no identity permission: begin, open `loginUrl` in a tab, poll every 2 s. The flow
+The **browser login** is the one path the panel offers, for every method, and works for every
+shim with no identity permission. *(Integration review:)* keys and passwords are typed into the
+login tab, not the panel: the panel is in the site's DOM, key events are composed, and a capture
+listener on the site's `window` sees every keystroke typed into a closed shadow root.
+`POST /api/session` with credentials stays for clients that are not in somebody else's page.
+The flow: begin, open `loginUrl` in a tab, poll every 2 s. The flow
 lives 5 minutes, its result is handed out once, the poll id never appears in a URL, and the page
 shows the same `code` the client shows, so a login link someone else sent can be recognised.
 

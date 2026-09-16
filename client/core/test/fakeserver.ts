@@ -100,7 +100,8 @@ export class FakeServer {
         return json(200, { ticket: t, expiresMs: 9e12 });
       }
       case '/api/auth/begin':
-        if (!this.methods.includes('oidc') && !this.methods.includes('proxy')) return json(404, { error: 'no_browser_login' });
+        // Every method has a login page: keys and passwords are typed there.
+        if (!this.on) return json(404, { error: 'no_browser_login' });
         return json(200, { loginUrl: LOGIN_URL, pollId: 'POLL', code: CODE, expiresMs: Date.now() + 300_000 });
       case '/api/auth/poll':
         if (body['pollId'] !== 'POLL') return json(404, { error: 'login_expired' });

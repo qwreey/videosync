@@ -67,10 +67,6 @@ function strings(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
-/** Can a login tab do anything on a server with these methods? */
-export function hasBrowserLogin(methods: readonly string[]): boolean {
-  return methods.includes('oidc') || methods.includes('proxy');
-}
 
 export class ServerAuth {
   private readonly fetch: AuthFetch;
@@ -186,6 +182,12 @@ export class ServerAuth {
     this.remember(server, floor);
   }
 
+  /**
+   * Credentials straight to `/api/session`. Not for the panel, which is in the
+   * site's page and must not collect a secret (panel.ts `buildSignIn`); the
+   * app signs in through `browserSignIn`, whose tab takes keys and passwords
+   * on the server's own origin.
+   */
   async signIn(server: string, credentials: Credentials): Promise<SignInResult> {
     const r = await this.fetch(server, '/api/session', { method: 'POST', credentials });
     // Checked first: a gateway's 200 login page signed nobody in.
