@@ -21,7 +21,8 @@ export interface EngineConfig {
   room: string;
   secret: string;
   name: string;
-  /** Normalized provider+content identity. NOT the raw URL. */
+  /** Normalized provider+content identity. NOT the raw URL. Empty on a page
+   *  that names no media, which never follows a room (see `onRoomMedia`). */
   mediaKey: string;
   /** Where `mediaKey` can be opened (`watchUrl`), for a room this member names. */
   mediaUrl?: string;
@@ -256,6 +257,21 @@ interface Applying {
   paused: boolean;
 }
 
+/**
+ * Where an element puts a seek to `targetMs`: per spec, one before the start
+ * lands on 0 and one past the end on the duration.
+ *
+ * A seek of the engine's is recognised mid-flight by where it lands, and a room
+ * that is past this member's end would otherwise look like a user scrubbing to
+ * the end -- sent, it moves the whole room there. The same rule
+ * `Html5Adapter.seekTo` resolves by. A live or DRM stream's seekable window can
+ * clamp tighter than this, and nothing in `PlayerState` says where.
+ */
+function landsAt(targetMs: number, durationS: number): number {
+  const t = Math.max(targetMs, 0);
+  return Number.isFinite(durationS) && durationS > 0 ? Math.min(t, durationS * 1000) : t;
+}
+
 /** One of our own commands, sent and not yet acked. */
 interface OwnCmd { reqId: string; kind: CmdKind; at: number }
 
@@ -462,12 +478,18 @@ export class SyncEngine {
    * A member on different media cannot follow the room and must not steer it:
    * their position is measured against a different timeline, so every command
    * they send and every residual they report is meaningless to everyone else.
-   * Empty on either side means "not established yet", which is not a
-   * disagreement.
+   *
+   * An empty key is "nothing", not "not established yet", and nothing is never
+   * the room's media -- not even a room whose own key is empty. Both keys come
+   * from a URL, so empty means a page that names no media: a site's front
+   * page, YouTube's search or channel pages. Treating it as a match drove
+   * whatever `<video>` such a page happens to hold -- a hover preview, a
+   * channel trailer -- to the room's anchor, and sent that element's own jumps
+   * to the room as seeks. A room created with no media is followed by nobody
+   * until a `media` command names some.
    */
   private onRoomMedia(): boolean {
-    if (!this.localMediaKey || !this.anchor.mediaKey) return true;
-    return this.localMediaKey === this.anchor.mediaKey;
+    return this.localMediaKey !== '' && this.localMediaKey === this.anchor.mediaKey;
   }
 
   /**
@@ -990,9 +1012,15 @@ export class SyncEngine {
     // as the clock is settled -- which is well inside `reconcileAfterMs`, so
     // they never see the room defend `paused@0` against them. See
     // `adoptLocalStateOnJoin`.
+    //
+    // Consumed even when the creator is not on the room's media, and then not
+    // acted on: a page that names no media has nothing to seed the room from,
+    // and a seed sent later -- after a navigation, or after a `media` command
+    // named the room -- would restart a room somebody has since chosen a state
+    // for.
     if (this.pendingAdopt && this.clock.ready) {
       this.pendingAdopt = false;
-      this.adoptLocalState(state);
+      if (this.onRoomMedia()) this.adoptLocalState(state);
     }
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
@@ -1009,7 +1037,8 @@ export class SyncEngine {
     if (!this.autoplayBlocked && onRoomMedia) {
       if (observation.kind === 'seek') {
         if (!applying ||
-          Math.abs(observation.positionS * 1000 - applying.targetMs) > this.seekThresholdMs) {
+          Math.abs(observation.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) >
+            this.seekThresholdMs) {
           this.send('seek', observation.positionS * 1000);
         }
       } else if (observation.kind === 'playstate') {
