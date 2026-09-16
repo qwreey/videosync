@@ -1635,8 +1635,10 @@ export class SyncEngine {
       // The panel asked for a press, so any press ends it -- including one
       // that agrees with the room, which the echo test below would swallow.
       this.stats.gesturedIntents++;
+      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
       this.toSteady(now, state);
-      this.act(o, state);
+      // A seeder the site fought: the adoption carries the press (below).
+      if (!adopting) this.act(o, state);
       return;
     }
     if (this.isEcho(o, state)) {
@@ -1660,15 +1662,19 @@ export class SyncEngine {
     }
     if (a.state === 'guarded' && !this.applyingRemote && !this.conformInFlight) {
       this.stats.siteMovesAbsorbed++;
+      if (++a.reconforms > this.cfg.maxReconforms) {
+        // A seeder too: a site that never stops moving the player would keep
+        // it guarded, and so acquiring, for good -- holding every play of the
+        // room. Left alone, it is absent, and a press seeds from wherever the
+        // member takes the player (`toSteady` still has `adoptFor`).
+        this.stats.fought++;
+        this.setAcq('fought');
+        return;
+      }
       if (a.policy === 'adopt') {
         // The site is setting up the member's own player, which the room is
         // about to be seeded from: let it, and wait for it to finish.
         a.guardedAt = now;
-        return;
-      }
-      if (++a.reconforms > this.cfg.maxReconforms) {
-        this.stats.fought++;
-        this.setAcq('fought');
         return;
       }
       this.conform();

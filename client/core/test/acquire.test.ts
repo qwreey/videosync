@@ -1005,3 +1005,52 @@ describe('an element the room is far past the end of', () => {
     assert.ok(Math.abs(h.player.positionS - 10) < 0.3, `left at ${h.player.positionS}`);
   });
 });
+
+describe('a seeder whose site keeps moving its player', () => {
+  async function restless(cfg: Partial<EngineConfig>) {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg });
+    await h.join({}, 2);
+    for (let i = 0; i < 60; i++) {
+      h.player.positionS = 100 + i * 7;
+      h.player.emit('seeked');
+      await h.vt.advance(800);
+    }
+    return h;
+  }
+
+  it('is left alone and reported absent, like a joiner (the K bound)', async () => {
+    const h = await restless({ adoptLocalStateOnJoin: true });
+    assert.equal(h.engine.acquisition, 'fought', 'guarded forever');
+    assert.equal(h.lastHb().acquiring, undefined, 'held the room\'s plays for good');
+    assert.equal(h.lastHb().suspended, true);
+    assert.deepEqual(h.kinds(), [], 'seeded from a player the site is still moving');
+  });
+
+  it('seeds the room when the member takes the player back', async () => {
+    const h = await restless({ adoptLocalStateOnJoin: true });
+    h.g.press();
+    h.player.positionS = 700;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.deepEqual(h.kinds(), ['seek']);
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 700_000) < 1000, `seeded at ${h.cmds()[0]!.positionMs}`);
+  });
+
+  it('control: a joiner under the same site reaches the bound too', async () => {
+    const h = await restless({});
+    assert.equal(h.engine.acquisition, 'fought');
+  });
+
+  it('control: a site that moves it a few times, then stops, is still absorbed and seeded', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    for (let i = 0; i < DEFAULT_ENGINE_CONFIG.maxReconforms; i++) {
+      h.player.positionS = 800 + i;
+      h.player.emit('seeked');
+      await h.vt.advance(300);
+    }
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.deepEqual(h.kinds(), ['seek']);
+  });
+});
