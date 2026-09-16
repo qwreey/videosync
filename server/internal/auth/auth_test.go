@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -333,6 +334,11 @@ func TestForwardedHeadersAreBelievedOnlyFromATrustedProxy(t *testing.T) {
 	if got := p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": "not-an-ip", "X-Forwarded-For": "203.0.113.7"})); got != "127.0.0.1" {
 		t.Fatalf("a garbage X-Real-IP was ignored rather than distrusted: %s", got)
 	}
+	// A hop nobody's proxy wrote ends the chain: what lies left of it is the
+	// visitor's own writing, so the last trusted hop is charged.
+	if got := p.client(req("127.0.0.1:1", map[string]string{"X-Forwarded-For": "203.0.113.5, not-an-ip, 10.1.2.3"})); got != "10.1.2.3" {
+		t.Fatalf("a chain was read past an unparseable hop: %s", got)
+	}
 	if got := p.client(req("[::ffff:127.0.0.1]:1", nil)); got != "127.0.0.1" {
 		t.Fatalf("a v4-mapped proxy address was not recognised: %s", got)
 	}
@@ -358,6 +364,37 @@ func TestTheLimiterAllowsABurstThenPaces(t *testing.T) {
 	}
 	if ok, _ := l.allow("a", now.Add(time.Second)); !ok {
 		t.Fatal("did not refill")
+	}
+}
+
+func TestTheBucketTableIsBounded(t *testing.T) {
+	// One bucket per client address, and an IPv6 client has addresses to
+	// spare: the table must not grow with them.
+	now := time.Unix(1_800_000_000, 0)
+	key := func(i int) string { return fmt.Sprintf("2001:db8::%x", i) }
+
+	// Buckets that have refilled carry nothing and are dropped first.
+	l := newLimiter(1, 1)
+	for i := range maxBuckets {
+		l.allow(key(i), now)
+	}
+	l.allow("fresh", now.Add(2*time.Second))
+	if n := len(l.buckets); n != 1 {
+		t.Fatalf("refilled buckets kept: %d", n)
+	}
+
+	// A flood inside one instant has nothing refilled; half of it goes.
+	l = newLimiter(1, 1)
+	for i := range 3 * maxBuckets {
+		l.allow(key(i), now)
+		if n := len(l.buckets); n > maxBuckets {
+			t.Fatalf("the table grew to %d", n)
+		}
+	}
+	// And it still limits: a client that just spent its token is refused.
+	l.allow("busy", now)
+	if ok, _ := l.allow("busy", now); ok {
+		t.Fatal("the limiter stopped limiting")
 	}
 }
 

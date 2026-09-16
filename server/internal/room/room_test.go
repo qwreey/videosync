@@ -362,6 +362,32 @@ func TestAnAcquiringMemberHoldsAPlay(t *testing.T) {
 	}
 }
 
+// Absent wins over acquiring. This engine never reports suspended and
+// acquiring together, but a report that says both -- another client, or a
+// finished element alongside an acquiring flag -- describes a member the room
+// cannot wait for, and holding a play for it would cost everyone GATE_TIMEOUT.
+func TestAnAbsentMemberHoldsNothingWhateverElseItSays(t *testing.T) {
+	for _, absent := range []string{"suspended", "finished"} {
+		r, _ := newRoom(&scripted{}, vsync.Anchor{MediaKey: "ep2", Paused: true, AtServerMs: 1})
+		r.Join(1, "a", "a")
+		r.Join(1, "b", "b")
+		rep := acquiringReport(0)
+		if absent == "suspended" {
+			rep.Suspended = true
+		} else {
+			rep.Finished = true
+		}
+		r.OnReport(100, "b", rep)
+		r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+		if r.Held() || r.Anchor().Paused {
+			t.Fatalf("%s: a play was held for a member that is not there", absent)
+		}
+		if r.AcquiringReports != 0 {
+			t.Fatalf("%s: counted as acquiring", absent)
+		}
+	}
+}
+
 // Bounded like any other unready member: GATE_TIMEOUT waives it.
 func TestAnAcquiringMemberIsWaivedAfterTheGateTimeout(t *testing.T) {
 	r, _ := newRoom(&scripted{}, vsync.Anchor{MediaKey: "ep2", Paused: true, AtServerMs: 1})

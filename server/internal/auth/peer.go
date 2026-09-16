@@ -76,6 +76,7 @@ func (p peers) fromTrustedProxy(r *http.Request) bool {
 //     since everything left of it was written by whoever connected.
 //   - X-Real-IP: nginx's habit when told to set only this one -- in which case
 //     the visitor's own X-Forwarded-For arrives untouched.
+//
 // A proxy that writes one of them passes the other through as the visitor
 // sent it. So when both are present they must agree; when they do not, one
 // of them is the visitor's invention and there is no telling which, and the
@@ -170,8 +171,9 @@ func (l *limiter) allow(key string, now time.Time) (bool, time.Duration) {
 }
 
 // prune drops the buckets that have refilled; they carry no information. If
-// that frees nothing, the table is being flooded from many addresses and the
-// oldest half goes, which is the best a per-peer limit can do about that.
+// that frees nothing, the table is being flooded from many addresses and half
+// of it goes (whichever half map order yields), which is the best a per-peer
+// limit can do about that.
 func (l *limiter) prune(now time.Time) {
 	for k, b := range l.buckets {
 		if b.tokens+now.Sub(b.last).Seconds()*l.rate >= l.burst {
