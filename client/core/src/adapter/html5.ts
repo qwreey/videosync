@@ -66,11 +66,37 @@ export class Html5Adapter implements ProviderAdapter {
       rate: this.el.playbackRate,
       readyState: this.el.readyState,
       muted: this.el.muted || this.el.volume === 0,
-      durationS: Number.isFinite(this.el.duration) ? this.el.duration : 0,
+      hasAudio: this.hasAudio(),
+      durationS:Number.isFinite(this.el.duration) ? this.el.duration : 0,
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
     };
+  }
+
+  /**
+   * Whether the media has an audio track, from whichever non-standard signal
+   * this browser exposes; undefined when there is none to read.
+   *
+   * Chrome exposes only decode counters, so "no audio" there means pictures
+   * have been decoded and sound has not. Before anything is decoded the answer
+   * is unknown, not "silent": the detector treats unknown as audible, which is
+   * the safe side (see `SeekDetector`).
+   */
+  private hasAudio(): boolean | undefined {
+    const el = this.el as HTMLVideoElement & {
+      mozHasAudio?: boolean;
+      audioTracks?: { length: number };
+      webkitAudioDecodedByteCount?: number;
+      webkitVideoDecodedByteCount?: number;
+    };
+    if (typeof el.mozHasAudio === 'boolean') return el.mozHasAudio;
+    if (el.audioTracks && typeof el.audioTracks.length === 'number') return el.audioTracks.length > 0;
+    const audio = el.webkitAudioDecodedByteCount;
+    const video = el.webkitVideoDecodedByteCount;
+    if (typeof audio === 'number' && audio > 0) return true;
+    if (typeof audio === 'number' && typeof video === 'number' && video > 0) return false;
+    return undefined;
   }
 
   /**

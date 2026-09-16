@@ -57,6 +57,12 @@ export interface PlayerState {
   readonly rate: number;
   readonly readyState: number;
   readonly muted: boolean;
+  /**
+   * Whether the media carries sound at all. Undefined where the browser does
+   * not say. Unmuted playback of silent media is still "never audible" to the
+   * background-pause rule, so the detector needs this besides `muted`.
+   */
+  readonly hasAudio?: boolean | undefined;
   readonly durationS: number;
   readonly buffered: readonly BufferedRange[];
   /** Seconds of contiguous buffer ahead of the current position. */

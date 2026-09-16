@@ -203,6 +203,31 @@ describe('SeekDetector', () => {
     assert.ok(d.stallDetections > 0, 'control: a frozen, unready element mid-video is a stall');
   });
 
+  test('media with no audio track is never audible, so its hidden pause is suspension', () => {
+    // BROWSER-FINDINGS §5 condition C: Chrome pauses a hidden tab whose media
+    // has no audio track at all, unmuted or not. "Unmuted and playing" is not
+    // "made a sound" when there is nothing to hear.
+    const d = new SeekDetector(hidden);
+    const frames = [
+      ...Array.from({ length: 20 }, (_, i) => ({ positionS: 10 + i * 0.1, muted: false, hasAudio: false })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        positionS: 12, paused: true, muted: false, hasAudio: false, expectedS: 12 + i * 0.1,
+      })),
+    ];
+    const kinds = run(d, frames);
+    assert.ok(!kinds.includes('playstate'), `a browser pause was reported as user intent: ${kinds.join(',')}`);
+    assert.equal(d.suspensions, 1);
+
+    // Control: the same playback WITH an audio track is exempt, so the pause is
+    // a user's (a media key), and an adapter that cannot tell keeps it that way.
+    for (const hasAudio of [true, undefined]) {
+      const c = new SeekDetector(hidden);
+      const ck = run(c, frames.map((f) => ({ ...f, hasAudio })));
+      assert.ok(ck.includes('playstate'), `hasAudio=${hasAudio}: a genuine pause was swallowed`);
+      assert.equal(c.suspensions, 0);
+    }
+  });
+
   test('pressing play at a slow playback rate is reported, not read as a stall', () => {
     // At 0.25x the position advances a quarter of wall time. A freeze test
     // that ignores the rate reads every such sample as frozen, and the stall

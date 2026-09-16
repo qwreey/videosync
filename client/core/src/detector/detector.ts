@@ -80,7 +80,12 @@ export class SeekDetector {
     const posMs = s.positionS * 1000;
 
     // --- suspension: the browser paused us, we did not ---------------------
-    if (!s.paused && !s.muted) this.everAudible = true;
+    // Unmuted playback of media with no audio track makes no sound either,
+    // and Chrome pauses it the same way (BROWSER-FINDINGS §5, condition C).
+    // An adapter that cannot tell leaves `hasAudio` undefined, which counts as
+    // sound: wrongly calling a playback silent would swallow a real media-key
+    // pause in a hidden tab, and that is the worse of the two errors.
+    if (!s.paused && !s.muted && s.hasAudio !== false) this.everAudible = true;
     const wasSuspended = this.suspended;
     // readyState 4 with a full buffer is what separates this from buffering,
     // where readyState drops below 3 and the buffer drains.

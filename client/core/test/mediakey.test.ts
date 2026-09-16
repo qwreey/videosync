@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
+import { Html5Adapter } from '../src/adapter/html5.ts';
 import { pickVideo } from '../src/adapter/resolve.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, VirtualTime } from './fakes.ts';
@@ -153,6 +154,59 @@ describe('an adapter whose element gets replaced', () => {
     s.on('elementreplaced', () => { swaps++; });
     s.setTarget(new FakePlayer(new VirtualTime()));
     assert.equal(swaps, 1);
+  });
+});
+
+/**
+ * Just enough of an HTMLVideoElement for Html5Adapter. A seek clamps the way
+ * the spec says (past the end lands on the duration); `fireSeeked` false models
+ * an element torn down mid-seek, which never reports it.
+ */
+class FakeVideoEl extends EventTarget {
+  private pos = 0;
+  paused = true;
+  playbackRate = 1;
+  readyState = 4;
+  muted = false;
+  volume = 1;
+  duration: number;
+  fireSeeked = true;
+  buffered = { length: 0, start: () => 0, end: () => 0 };
+  constructor(duration = 120) { super(); this.duration = duration; }
+  get currentTime(): number { return this.pos; }
+  set currentTime(t: number) {
+    this.pos = Number.isFinite(this.duration) ? Math.min(Math.max(t, 0), this.duration) : Math.max(t, 0);
+    if (this.fireSeeked) setTimeout(() => this.dispatchEvent(new Event('seeked')), 5);
+  }
+}
+const asEl = (f: FakeVideoEl) => f as unknown as HTMLVideoElement;
+
+/** 'resolved', 'rejected', or 'pending' if still open after `ms`. */
+function settlesWithin(p: Promise<unknown>, ms: number): Promise<string> {
+  return Promise.race([
+    p.then(() => 'resolved', () => 'rejected'),
+    new Promise<string>((r) => setTimeout(() => r('pending'), ms)),
+  ]);
+}
+
+describe('the HTML5 adapter', () => {
+  it('says whether the media has sound at all, where the browser lets it', () => {
+    const cases: Array<[Record<string, unknown>, boolean | undefined]> = [
+      [{}, undefined], // nothing exposed: unknown
+      [{ mozHasAudio: false }, false],
+      [{ mozHasAudio: true }, true],
+      [{ audioTracks: { length: 0 } }, false],
+      [{ audioTracks: { length: 1 } }, true],
+      [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 0 }, undefined], // nothing decoded yet
+      [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, false], // picture, no sound
+      [{ webkitAudioDecodedByteCount: 800, webkitVideoDecodedByteCount: 5000 }, true],
+    ];
+    for (const [props, want] of cases) {
+      const el = Object.assign(new FakeVideoEl(), props);
+      const a = new Html5Adapter(asEl(el));
+      assert.equal(a.readState().hasAudio, want, JSON.stringify(props));
+      a.destroy();
+    }
   });
 });
 
