@@ -664,7 +664,7 @@ Whatever authenticates a person, the server hands out two credentials of its own
 | endpoint | request | answers |
 |---|---|---|
 | `GET /healthz` | — | adds `"auth":{"methods":["token","password","proxy","oidc"],"scope":"create"\|"all"}` |
-| `POST /api/session` | `Authorization: Bearer <access key>`, or `Basic` (user:password, or any user with the key as password), or no credentials through a trusted proxy | `200 {"token","expiresMs","sub"}`; `401 {"error":"auth_failed","methods"}` (never a `WWW-Authenticate: Basic`, which would make a browser draw its own dialog) |
+| `POST /api/session` | `Authorization: Bearer <access key>`, or `Basic` (user:password, or any user with the key as password), or no credentials through a trusted proxy (then only with `X-VideoSync-Device: 1`, below) | `200 {"token","expiresMs","sub"}`; `401 {"error":"auth_failed","methods"}` (never a `WWW-Authenticate: Basic`, which would make a browser draw its own dialog) |
 | `POST /api/ticket` | `Authorization: Bearer <device token>` — **only** that | `200 {"ticket","expiresMs"}`; `401 {"error":"auth_required","methods"}` |
 | `POST /api/auth/begin` | — | `200 {"loginUrl","pollId","code","expiresMs"}`; `404 {"error":"no_browser_login"}` without `oidc` or `proxy` |
 | `POST /api/auth/poll` | `{"pollId"}` | `200 {"pending":true}`; once: `200 {"token","expiresMs","sub"}` or `403 {"error":"login_denied","msg"}`; then `404 {"error":"login_expired"}` |
@@ -691,6 +691,17 @@ shows the same `code` the client shows, so a login link someone else sent can be
 device token and nothing else: a client's ticket request carries a bearer header that a Basic or
 cookie gateway would reject, so the gateway must leave that path open — and "came through the
 proxy" is then true of every request.
+
+**And only for the privileged side** *(integration review)*. On `/api/session` the proxy's word
+counts only with `X-VideoSync-Device: 1`. A gateway that admits by network (an address allowlist,
+a VPN or tailnet identity) lets through any page the user has open, a bodiless POST is a simple
+request, and Allow-Origin is `*`: without the header any site could read a 30-day device token.
+The header is outside the CORS safelist, and the preflight names it in `Allow-Headers` only for an
+extension origin (`chrome-extension://`, `moz-extension://`, `safari-web-extension://`; never
+`null`). The extension's worker passes that preflight and `GM_xmlhttpRequest` makes none; a page —
+or a userscript left with the page's `fetch` — takes the login tab, whose confirm is under
+`CrossOriginProtection`. Credentials (`Bearer`, `Basic`) need no header: a page that has them has
+nothing to steal.
 
 **OIDC**: the server is the only relying party (confidential client). The ID token comes from the
 token endpoint over validated TLS and its signature is not verified (OIDC Core §3.1.3.7 allows

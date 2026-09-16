@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { fetchHttp, HTTP_TIMEOUT_MS, isAuthPath, isProvidersPath, makeAuthFetch, memoryTokens } from '../src/app/authfetch.ts';
+import { DEVICE_HEADER, fetchHttp, HTTP_TIMEOUT_MS, isAuthPath, isProvidersPath, makeAuthFetch, memoryTokens } from '../src/app/authfetch.ts';
 import type { AuthPath, HttpResult, RawHttp } from '../src/app/authfetch.ts';
 
 interface Call { url: string; method: string; headers: Record<string, string>; body?: string }
@@ -48,6 +48,18 @@ describe('authFetch', () => {
       await r.fetch(S, p, { method: 'POST', body: '{}' });
       assert.equal(r.calls.at(-1)!.headers['Authorization'], undefined, `${p} was sent the device token`);
     }
+  });
+
+  it('marks a session request as the privileged side\'s, so a trusted proxy may vouch for it', async () => {
+    // The server takes a trusted proxy's word only with this header, which a
+    // page cannot send cross-origin (auth.DeviceHeader): a trusted-network
+    // sign-in posts with no credentials at all, and must still carry it.
+    const r = rig(() => json(200, { token: 'DEVICE' }));
+    await r.fetch(S, '/api/session', { method: 'POST' });
+    assert.equal(r.calls[0]!.headers[DEVICE_HEADER], '1');
+    await r.fetch(S, '/api/session', { method: 'POST', credentials: { key: 'k' } });
+    assert.equal(r.calls[1]!.headers[DEVICE_HEADER], '1');
+    assert.equal(DEVICE_HEADER, 'X-VideoSync-Device', 'the name the server checks');
   });
 
   it('sends a token only to the origin that issued it', async () => {

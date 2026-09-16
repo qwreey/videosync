@@ -71,7 +71,14 @@ func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			headers := "Content-Type, Authorization"
+			if auth.ExtensionOrigin(origin) {
+				// Only an extension may send the proxy-sign-in marker: a page
+				// that could would read a device token off a trusted network
+				// (auth.DeviceHeader).
+				headers += ", " + auth.DeviceHeader
+			}
+			w.Header().Set("Access-Control-Allow-Headers", headers)
 			w.Header().Set("Access-Control-Max-Age", "600")
 			// Private Network Access. A page on a public origin -- every OTT
 			// site -- reaching a server on localhost or a LAN address is a

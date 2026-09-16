@@ -315,6 +315,35 @@ func (s *Server) Register(mux *http.ServeMux, api func(http.HandlerFunc) http.Ha
 
 // --- authenticating a request -----------------------------------------------
 
+// DeviceHeader must accompany a `/api/session` call that the trusted proxy is
+// to vouch for. A gateway that lets a request through without a cookie -- an
+// address allowlist, a VPN or tailnet identity header, a client certificate --
+// lets through ANY page's request from inside that network, and a bodiless
+// POST is a simple request: without this, `fetch(server+'/api/session',
+// {method:'POST'})` from whatever site the user has open reads a device token
+// (Allow-Origin is `*`). A header outside the CORS safelist forces a preflight,
+// and the hub's preflight names this header only for an extension origin
+// (ExtensionOrigin), which a page cannot claim. The privileged sides that do
+// sign in this way -- the extension's worker, and GM_xmlhttpRequest, which is
+// not subject to CORS at all -- send it. A page never gets a device token from
+// the proxy's word; it has the login tab (`/auth/login`), which is under
+// CrossOriginProtection.
+const DeviceHeader = "X-VideoSync-Device"
+
+// ExtensionOrigin is whether a request's Origin is a browser extension's. Not
+// "null" and not an empty string: a sandboxed frame on any site sends "null".
+func ExtensionOrigin(origin string) bool {
+	scheme, rest, ok := strings.Cut(origin, "://")
+	if !ok || rest == "" {
+		return false
+	}
+	switch strings.ToLower(scheme) {
+	case "chrome-extension", "moz-extension", "safari-web-extension":
+		return true
+	}
+	return false
+}
+
 // proxyUser is MethodProxy: the TCP peer is a proxy we were told to trust,
 // and, when a user header is configured, it named somebody.
 func (s *Server) proxyUser(r *http.Request) (string, bool) {
@@ -344,8 +373,10 @@ func (s *Server) checkPassword(user, pass string) bool {
 
 // credentials is /api/session: whatever the enabled methods accept, once.
 func (s *Server) credentials(r *http.Request) (sub, via string, ok bool) {
-	if u, ok := s.proxyUser(r); ok {
-		return u, MethodProxy, true
+	if r.Header.Get(DeviceHeader) != "" {
+		if u, ok := s.proxyUser(r); ok {
+			return u, MethodProxy, true
+		}
 	}
 	kind, val, _ := strings.Cut(r.Header.Get("Authorization"), " ")
 	val = strings.TrimSpace(val)

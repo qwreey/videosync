@@ -151,7 +151,7 @@ func TestAMethodWithoutItsSettingsRefusesToStart(t *testing.T) {
 		"short key": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, Key: []byte("short")},
 		// Under a prefix every login would fail at the callback, where the
 		// flow cookie (Path=/auth/) is not sent.
-		"public url with a path": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, PublicURL: "https://host.example/videosync"},
+		"public url with a path":  {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, PublicURL: "https://host.example/videosync"},
 		"public url with a query": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, PublicURL: "https://host.example/?x=1"},
 	} {
 		if cfg.Key == nil {
@@ -460,7 +460,7 @@ func proxyRig(t *testing.T, header string) *rig {
 
 func TestAProxyIsTrustedByAddressNeverByHeader(t *testing.T) {
 	g := proxyRig(t, "Remote-User")
-	hdr := map[string]string{"Remote-User": "alice"}
+	hdr := map[string]string{"Remote-User": "alice", DeviceHeader: "1"}
 	s := g.do("POST", "/api/session", "10.0.0.2:5000", "", hdr)
 	if s.code != 200 || s.body["sub"] != "alice" {
 		t.Fatalf("session through the proxy: %d %s", s.code, s.raw)
@@ -469,7 +469,7 @@ func TestAProxyIsTrustedByAddressNeverByHeader(t *testing.T) {
 		t.Fatalf("a Remote-User header from anyone was believed: %d", r.code)
 	}
 	// The proxy passed the request but named nobody: not authenticated.
-	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", nil); r.code != 401 {
+	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", map[string]string{DeviceHeader: "1"}); r.code != 401 {
 		t.Fatalf("no user header: %d", r.code)
 	}
 	// And the device token it minted works from anywhere.
@@ -480,11 +480,48 @@ func TestAProxyIsTrustedByAddressNeverByHeader(t *testing.T) {
 
 func TestAProxyWithoutAUserHeaderVouchesByAddressAlone(t *testing.T) {
 	g := proxyRig(t, "")
-	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", nil); r.code != 200 {
+	marked := map[string]string{DeviceHeader: "1"}
+	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", marked); r.code != 200 {
 		t.Fatalf("%d", r.code)
 	}
-	if r := g.do("POST", "/api/session", client, "", nil); r.code != 401 {
+	if r := g.do("POST", "/api/session", client, "", marked); r.code != 401 {
 		t.Fatalf("%d", r.code)
+	}
+}
+
+func TestTheProxyDoesNotVouchForARequestAnyPageCouldSend(t *testing.T) {
+	// A gateway that admits by network, not by cookie, lets every page the
+	// user has open through. A bodiless POST with no custom header is what
+	// any page can send without a preflight; the proxy's word must not turn it
+	// into a device token.
+	for _, header := range []string{"", "Remote-User"} {
+		g := proxyRig(t, header)
+		hdr := map[string]string{"Remote-User": "alice", "Origin": "https://evil.example"}
+		if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", hdr); r.code == 200 || r.body["token"] != nil {
+			t.Fatalf("header %q: a simple cross-origin POST got a device token: %d %s", header, r.code, r.raw)
+		}
+		hdr[DeviceHeader] = "1"
+		if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", hdr); r.code != 200 {
+			t.Fatalf("header %q: the marked request was refused: %d", header, r.code)
+		}
+	}
+}
+
+func TestOnlyAnExtensionOriginCounts(t *testing.T) {
+	for o, want := range map[string]bool{
+		"chrome-extension://abcdefghijklmnop": true,
+		"moz-extension://1234-5678":           true,
+		"safari-web-extension://x":            true,
+		"https://evil.example":                false,
+		"http://localhost:8080":               false,
+		"null":                                false,
+		"":                                    false,
+		"chrome-extension://":                 false,
+		"chrome-extension:abc":                false,
+	} {
+		if ExtensionOrigin(o) != want {
+			t.Errorf("ExtensionOrigin(%q) = %v", o, !want)
+		}
 	}
 }
 

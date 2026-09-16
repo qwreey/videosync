@@ -176,6 +176,11 @@ what it left open:
   `stats.ticketFailures`, not `connectFailures`.
 - **Rate-limit identity**: `X-Real-IP` and the `X-Forwarded-For` hop must agree when both arrive;
   otherwise the proxy's own address is charged.
+- **A trusted proxy vouches for the privileged side only.** `/api/session` takes the proxy's word
+  only with `X-VideoSync-Device: 1`, which the preflight admits for an extension origin alone
+  (PROTOCOL §8). A network-admitting gateway otherwise handed any page the user had open a device
+  token with one bare POST, and gating `/api/session` at the proxy does not stop a request the
+  gateway lets through.
 - **`-public-url` must be an origin** (no path): the rest of the flow assumes the root.
 
 ## Open, to measure before documenting

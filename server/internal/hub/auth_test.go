@@ -237,3 +237,76 @@ func TestTheTicketIsCheckedBeforeTheRoom(t *testing.T) {
 		t.Fatalf("an unauthenticated peer learned about the room: %v", first)
 	}
 }
+
+func TestOnlyAnExtensionMayAskTheProxyForADevice(t *testing.T) {
+	// The proxy-sign-in marker is what keeps a page on a trusted network from
+	// reading a device token (auth.DeviceHeader). A page can send it only if
+	// the preflight admits it, so the preflight must not -- to a page.
+	f := startAuth(t, auth.ScopeCreate)
+	for origin, want := range map[string]bool{
+		"https://evil.example":               false,
+		"https://www.youtube.com":            false,
+		"null":                               false,
+		"chrome-extension://abcdefghijklmno": true,
+		"moz-extension://0000-1111":          true,
+	} {
+		req, _ := http.NewRequest("OPTIONS", f.srv.URL+"/api/session", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", strings.ToLower(auth.DeviceHeader))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		allowed := strings.Contains(strings.ToLower(resp.Header.Get("Access-Control-Allow-Headers")), strings.ToLower(auth.DeviceHeader))
+		if allowed != want {
+			t.Errorf("%s: marker allowed = %v (Allow-Headers %q)", origin, allowed, resp.Header.Get("Access-Control-Allow-Headers"))
+		}
+	}
+}
+
+func TestAPageBehindATrustedProxyGetsNoDevice(t *testing.T) {
+	// The reviewer's reproduction, end to end: -auth proxy, the test client is
+	// the trusted proxy, and a page on another origin posts with no body.
+	cfg := auth.DefaultConfig()
+	cfg.Methods = []string{auth.MethodProxy}
+	cfg.Scope = auth.ScopeCreate
+	cfg.Key = auth.RandomKey()
+	cfg.TrustedProxies, _ = auth.ParsePrefixes("127.0.0.1/32,::1/128")
+	cfg.UserHeader = "Remote-User"
+	a, err := auth.New(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(DefaultConfig(), NewClock())
+	hcfg := DefaultHTTPConfig()
+	hcfg.PingInterval = time.Hour
+	hcfg.Auth = a
+	srv := httptest.NewServer(h.Handler(hcfg))
+	t.Cleanup(func() { srv.Close(); h.Close() })
+
+	post := func(marked bool) (int, string) {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/session", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		req.Header.Set("Remote-User", "alice")
+		if marked {
+			req.Header.Set(auth.DeviceHeader, "1")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		json.NewDecoder(resp.Body).Decode(&body)
+		tok, _ := body["token"].(string)
+		return resp.StatusCode, tok
+	}
+	if code, tok := post(false); code == 200 || tok != "" {
+		t.Fatalf("a simple cross-origin POST read a device token: %d", code)
+	}
+	if code, tok := post(true); code != 200 || tok == "" {
+		t.Fatalf("the privileged side's marked POST was refused: %d", code)
+	}
+}

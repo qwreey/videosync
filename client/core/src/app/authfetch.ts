@@ -115,6 +115,17 @@ function authorization(c: Credentials): string {
   return `Basic ${utf8Base64(`${c.user}:${c.password}`)}`;
 }
 
+/**
+ * Sent on every `POST /api/session`. A trusted proxy's word counts on the
+ * server only with it: the header is outside the CORS safelist, and the
+ * server's preflight admits it for an extension origin alone, so a page on a
+ * network the gateway trusts cannot mint a device token with a bare POST.
+ * The extension's worker passes that preflight; `GM_xmlhttpRequest` never
+ * makes one. A userscript left with the page's `fetch` cannot sign in by the
+ * proxy's word and takes the login tab instead.
+ */
+export const DEVICE_HEADER = 'X-VideoSync-Device';
+
 /** The two answers that may carry a device token. */
 const MINTS: readonly AuthPath[] = ['/api/session', '/api/auth/poll'];
 
@@ -139,6 +150,7 @@ export function makeAuthFetch(http: RawHttp, tokens: TokenStore): AuthFetch {
 
     const headers: Record<string, string> = {};
     if (req.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (path === '/api/session') headers[DEVICE_HEADER] = '1';
     if (path === '/api/session' && req.credentials) headers['Authorization'] = authorization(req.credentials);
     // The listing is gated like room creation on a server with access control
     // on, and admits the device token itself (a ticket is single-use, and an
