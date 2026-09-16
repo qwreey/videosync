@@ -21,6 +21,9 @@ import {
 } from '../src/providers/adoption.ts';
 import type { ProviderState } from '../src/providers/adoption.ts';
 import { compileDescriptor, parseDescriptor } from '../src/providers/descriptor.ts';
+import {
+  adopt, autoUpdate, decline, dynamicPagePatterns, grantedBy, originsFor, removeUser, saveUser, setAutoAdopt, unadopt,
+} from '../src/providers/manage.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import { builtinRegistry, ProviderRegistry } from '../src/providers/registry.ts';
@@ -397,6 +400,116 @@ describe('a registry with nothing in it', () => {
     const reg = new ProviderRegistry([]);
     assert.equal(normalizeMediaKey('https://www.youtube.com/watch?v=abc', reg), 'youtube.com:/watch');
     assert.equal(watchUrl('https://laftel.net/logout?x=1', reg), 'https://laftel.net/logout');
+  });
+});
+
+describe('what a user can do with descriptors', () => {
+  const SERVER = 'https://sync.example/';
+  const entryFor = async (body: string, id = 'example') =>
+    ({ id, name: 'X', version: '1.0.0', sha256: await sha256Hex(body), hosts: [] });
+
+  it('saves a user descriptor, replacing one with the same id, and refuses an invalid one', async () => {
+    const a = await saveUser(EMPTY, JSON.stringify(BASE));
+    assert.ok(a.ok);
+    assert.ok(a.changes.some((c) => c.widens), 'a descriptor nobody had widens');
+    const b = await saveUser(a.state, JSON.stringify(variant({ version: '1.0.1' })));
+    assert.ok(b.ok);
+    assert.equal(b.state.user.length, 1);
+    assert.deepEqual(b.changes.map((c) => c.field), ['version']);
+    const bad = await saveUser(b.state, '{"schema":1}');
+    assert.equal(bad.ok, false);
+    assert.equal(removeUser(b.state, 'example').user.length, 0);
+    assert.equal(EMPTY.user.length, 0, 'the input state is never mutated');
+  });
+
+  it('adopts only the bytes the index hashed', async () => {
+    const body = JSON.stringify(BASE);
+    const e = await entryFor(body);
+    const ok = await adopt(EMPTY, SERVER, e, body, false);
+    assert.ok(ok.ok);
+    assert.deepEqual(ok.state.adopted.map((a) => [a.id, a.server, a.replaceBuiltin]), [['example', 'https://sync.example', false]]);
+    const swapped = await adopt(EMPTY, SERVER, e, JSON.stringify(variant({ pathFallback: true })), false);
+    assert.equal(swapped.ok, false, 'a file other than the one listed');
+    const wrongId = await adopt(EMPTY, SERVER, { ...e, id: 'other' }, body, false);
+    assert.equal(wrongId.ok, false);
+  });
+
+  it('replaces a built-in only with the user\'s confirmation, showing the difference', async () => {
+    const lf = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'laftel.json')!.source) as Descriptor;
+    const body = JSON.stringify({ ...lf, version: '1.1.0', pathFallback: true,
+      examples: [{ url: 'https://laftel.net/item/1', key: 'laftel:/item/1' }] });
+    const e = await entryFor(body, 'laftel');
+    const asked = await adopt(EMPTY, SERVER, e, body, false);
+    assert.equal(asked.ok, false);
+    assert.equal(!asked.ok && asked.needsReplaceConfirmation, true);
+    assert.ok(!asked.ok && asked.changes?.some((c) => c.field === 'pathFallback' && c.widens));
+    const yes = await adopt(EMPTY, SERVER, e, body, true);
+    assert.ok(yes.ok);
+    assert.equal(yes.state.adopted[0]!.replaceBuiltin, true);
+    assert.equal(buildRegistry(yes.state, () => false).byId('laftel')?.tier, 'server');
+    assert.equal(unadopt(yes.state, 'laftel').adopted.length, 0);
+  });
+
+  it('remembers a declined offer until the server changes it', async () => {
+    const e = await entryFor('{}');
+    const s = decline(EMPTY, SERVER, e);
+    assert.equal(openOffers(s, SERVER, [e]).length, 0);
+    const adopted = await adopt(s, SERVER, await entryFor(JSON.stringify(BASE)), JSON.stringify(BASE), false);
+    assert.ok(adopted.ok);
+    assert.equal(adopted.state.servers['https://sync.example']?.declined?.['example'], undefined, 'adopting clears it');
+  });
+
+  it('applies a server update by itself only when opted in and nothing widens', async () => {
+    const v1 = JSON.stringify(BASE);
+    const narrower = JSON.stringify(variant({ version: '1.0.1', video: { exclude: ['.ad'] } }));
+    const wider = JSON.stringify(variant({ version: '1.1.0', pathFallback: true,
+      examples: [{ url: 'https://video.example/x', key: 'example:/x' }] }));
+    const pinned = await adopt(EMPTY, SERVER, await entryFor(v1), v1, false);
+    assert.ok(pinned.ok);
+    const on = setAutoAdopt(pinned.state, SERVER, true);
+    const files: Record<string, string> = {};
+    const fetchBody = async (id: string) => files[id]!;
+
+    files.example = narrower;
+    const a = await autoUpdate(on, SERVER, [await entryFor(narrower)], fetchBody);
+    assert.deepEqual(a.applied, ['example']);
+    assert.equal(a.pending.length, 0);
+    assert.equal(a.state.adopted[0]!.source, narrower);
+
+    files.example = wider;
+    const b = await autoUpdate(on, SERVER, [await entryFor(wider)], fetchBody);
+    assert.deepEqual(b.applied, []);
+    assert.equal(b.pending.length, 1, 'a widening change waits for the user');
+    assert.equal(b.state.adopted[0]!.source, v1);
+
+    files.example = narrower;
+    const off = await autoUpdate(pinned.state, SERVER, [await entryFor(narrower)], fetchBody);
+    assert.deepEqual(off.applied, [], 'auto-adopt is off by default');
+    assert.equal(off.pending.length, 1);
+
+    files.example = wider; // the server lies: the index says narrower
+    const lie = await autoUpdate(on, SERVER, [await entryFor(narrower)], fetchBody);
+    assert.deepEqual(lie.applied, []);
+  });
+
+  it('turns granted match patterns into a host test', () => {
+    const g = grantedBy(['https://*.video.example/*', 'https://exact.example/*', 'chrome://x/']);
+    assert.equal(g('video.example'), true);
+    assert.equal(g('www.video.example'), true);
+    assert.equal(g('evilvideo.example'), false);
+    assert.equal(g('exact.example'), true);
+    assert.equal(g('www.exact.example'), false);
+    assert.equal(grantedBy(['<all_urls>'])('anything.example'), true);
+    assert.equal(grantedBy([])('video.example'), false);
+  });
+
+  it('asks for the descriptor\'s hosts and registers its pages once granted', async () => {
+    const d = variant({ pageHosts: ['www.video.example'] });
+    assert.deepEqual(originsFor(d), ['https://video.example/*', 'https://*.video.example/*', 'https://www.video.example/*']);
+    const reg = buildRegistry({ ...EMPTY, user: [await stored(d)] }, () => false);
+    assert.deepEqual(dynamicPagePatterns(reg, () => false), []);
+    assert.deepEqual(dynamicPagePatterns(reg, grantedBy(originsFor(d))), ['https://www.video.example/*']);
+    assert.ok(!dynamicPagePatterns(buildRegistry(EMPTY, () => true), () => true).length, 'never the built-ins');
   });
 });
 
