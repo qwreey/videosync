@@ -79,6 +79,15 @@ from another site. When the server changes a descriptor you adopted, the panel
 mentions it the next time you press play on that site, and the decision is made
 from the menu.
 
+The menu's decisions are `prompt`/`confirm`/`alert` dialogs. They are out of
+the page's reach only where the manager runs the script in its own isolated
+world (Tampermonkey's MV3 userScripts API does). A manager or mode whose
+sandbox `window` forwards to the page's globals would let the page replace
+`confirm` and approve "replace the built-in" by itself — and capturing the
+functions at start does not help, because at `document-idle` the page has
+already run. Use the extension, whose options page no site can touch, if that
+matters; this has not been checked against other managers.
+
 If a site turns out to need special handling, that is a
 `ProviderAdapter` in `client/core/src/adapter/` — the seam exists for it.
 
