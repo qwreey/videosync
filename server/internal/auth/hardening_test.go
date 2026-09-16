@@ -1,0 +1,201 @@
+package auth
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Protections the design and PROTOCOL §8 name that nothing else pins: each
+// test here fails when its protection is taken out.
+
+func TestEveryBrowserLoginEndpointIsRateLimitedPerClient(t *testing.T) {
+	g := newRig(t, func(c *Config) {
+		c.Methods = []string{MethodToken, MethodProxy}
+		c.TrustedProxies, _ = ParsePrefixes("10.0.0.2")
+	})
+	tok := g.deviceToken()
+	pollBody, _ := json.Marshal(map[string]string{"pollId": "nope"})
+	for _, tc := range []struct {
+		path, body string
+		hdr        map[string]string
+	}{
+		{"/api/ticket", "", map[string]string{"Authorization": "Bearer " + tok}},
+		{"/api/auth/begin", "", nil},
+		{"/api/auth/poll", string(pollBody), nil},
+	} {
+		limited := 0
+		for range 80 {
+			if g.do("POST", tc.path, client, tc.body, tc.hdr).code == 429 {
+				limited++
+			}
+		}
+		if limited == 0 {
+			t.Errorf("%s: eighty calls in an instant were all answered", tc.path)
+		}
+		// Per client: another one is served.
+		if r := g.do("POST", tc.path, "198.51.100.99:1", tc.body, tc.hdr); r.code == 429 {
+			t.Errorf("%s: a different client was limited", tc.path)
+		}
+	}
+}
+
+// median of a few runs, so one scheduler hiccup does not decide.
+func timeIt(n int, f func()) time.Duration {
+	var ds []time.Duration
+	for range n {
+		start := time.Now()
+		f()
+		ds = append(ds, time.Since(start))
+	}
+	slices.Sort(ds)
+	return ds[len(ds)/2]
+}
+
+func TestAnUnknownUserCostsWhatAKnownOneDoes(t *testing.T) {
+	const iter = 200_000
+	h, err := HashPassword("hunter22", iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	users, err := ParseUsers(strings.NewReader("alice:" + h + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := newRig(t, func(c *Config) { c.Methods = []string{MethodPassword}; c.Keys = nil; c.Users = users })
+	known := timeIt(5, func() { g.s.checkPassword("alice", "wrong") })
+	unknown := timeIt(5, func() { g.s.checkPassword("mallory", "wrong") })
+	// The same work, give or take the machine: a miss that skipped the hash
+	// would be three orders of magnitude faster.
+	if unknown < known/3 {
+		t.Fatalf("an unknown user took %v, a known one %v: which names exist is readable from the clock", unknown, known)
+	}
+}
+
+func TestPasswordChecksAreCappedInConcurrency(t *testing.T) {
+	g := newRig(t, func(c *Config) { c.Methods = []string{MethodPassword}; c.Keys = nil; c.Users = testUsers(t) })
+	if cap(g.s.kdf) < 1 || cap(g.s.kdf) > max(1, runtime.NumCPU()) {
+		t.Fatalf("cap %d", cap(g.s.kdf))
+	}
+	// Take every slot; the next check must wait for one.
+	for range cap(g.s.kdf) {
+		g.s.kdf <- struct{}{}
+	}
+	done := make(chan bool)
+	go func() { done <- g.s.checkPassword("alice", "hunter22") }()
+	select {
+	case <-done:
+		t.Fatal("a password check ran with every slot taken")
+	case <-time.After(100 * time.Millisecond):
+	}
+	<-g.s.kdf
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("the check that waited gave the wrong answer")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a freed slot did not let the check run")
+	}
+}
+
+func TestTheRelyingPartyFollowsNoRedirectWithTheSecret(t *testing.T) {
+	idp := newIdP(t)
+	idp.meta = func(m map[string]any) { m["token_endpoint"] = idp.srv.URL + "/moved" }
+	g := oidcRig(t, idp, nil)
+	b := g.startBrowser(t)
+	state, code := idp.authorize(t, b.toIdP())
+	if r := b.callback(state, code); r.code == 200 {
+		t.Fatal("a login completed through a redirected token endpoint")
+	}
+	idp.mu.Lock()
+	calls := idp.tokenCalls
+	idp.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("the client secret followed a redirect to the token endpoint (%d calls)", calls)
+	}
+	if p := g.poll(b.f.PollID); p.body["token"] != nil {
+		t.Fatal("a token came out of it")
+	}
+}
+
+func TestTheFlowCookieIsSecureWheneverTheBrowserUsesHTTPS(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		publicURL string
+		tls       bool
+		want      bool
+	}{
+		{"plain http, no public url", "", false, false},
+		{"TLS here", "", true, true},
+		{"https public url behind a TLS-terminating proxy", "https://sync.example", false, true},
+	} {
+		g := newRig(t, func(c *Config) {
+			c.Methods = []string{MethodToken, MethodProxy}
+			c.TrustedProxies, _ = ParsePrefixes("10.0.0.2")
+			c.PublicURL = tc.publicURL
+		})
+		f := g.begin(client)
+		req := httptest.NewRequest("GET", "/auth/login?flow="+flowID(t, f.LoginURL), nil)
+		req.RemoteAddr = client
+		req.TLS = nil
+		if tc.tls {
+			req.TLS = &tls.ConnectionState{}
+		}
+		rec := httptest.NewRecorder()
+		g.mux.ServeHTTP(rec, req)
+		cs := (&http.Response{Header: rec.Header()}).Cookies()
+		if len(cs) != 1 {
+			t.Fatalf("%s: %d cookies", tc.name, len(cs))
+		}
+		if cs[0].Secure != tc.want {
+			t.Errorf("%s: Secure = %v", tc.name, cs[0].Secure)
+		}
+	}
+}
+
+func TestADeviceTokenFromTheFutureIsRefused(t *testing.T) {
+	s := signer{key: []byte(strings.Repeat("k", 32))}
+	now := int64(1_800_000_000_000)
+	ok := s.sign(deviceClaims{V: 1, Sub: "a", Via: MethodToken, Iat: now, Exp: now + 3_600_000})
+	if _, err := s.verify(ok, now); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	future := s.sign(deviceClaims{V: 1, Sub: "a", Via: MethodToken, Iat: now + time.Hour.Milliseconds(), Exp: now + 2*time.Hour.Milliseconds()})
+	if _, err := s.verify(future, now); err == nil {
+		t.Fatal("a token issued an hour from now was accepted")
+	}
+}
+
+func TestTheLoginTableIsBounded(t *testing.T) {
+	fs := newFlows(time.Minute, 3)
+	now := time.Unix(1_800_000_000, 0)
+	for range 3 {
+		if _, err := fs.begin(now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fs.begin(now); err == nil {
+		t.Fatal("a fourth login began in a table of three")
+	}
+	// Expired ones make room.
+	if _, err := fs.begin(now.Add(2 * time.Minute)); err != nil {
+		t.Fatalf("expired logins still held the table: %v", err)
+	}
+	// And the endpoint says so instead of failing oddly.
+	g := newRig(t, func(c *Config) {
+		c.Methods = []string{MethodToken, MethodProxy}
+		c.TrustedProxies, _ = ParsePrefixes("10.0.0.2")
+	})
+	g.s.flows = newFlows(time.Minute, 1)
+	g.begin(client)
+	if r := g.do("POST", "/api/auth/begin", client, "", nil); r.code != http.StatusServiceUnavailable || r.body["error"] != "busy" {
+		t.Fatalf("a full table answered %d %v", r.code, r.body)
+	}
+}

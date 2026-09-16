@@ -59,6 +59,10 @@ func newIdP(t *testing.T) *fakeIdP {
 		json.NewEncoder(w).Encode(m)
 	})
 	mux.HandleFunc("POST /token", idp.token)
+	// Somewhere the token endpoint might send the client on to, secret and all.
+	mux.HandleFunc("POST /moved", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, idp.srv.URL+"/token", http.StatusTemporaryRedirect)
+	})
 	idp.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(idp.srv.Close)
 	return idp
