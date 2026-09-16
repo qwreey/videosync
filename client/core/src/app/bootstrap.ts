@@ -204,6 +204,12 @@ export function start(p: Platform): App {
   /** What the media action on screen is doing for this member, if anything. */
   let mediaUi: 'follow' | 'offer' | null = null;
   /**
+   * Whether this session has seen the room's anchor yet. The first one is
+   * always acted on: a room that names no media looks, by key alone, exactly
+   * like the '' this page started with.
+   */
+  let anchorSeen = false;
+  /**
    * What was on screen when the connection dropped. Taken down meanwhile --
    * a command sent now is dropped by a closed socket, and a follow cannot carry
    * a session that is not joined -- and put back by the next welcome, which
@@ -276,11 +282,20 @@ export function start(p: Platform): App {
       resumeMedia = 'offer';
       return;
     }
-    if (!mediaKey || mediaKey === roomMediaKey) {
+    if (onRoomMedia()) {
       clearMediaAction();
       return;
     }
     offerMoveRoom();
+  }
+
+  /**
+   * Whether this page is the room's media. A page that names no media never
+   * is -- not even in a room that names none either -- which is the engine's
+   * rule too (`SyncEngine.onRoomMedia`).
+   */
+  function onRoomMedia(): boolean {
+    return mediaKey !== '' && mediaKey === roomMediaKey;
   }
 
   function clearMediaAction(): void {
@@ -290,6 +305,13 @@ export function start(p: Platform): App {
 
   function offerMoveRoom(): void {
     mediaUi = 'offer';
+    if (!mediaKey && !roomMediaKey) {
+      // Neither side names anything, so there is nothing to move and nothing
+      // to follow. Without a word the member sits in the room and nothing
+      // ever happens.
+      panel.setMediaAction('이 페이지에는 동기화할 영상이 없어요 — 영상을 열고 "이 영상으로 방 옮기기"를 눌러주세요');
+      return;
+    }
     if (!mediaKey) {
       // A button that cannot take the member anywhere redraws itself on every
       // press and looks broken; say where the room is instead.
@@ -353,8 +375,13 @@ export function start(p: Platform): App {
   function followRoom(delayMs = FOLLOW_DELAY_MS): void {
     cancelFollow();
     if (!engine || engine.state !== 'joined' || !session) return;
-    if (!roomMediaKey || roomMediaKey === mediaKey) {
+    if (onRoomMedia()) {
       clearMediaAction();
+      return;
+    }
+    if (!roomMediaKey) {
+      // The room names nothing to follow; offer to name this page instead.
+      offerMoveRoom();
       return;
     }
     const target = followableUrl(roomMediaUrl, roomMediaKey, location.href);
@@ -421,6 +448,12 @@ export function start(p: Platform): App {
     if (!serverUrl) { panel.setStatus('서버 주소를 입력해주세요.', 'err'); throw new Error('no server'); }
     const why = p.unreachable(serverUrl);
     if (why) { panel.setStatus(why, 'err'); throw new Error(why); }
+    // A room created here would name no media, and nobody follows such a room
+    // (`onRoomMedia`), the creator included.
+    if (!mediaKey) {
+      panel.setStatus('이 페이지에는 동기화할 영상이 없어요. 영상 페이지에서 방을 만들어주세요.', 'err');
+      throw new Error('no media on this page');
+    }
     panel.setStatus('방을 만드는 중…');
     try {
       const out = await p.createRoom(serverUrl, mediaKey, mediaUrl);
@@ -524,14 +557,15 @@ export function start(p: Platform): App {
         roomMediaUrl = a.mediaUrl ?? '';
         const resume = resumeMedia;
         resumeMedia = null;
-        if (a.mediaKey !== roomMediaKey) {
+        if (!anchorSeen || a.mediaKey !== roomMediaKey) {
+          anchorSeen = true;
           roomMediaKey = a.mediaKey;
           followRoom();
         } else if (resume === 'follow') {
           followRoom();
         } else if (resume === 'offer') {
-          if (mediaKey !== roomMediaKey) offerMoveRoom();
-          else clearMediaAction();
+          if (onRoomMedia()) clearMediaAction();
+          else offerMoveRoom();
         }
       },
       onAutoplayBlocked: () => panel.showGesturePrompt(document),
@@ -566,6 +600,7 @@ export function start(p: Platform): App {
     members = [];
     waitingOn = [];
     roomMediaKey = '';
+    anchorSeen = false;
     roomMediaUrl = '';
     stayedAwayFrom = '';
     resumeMedia = null;

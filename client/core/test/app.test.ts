@@ -295,6 +295,31 @@ describe('the move-the-room offer', () => {
   });
 });
 
+describe('a page that names no media', () => {
+  const NOWHERE = 'https://www.youtube.com/results?search_query=x';
+
+  it('does not create a room nobody could follow', async () => {
+    let created = 0;
+    const h = harness(NOWHERE, makeStore(), new Map(), {
+      createRoom: () => { created++; return Promise.resolve({ roomId: 'R', secret: 'S' }); },
+    });
+    await h.app.api.createRoom(SERVER, 'me').catch(() => {});
+    assert.equal(created, 0, 'a keyless room is one the engine never follows');
+    assert.equal(h.transports.length, 0);
+    assert.match(h.status().text, /영상/);
+    assert.match(h.status().cls, /err/);
+  });
+
+  it('tells a member in a room with no media that there is nothing to sync here', async () => {
+    const h = harness(NOWHERE);
+    h.join();
+    h.welcome({ mediaKey: '' });
+    await h.tick(100);
+    assert.match(h.mediaNotice().text, /동기화할 영상/);
+    assert.ok(h.mediaNotice().shown, 'the member would sit in the room with nothing happening and no word why');
+  });
+});
+
 describe('the move-the-room offer, reconnecting', () => {
   it('is made for a video the member moved to while the connection was down', async () => {
     const h = harness(ROOM_URL);
