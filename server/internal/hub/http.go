@@ -108,6 +108,7 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	// not. Answer either way rather than depend on the client's habits.
 	mux.HandleFunc("OPTIONS /api/rooms", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
 	mux.HandleFunc("OPTIONS /healthz", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
+	h.providerRoutes(mux, cfg)
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		h.serveWS(w, r, cfg)
 	})

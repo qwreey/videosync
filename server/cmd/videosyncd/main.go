@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/qwreey/videosync/server/internal/hub"
+	"github.com/qwreey/videosync/server/internal/provider"
 )
 
 func main() {
@@ -32,6 +33,11 @@ func main() {
 			"and a frame the client never sent looks exactly like one the server dropped")
 	tlsCert := flag.String("tls-cert", "", "PEM certificate chain; serving https/wss")
 	tlsKey := flag.String("tls-key", "", "PEM private key for -tls-cert")
+	providersDir := flag.String("providers", "",
+		"directory of provider descriptor *.json files to offer at /api/providers (D7). Each is validated "+
+			"as a client would; an invalid one is logged and skipped. Reloaded on SIGHUP and when a file changes")
+	providersPoll := flag.Duration("providers-poll", 5*time.Second,
+		"how often to check -providers for changed files (0: only on SIGHUP)")
 	flag.Parse()
 
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -44,6 +50,15 @@ func main() {
 	cfg.MaxRooms = *maxRooms
 	cfg.Verbose = *verbose
 
+	stopWatch := make(chan struct{})
+	defer close(stopWatch)
+	var providers *provider.Store
+	if *providersDir != "" {
+		providers = provider.Open(*providersDir, log.Printf)
+		cfg.Providers = providers
+		go providers.Watch(*providersPoll, stopWatch)
+	}
+
 	hcfg := hub.DefaultHTTPConfig()
 	if *origins != "" {
 		hcfg.AllowedOrigins = strings.Split(*origins, ",")
@@ -51,6 +66,21 @@ func main() {
 
 	h := hub.New(cfg, hub.NewClock())
 	defer h.Close()
+
+	// SIGHUP rereads -providers. Without that flag it keeps its default
+	// meaning, which is what a self-hoster running under nohup expects.
+	// Registered before the listener starts: a signal sent as soon as the
+	// server answers must not find the default action still in place.
+	if providers != nil {
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go func() {
+			for range hup {
+				log.Print("SIGHUP: reloading providers")
+				providers.Reload()
+			}
+		}()
+	}
 
 	srv := &http.Server{
 		Addr:    *addr,

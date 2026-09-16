@@ -457,6 +457,32 @@ credentials are involved: the room secret travels in the `hello` frame, never in
 a cookie. The WebSocket upgrade is **not** subject to CORS; it is governed by
 the `Origin` allowlist instead.
 
+### Amendment: provider descriptors are served over HTTP (D7)
+
+Descriptors (`docs/design/providers.md`) never travel in a frame. A server started with
+`-providers DIR` offers them over two more endpoints, both with the same CORS as `/api/rooms`:
+
+- `GET /api/providers` → `{"schema":1,"providers":[{"id","name","version","sha256","hosts"}]}`,
+  sorted by id. A server without `-providers` answers `{"schema":1,"providers":[]}`. A client
+  fetches the whole index, never "the descriptor for host X", which would tell the server what
+  its users browse.
+- `GET /api/providers/<id>.json` → the file's exact bytes (`Content-Type: application/json`,
+  `ETag: "<sha256>"`, `Cache-Control: no-cache`), 404 for an id not in the index. `sha256` is
+  of those bytes, so a client hashes what it received and compares; there is no canonical-JSON
+  step. `If-None-Match` with the ETag answers 304.
+
+Every file is validated the way a client validates it — unknown fields, the template grammar,
+the size and count limits, and its own `examples` — before it is listed; an invalid one is logged
+and left out. The directory is reread on `SIGHUP` and when a file's name, size or mtime changes
+(polled every `-providers-poll`, default 5 s). The server uses descriptors for nothing else: it
+does not judge `mediaKey`s against them, and a served descriptor is inert until a user adopts it.
+
+`mediaKey` is unchanged on the wire. What a descriptor may never change is the key a member
+computes for a page — `keyPrefix` and the key bodies of published rules are frozen — because two
+members on different descriptor versions must still agree. The built-ins reproduce the keys the
+code rules produced before D7, except that a Laftel page other than `/player/<int>/<int>` now
+names no media (F20).
+
 Rotation:
 
 Client → `{"t":"rotate"}` — **any member may send it.**
