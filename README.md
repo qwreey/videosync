@@ -30,6 +30,18 @@ invite link — or just the room ID and key — to a friend. Wherever they join
 from, the room takes them to what it is watching, and takes everyone along when
 somebody moves it to another video.
 
+A room can also be made from a page with no video; the first member who opens
+one names it. What a site does by itself when a video loads — autoplay, jumping
+to where you last stopped — is put back rather than sent to everyone; only what
+you press is. When an episode ends, the room waits for everyone, and on a site
+that plays the next episode of the same series by itself (Laftel) the room
+moves on with it.
+
+> **Upgrade the server together with the clients.** A client from before
+> 2026-09-17 still works against a newer server, but a newer client against an
+> older server loses the race protection for naming a room and moving on to the
+> next episode, and its "still loading" reports are ignored.
+
 > **Use the extension if your server is on your own machine or your LAN.**
 > Measured: a page on a public origin — every OTT site — cannot reach a loopback
 > or private address by *any* scheme, and the request never leaves the browser,

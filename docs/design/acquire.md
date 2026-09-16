@@ -85,3 +85,87 @@ intent if a gesture came within `G` before it **and after the epoch began**.
 
 - `cmd.ifMediaKey` (optional) on `media`; `error{code:"media_stale"}`, no `seq` taken.
 - Report: `finished` and `acquiring` (present but unready), both documented in PROTOCOL §4.
+
+## As built (2026-09-17, `feat/acquire`)
+
+Measured first (`harness/browser/probe-acquire.mjs`, BROWSER-FINDINGS §20), built on those numbers,
+verified live against the same control (§21). Where this deviates from the text above, or decides
+something it left open, it says so here.
+
+**Constants, from §20.** `G` = 500 ms (slowest press 268 ms, fastest site autoplay after a
+navigation click 750 ms). `T_settle` = 1 s (every measured site move ≤ 11 ms after
+`canplaythrough`). `endWindow` = 1 s (both sites move on only after `ended`, 5.3–7.6 s later).
+`K` = 3, unmeasured: nothing fought a conform in any run. A continuation is considered only within
+20 s of the member's own end. All are `EngineConfig` fields.
+
+**Decided or changed while building:**
+
+1. **Conform at HAVE_FUTURE_DATA, not at metadata** (deviation). Laftel writes its resume position
+   repeatedly from `loadedmetadata` until 0.5–0.75 s before `canplaythrough`; a conform in that
+   window would be overwritten and counted as a fight. An element that stays at metadata (a paused
+   `preload="metadata"` player) is conformed after 5 s. `canplaythrough` itself is not observed:
+   `readyState >= 3` stands in for it, because `canplay` and `canplaythrough` fired within 7 ms of
+   each other in every run.
+2. **"The site's move was seen and absorbed" is not an exit on its own** (deviation). Laftel makes
+   two moves (resume, then autoplay), so `T_settle` is measured from the *last* conform instead of
+   from `canplaythrough`, and every absorbed move restarts it. The playing-room exit (b) and the
+   gesture exit are as designed.
+3. **No gesture evidence = no acquisition states.** `EngineDeps.gestures` is optional; without it
+   the engine behaves exactly as before D8 (the 160 pre-existing engine/app tests pass unchanged,
+   and they are the control for every new test). Both shims always supply it, from
+   `client/core/src/app/gestures.ts`. The end-of-media rule and the epoch bump on
+   `emptied`/`loadstart`/element loss apply either way.
+4. **Input on VideoSync's own panel is not a gesture**, and an activation rise within `G` of such
+   input is not a media key either (the panel click activates the page too). Identified by the
+   panel host in `composedPath()`, which a closed shadow root still exposes.
+5. **A `hello` no longer names the media, not even the first member's** (server change beyond the
+   text above). It skipped the namer's adoption, so the namer was conformed to `paused@0`. Naming
+   is only the conditional `media` command now.
+6. **After any `media` command every member is unready until it reports on the new `seq`**
+   (server, found by the end-to-end test): the winner's `play` follows its `media` within one
+   conform, which can beat the other member's first `acquiring` report. Absent members clear it
+   with their next report; `GATE_TIMEOUT` bounds the rest.
+7. **A seeding member (creator or namer) reports `acquiring` while guarded**, so the server does
+   not judge a player that is where *it* is against the room's placeholder. Its site's moves are
+   absorbed, not put back, and restart `T_settle`. At `STEADY` it seeds the room (`seek`, then
+   `play` if playing) — unless somebody else's command moved the room meanwhile, in which case it
+   conforms instead. A gesture while guarded ends it the same way; the adoption carries the press.
+8. **The room's media changing is a media epoch too**: the room moving onto this member's page
+   needs a conform as much as the page moving does. Scheduled transitions that arrive while
+   `detached`/`conforming`/`fought` are not applied (the conform reads the newest anchor when it
+   runs, and is restarted if a newer `seq` lands while it waits); corrections are ignored while
+   acquiring.
+9. **In transit**: a member whose element finished the media the room has just left, and which is
+   not on the new media yet, reports `acquiring` rather than absent. A member who follows by
+   *full-page* navigation leaves the room while its page loads, so the gate is released without it
+   and it joins a running room — not covered.
+10. **`FOUGHT`** (open question 4): absent, a panel notice asking for a press, left on a gesture or a
+    new epoch. Room commands are not applied in it.
+11. **Next episode** (open question 2, as the user decided in D8): automatic only for the
+    narrow case; the winner sends `play` once it is conformed, losers (`media_stale`) do not. The
+    predicate is `continuesMedia()` in `mediakey.ts`, driven by an optional `continues` field on
+    the hard-coded rules (Laftel: same series, different episode). Keep it behind that one function
+    when provider descriptors land.
+12. **No conform when the room's position is more than 2 s past the element's duration**: that
+    element is not on the room's timeline (a finished room, an ad, a preview); the member stays
+    `detached`.
+13. **"Move the room here" is conditional** on the room media the button was shown against.
+14. `SwappableAdapter.setTarget(null)` now announces the change (Path E), and `Html5Adapter`
+    reports `ended` and forwards `emptied`/`loadstart`.
+15. Rooms can be created from a page with no media again (the 2026-09-16 refusal is reverted); the
+    panel says that opening a video names the room. After a *full-page* navigation the creator is
+    not in the room any more (only a follow carries the session), so this works as intended on the
+    SPA sites (YouTube, Laftel) or with a manual rejoin.
+
+**Measured after building (§21):** every C1 case the control reproduced sends nothing, except a
+site that autoplays 1.5 s after it can play — past `T_settle`, which is the designed boundary (the
+same site at 0.8 s is absorbed). Gestured presses (trusted click, MPRIS key) still go through while
+`guarded`. On Laftel, two members at the end of an episode moved on together (one continuation
+won; both on the next episode within 60 ms), where the control split them. `probe-follow` 11/11,
+`probe-firefox LOCAL=1` 10/10, `probe-laftel-room` unchanged against §16. Simulation:
+`site-autoplay-join` (seeds 1..10) sends 2 site commands and ends at 881 s without the guard, 0 and
+127 s with it (POC-FINDINGS §43).
+
+**Not done:** ads (an ad in the same element bumps the epoch and, if its duration is long enough,
+is conformed — Y3 unmeasured); fullscreen consuming activation (Y4); Laftel in Firefox; Firefox
+media keys give no evidence (a media-key play while acquiring is put back once).

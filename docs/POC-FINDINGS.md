@@ -1424,3 +1424,45 @@ Servo against §41's "now" columns: `slow-to-buffer` 11/15 → **8/10** (mean
 10/16 → 8/14), `asymmetry+cmds` 293/600 → **320/657** (mean 298/599 → 324/647),
 `command-storm` 68/295 → **97/295** (mean 78/325 → 104/327). Every other servo
 row keeps its anchorErr and `skipped`.
+
+## 43. Round 14 — a joiner's own site acting on its player (D8)
+
+C1 in STATE.md: a site's autoplay or resume-from-history on a video a client
+has just found was broadcast as the member's own `play`/`seek`. The harness had
+no model of a site at all, so nothing here could see it. Measured first in a
+real browser (BROWSER-FINDINGS §20: Laftel resumes to its history position and
+autoplays 4–11 ms after `canplaythrough`), then modelled.
+
+**Model.** `ClientProfile.SiteAfterMs/SiteResumeToMs/SiteAutoplay`: that long
+after the member joins — when its player can play — its site seeks to the
+resume point and starts playback. With the acquisition guard (the shipped
+engine) the member reports `acquiring` until then, and the site's moves are put
+back by conforming to the room. `NoAcquireGuard` is the control: the moves are
+sent as the member's `seek` and `play`, as the client did before D8.
+
+**Scenario `site-autoplay-join`.** A paused room at 60 s (a, b); c joins at
+20 s on a page that resumes to 813 s and autoplays 1.5 s later; a presses play
+at 21.2 s, while c is still loading. Servo, seeds 1..10:
+
+| | site commands sent | moves put back | plays held | room at the end |
+|---|---|---|---|---|
+| guard ON | **0** | 1.0 | 1.0 | **127.4 s** |
+| guard OFF (control) | **2.0** | 0 | 0 | **880.9 s** |
+
+Without the guard the room ends up wherever one member's site history pointed,
+and the room starts without the member who was still loading. With it nothing
+is sent and the play waits ~0.3 s for c. `skipped` is 0 in both: the damage
+here is not media skipped past by corrections but the room itself being moved,
+which is why the test scores the final anchor. Servo row, mean over seeds
+1..10: anchorErr 6 ms, p95 18 ms, 2 out-of-buffer seeks (c's resume and its
+conform back), 0 skipped.
+
+`TestAcquireGuardIsLoadBearing` pins it over seeds 1..10 with the control, and
+asserts the structural half (0 site commands) on every seed. Every row of the
+table that existed before is byte-identical: the new behaviour only engages
+for a profile with a site.
+
+Also new on the server side and covered in `room_test.go` rather than here:
+`acquiring` reports are gated and not judged, `finished` is absent, a
+conditional `media` command refuses without a seq, and after any `media`
+command every member is unready until it reports on the new seq.
