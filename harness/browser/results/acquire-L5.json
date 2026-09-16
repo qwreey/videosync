@@ -1,0 +1,200 @@
+{
+ "when": "2026-09-16T15:47:09.961Z",
+ "browser": "helium",
+ "site": "laftel",
+ "input": "cdp (trusted)",
+ "presses": [
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 36,
+   "inputToEventMs": 50,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 5,
+   "inputToEventMs": 46,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 16,
+   "inputToEventMs": 47,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 5,
+   "inputToEventMs": 40,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 5,
+   "inputToEventMs": 46,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 3,
+   "inputToEventMs": 24,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 4,
+   "inputToEventMs": 40,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 6,
+   "inputToEventMs": 38,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 5,
+   "inputToEventMs": 29,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 5,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 20,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 14,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 22,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 30,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 32,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 22,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  }
+ ],
+ "summary": {
+  "n": 20,
+  "p50": 29,
+  "p90": 47,
+  "max": 50,
+  "byKind": {
+   "click": [
+    50,
+    46,
+    47,
+    40,
+    46,
+    24,
+    40,
+    38,
+    29,
+    28
+   ],
+   "space": [
+    28,
+    28,
+    20,
+    14,
+    22,
+    30,
+    32,
+    28,
+    22,
+    28
+   ]
+  }
+ }
+}

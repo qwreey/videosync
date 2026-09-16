@@ -1,0 +1,2111 @@
+{
+ "when": "2026-09-16T16:00:32.365Z",
+ "browser": "helium",
+ "policy": "default",
+ "input": "none (full page load)",
+ "runs": [
+  {
+   "phase": "as-is",
+   "loadstartMs": 1717,
+   "metadataMs": 2099,
+   "canplayMs": 3362,
+   "canplaythroughMs": 3362,
+   "moves": [
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2100,
+     "afterCanplaythroughMs": -1262
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2118,
+     "afterCanplaythroughMs": -1244
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2206,
+     "afterCanplaythroughMs": -1156
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2306,
+     "afterCanplaythroughMs": -1056
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2414,
+     "afterCanplaythroughMs": -948
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2537,
+     "afterCanplaythroughMs": -825
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2635,
+     "afterCanplaythroughMs": -727
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2735,
+     "afterCanplaythroughMs": -627
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2836,
+     "afterCanplaythroughMs": -526
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2936,
+     "afterCanplaythroughMs": -426
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 3036,
+     "afterCanplaythroughMs": -326
+    },
+    {
+     "type": "seeking",
+     "ct": 477,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 3145,
+     "afterCanplaythroughMs": -217
+    },
+    {
+     "type": "play",
+     "ct": 477,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 3373,
+     "afterCanplaythroughMs": 11
+    }
+   ],
+   "end": {
+    "ct": 490.067027,
+    "paused": false,
+    "rs": 4,
+    "dur": 1431.4300537109375
+   },
+   "videos": [
+    [
+     690,
+     0
+    ],
+    [
+     1259,
+     0
+    ],
+    [
+     1260,
+     0
+    ],
+    [
+     1260,
+     0
+    ],
+    [
+     1261,
+     0
+    ],
+    [
+     1261,
+     0
+    ],
+    [
+     1262,
+     0
+    ],
+    [
+     1262,
+     0
+    ],
+    [
+     1268,
+     0
+    ],
+    [
+     1269,
+     0
+    ],
+    [
+     1709,
+     1
+    ]
+   ],
+   "tl": [
+    {
+     "dt": 690,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 769,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 769,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 769,
+     "k": "nav",
+     "type": "replaceState",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 1259,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1260,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1260,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1261,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1261,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1262,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1262,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1268,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1269,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1692,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 1709,
+     "k": "count",
+     "type": 1,
+     "act": false
+    },
+    {
+     "dt": 1717,
+     "k": "media",
+     "type": "loadstart",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2059,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2061,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2087,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2094,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2098,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2099,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2100,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2118,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2206,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2239,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2306,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2414,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2537,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2635,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2735,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2836,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2936,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3036,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3145,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3361,
+     "k": "media",
+     "type": "seeked",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3361,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3362,
+     "k": "media",
+     "type": "canplay",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3362,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3373,
+     "k": "media",
+     "type": "play",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 477,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3399,
+     "k": "media",
+     "type": "playing",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 477.022,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3401,
+     "k": "poll",
+     "type": "paused",
+     "el": 1,
+     "conn": true,
+     "src": "blob:6a8966",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 477.023,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false
+    }
+   ]
+  },
+  {
+   "phase": "after-watching",
+   "loadstartMs": 1495,
+   "metadataMs": 1829,
+   "canplayMs": 3056,
+   "canplaythroughMs": 3056,
+   "moves": [
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1829,
+     "afterCanplaythroughMs": -1227
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1848,
+     "afterCanplaythroughMs": -1208
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1937,
+     "afterCanplaythroughMs": -1119
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2037,
+     "afterCanplaythroughMs": -1019
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2137,
+     "afterCanplaythroughMs": -919
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2237,
+     "afterCanplaythroughMs": -819
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2349,
+     "afterCanplaythroughMs": -707
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2449,
+     "afterCanplaythroughMs": -607
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2557,
+     "afterCanplaythroughMs": -499
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2657,
+     "afterCanplaythroughMs": -399
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2758,
+     "afterCanplaythroughMs": -298
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2858,
+     "afterCanplaythroughMs": -198
+    },
+    {
+     "type": "play",
+     "ct": 419,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 3060,
+     "afterCanplaythroughMs": 4
+    }
+   ],
+   "end": {
+    "ct": 432.164699,
+    "paused": false,
+    "rs": 4,
+    "dur": 1431.4300537109375
+   },
+   "videos": [
+    [
+     445,
+     0
+    ],
+    [
+     1055,
+     0
+    ],
+    [
+     1055,
+     0
+    ],
+    [
+     1055,
+     0
+    ],
+    [
+     1056,
+     0
+    ],
+    [
+     1057,
+     0
+    ],
+    [
+     1057,
+     0
+    ],
+    [
+     1057,
+     0
+    ],
+    [
+     1057,
+     0
+    ],
+    [
+     1058,
+     0
+    ],
+    [
+     1059,
+     0
+    ],
+    [
+     1488,
+     1
+    ]
+   ],
+   "tl": [
+    {
+     "dt": 445,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 594,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 594,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 594,
+     "k": "nav",
+     "type": "replaceState",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 1055,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1055,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1055,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1056,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1057,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1057,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1057,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1057,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1058,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1059,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1472,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 1488,
+     "k": "count",
+     "type": 1,
+     "act": false
+    },
+    {
+     "dt": 1495,
+     "k": "media",
+     "type": "loadstart",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1788,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1790,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1817,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1825,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1828,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1829,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1829,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1848,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1905,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1937,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2037,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2137,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2237,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2349,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2449,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2557,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2657,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2758,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2858,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3055,
+     "k": "media",
+     "type": "seeked",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3056,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3056,
+     "k": "media",
+     "type": "canplay",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3056,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3060,
+     "k": "media",
+     "type": "play",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3078,
+     "k": "media",
+     "type": "playing",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3085,
+     "k": "poll",
+     "type": "paused",
+     "el": 1,
+     "conn": true,
+     "src": "blob:35c4d6",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false
+    }
+   ]
+  },
+  {
+   "phase": "reload-again",
+   "loadstartMs": 1497,
+   "metadataMs": 1785,
+   "canplayMs": 2968,
+   "canplaythroughMs": 2968,
+   "moves": [
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1789,
+     "afterCanplaythroughMs": -1179
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1807,
+     "afterCanplaythroughMs": -1161
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1891,
+     "afterCanplaythroughMs": -1077
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 1999,
+     "afterCanplaythroughMs": -969
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2099,
+     "afterCanplaythroughMs": -869
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2199,
+     "afterCanplaythroughMs": -769
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2299,
+     "afterCanplaythroughMs": -668
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2400,
+     "afterCanplaythroughMs": -568
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2500,
+     "afterCanplaythroughMs": -468
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2600,
+     "afterCanplaythroughMs": -368
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2700,
+     "afterCanplaythroughMs": -268
+    },
+    {
+     "type": "seeking",
+     "ct": 419,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 2800,
+     "afterCanplaythroughMs": -168
+    },
+    {
+     "type": "play",
+     "ct": 419,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 2973,
+     "afterCanplaythroughMs": 5
+    }
+   ],
+   "end": {
+    "ct": 432.213681,
+    "paused": false,
+    "rs": 4,
+    "dur": 1431.4300537109375
+   },
+   "videos": [
+    [
+     567,
+     0
+    ],
+    [
+     953,
+     0
+    ],
+    [
+     953,
+     0
+    ],
+    [
+     954,
+     0
+    ],
+    [
+     954,
+     0
+    ],
+    [
+     954,
+     0
+    ],
+    [
+     955,
+     0
+    ],
+    [
+     955,
+     0
+    ],
+    [
+     956,
+     0
+    ],
+    [
+     957,
+     0
+    ],
+    [
+     957,
+     0
+    ],
+    [
+     957,
+     0
+    ],
+    [
+     1491,
+     1
+    ]
+   ],
+   "tl": [
+    {
+     "dt": 567,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 633,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 633,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 633,
+     "k": "nav",
+     "type": "replaceState",
+     "act": false,
+     "href": "https://laftel.net/player/45462/93304"
+    },
+    {
+     "dt": 953,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 953,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 954,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 954,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 954,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 955,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 955,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 956,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 957,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 957,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 957,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 1474,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 1491,
+     "k": "count",
+     "type": 1,
+     "act": false
+    },
+    {
+     "dt": 1497,
+     "k": "media",
+     "type": "loadstart",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1747,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1749,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1778,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1780,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1785,
+     "k": "media",
+     "type": "durationchange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1785,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1789,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1807,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 0,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1860,
+     "k": "media",
+     "type": "ratechange",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1891,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 1999,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2099,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2199,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2299,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2400,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2500,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2600,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2700,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2800,
+     "k": "media",
+     "type": "seeking",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2967,
+     "k": "media",
+     "type": "seeked",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2967,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2968,
+     "k": "media",
+     "type": "canplay",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2968,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2973,
+     "k": "media",
+     "type": "play",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 2999,
+     "k": "media",
+     "type": "playing",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419.023,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 3004,
+     "k": "poll",
+     "type": "paused",
+     "el": 1,
+     "conn": true,
+     "src": "blob:459613",
+     "rs": 4,
+     "paused": false,
+     "ended": false,
+     "ct": 419.027,
+     "dur": 1431.43,
+     "rate": 1,
+     "act": false
+    }
+   ]
+  }
+ ]
+}

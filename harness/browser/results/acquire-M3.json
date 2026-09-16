@@ -1,0 +1,172 @@
+{
+ "when": "2026-09-16T15:38:20.059Z",
+ "browser": "helium",
+ "input": "mpris (busctl PlayPause)",
+ "mpris": "org.mpris.MediaPlayer2.chromium.instance1622000",
+ "runs": [
+  {
+   "mediaSessionHandlers": false,
+   "k": 0,
+   "activeBefore": false,
+   "event": "play",
+   "eventAfterMs": 11,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "play",
+     "t": 1789573101756.3,
+     "act": false
+    },
+    {
+     "type": "pause",
+     "t": 1789573102258.9,
+     "act": false
+    },
+    {
+     "type": "play",
+     "t": 1789573103073.9,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": false,
+   "k": 1,
+   "activeBefore": true,
+   "event": "pause",
+   "eventAfterMs": 10,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "pause",
+     "t": 1789573104290.4,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": false,
+   "k": 2,
+   "activeBefore": true,
+   "event": "play",
+   "eventAfterMs": 10,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "play",
+     "t": 1789573105508.0999,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": false,
+   "k": 3,
+   "activeBefore": true,
+   "event": "pause",
+   "eventAfterMs": 11,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "pause",
+     "t": 1789573106725.2,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": true,
+   "k": 0,
+   "activeBefore": false,
+   "event": "play",
+   "eventAfterMs": 10,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "play",
+     "t": 1789573109531.4,
+     "act": false
+    },
+    {
+     "type": "pause",
+     "t": 1789573110038.6,
+     "act": false
+    },
+    {
+     "type": "play",
+     "t": 1789573110853.6,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": true,
+   "k": 1,
+   "activeBefore": true,
+   "event": "pause",
+   "eventAfterMs": 10,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "pause",
+     "t": 1789573112070.4,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": true,
+   "k": 2,
+   "activeBefore": true,
+   "event": "play",
+   "eventAfterMs": 10,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "play",
+     "t": 1789573113286.4,
+     "act": true
+    }
+   ]
+  },
+  {
+   "mediaSessionHandlers": true,
+   "k": 3,
+   "activeBefore": true,
+   "event": "pause",
+   "eventAfterMs": 8,
+   "actAtEvent": true,
+   "stickyAtEvent": true,
+   "inputs": [],
+   "activeAfter": true,
+   "isolated": [
+    {
+     "type": "pause",
+     "t": 1789573114497.8,
+     "act": true
+    }
+   ]
+  }
+ ]
+}

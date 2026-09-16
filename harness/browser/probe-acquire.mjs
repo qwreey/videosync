@@ -794,7 +794,7 @@ async function controlCase(a, b, c) {
   const offset = logOffset();
   const t0 = Date.now();
   b.log.length = 0;
-  await c.run(a, b, room);
+  await c.run(a, b, room, c);
   await sleep(c.waitMs ?? 6000);
   const cmds = wireCmds(room.roomId, offset);
   const bId = await b.iso('return VideoSync.engine()?.id ?? ""').catch(() => '');
@@ -808,6 +808,9 @@ async function controlCase(a, b, c) {
     aEnd: await a.s.eval(`(() => { const v = document.querySelector('video'); return { ct: +v.currentTime.toFixed(2), paused: v.paused, href: location.pathname }; })()`),
     bEnd: await b.s.eval(`(() => { const v = document.querySelector('video'); return v ? { ct: +v.currentTime.toFixed(2), paused: v.paused, href: location.pathname } : null; })()`).catch(() => null),
     bId, aId,
+    room: await a.iso('const e = VideoSync.engine(); return e ? { ...e.currentAnchor, acquisition: e.acquisition } : null').catch(() => null),
+    bAcquisition: await b.iso('return VideoSync.engine()?.acquisition ?? null').catch(() => null),
+    notes: c.notes ?? null,
     tl: timeline(b.log, t0).filter((e) => e.k !== 'poll').slice(0, 40),
   };
   await leaveAll(a, b);
@@ -832,6 +835,18 @@ const CONTROL_CASES = [
     waitMs: 16000,
   },
   {
+    // Two members at the end of a Laftel episode: Laftel routes both on to the
+    // next one ~5.5 s after the end and autoplays it (L3).
+    name: 'N1 Laftel: two members reach the end, and the site moves both on',
+    aUrl: LAFTEL_E1, at: +(process.env.END_AT || 1416), roomPlaying: true,
+    run: async (a, b, room) => {
+      await navigate(b, LAFTEL_E1, 6000);
+      await b.s.eval(`(() => { const v = document.querySelector('video'); v && v.pause(); return 1; })()`);
+      await joinRoom(b, room, 'B');
+    },
+    waitMs: 42000,
+  },
+  {
     // Path A through the follow flow: B arrives by being taken to the room's
     // video, and that page autoplays -- as soon as it can, and 1.5 s later.
     name: 'A1 follow, site autoplays at canplay',
@@ -847,6 +862,17 @@ const CONTROL_CASES = [
     run: async (a, b, room) => {
       await navigate(b, `${LOCAL}/watch/2`, 1000);
       await b.s.eval(`sessionStorage.setItem('site', JSON.stringify({ autoplay: 'delay', delayMs: 1500 })), 1`);
+      await b.iso(`VideoSync.join(${JSON.stringify(SERVER)}, ${JSON.stringify(room.roomId)}, ${JSON.stringify(room.secret)}, 'B'); return 1`);
+    },
+    waitMs: 10000,
+  },
+  {
+    // A2's site inside the settle window instead of past it: every site
+    // measured acts within 11 ms of canplaythrough, and T_settle is 1 s.
+    name: 'A3 follow, site autoplays 0.8 s after canplaythrough',
+    run: async (a, b, room) => {
+      await navigate(b, `${LOCAL}/watch/2`, 1000);
+      await b.s.eval(`sessionStorage.setItem('site', JSON.stringify({ autoplay: 'delay', delayMs: 800 })), 1`);
       await b.iso(`VideoSync.join(${JSON.stringify(SERVER)}, ${JSON.stringify(room.roomId)}, ${JSON.stringify(room.secret)}, 'B'); return 1`);
     },
     waitMs: 10000,
@@ -892,6 +918,48 @@ const CONTROL_CASES = [
       await joinRoom(b, room, 'B');
     },
     waitMs: 22000,
+  },
+  {
+    // A press while B is still guarded -- right after it was conformed -- is
+    // the member's, and must be sent. A trusted click, so it activates.
+    name: 'P2 a trusted click on B while it is still acquiring starts the room',
+    run: async (a, b, room, c) => {
+      await navigate(b, `${LOCAL}/watch/1`, 1500);
+      await joinRoom(b, room, 'B');
+      const t0 = Date.now();
+      let st = null;
+      while (Date.now() - t0 < 5000) {
+        st = await b.iso('return VideoSync.engine()?.acquisition ?? null').catch(() => null);
+        if (st === 'guarded' || st === 'steady') break;
+        await sleep(20);
+      }
+      await cdpClick(b, 'video');
+      c.notes = { acquisitionAtClick: st };
+    },
+    waitMs: 3000,
+  },
+  {
+    // The same with a media key: Chromium activates the page for an MPRIS
+    // play, with no input event (M3).
+    name: 'P3 an MPRIS play on B while it is still acquiring starts the room',
+    run: async (a, b, room, c) => {
+      await navigate(b, `${LOCAL}/watch/1`, 1500);
+      // Make B's element the browser's active media session.
+      await b.s.eval(`(async () => { const v = document.querySelector('video'); await v.play(); await new Promise((r) => setTimeout(r, 300)); v.pause(); return 1; })()`);
+      await sleep(300);
+      await joinRoom(b, room, 'B');
+      const t0 = Date.now();
+      let st = null;
+      while (Date.now() - t0 < 5000) {
+        st = await b.iso('return VideoSync.engine()?.acquisition ?? null').catch(() => null);
+        if (st === 'guarded' || st === 'steady') break;
+        await sleep(20);
+      }
+      let err = null;
+      try { mpris(process.env.MPRIS || mprisName(), 'Play'); } catch (e) { err = e.message.slice(0, 200); }
+      c.notes = { acquisitionAtKey: st, mprisError: err };
+    },
+    waitMs: 3000,
   },
   {
     // The gestured control: a trusted click that must always be sent.

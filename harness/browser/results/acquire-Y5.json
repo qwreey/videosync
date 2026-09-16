@@ -1,0 +1,292 @@
+{
+ "when": "2026-09-16T15:48:03.500Z",
+ "browser": "helium",
+ "site": "youtube",
+ "input": "cdp (trusted)",
+ "presses": [
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 38,
+   "inputToEventMs": 242,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 11,
+   "inputToEventMs": 228,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 16,
+   "inputToEventMs": 234,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 10,
+   "inputToEventMs": 231,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 24,
+   "inputToEventMs": 245,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 6,
+   "inputToEventMs": 214,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 9,
+   "inputToEventMs": 251,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 12,
+   "inputToEventMs": 227,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "pause",
+   "dispatchToInputMs": 15,
+   "inputToEventMs": 243,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "click",
+   "want": "play",
+   "dispatchToInputMs": 38,
+   "inputToEventMs": 268,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 3,
+   "inputToEventMs": 43,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 16,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 3,
+   "inputToEventMs": 50,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 22,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 37,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 12,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 34,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 11,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 25,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "space",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 15,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 22,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "play",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 21,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 28,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 6,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 21,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 15,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "pause",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 22,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 15,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "pause",
+   "dispatchToInputMs": 2,
+   "inputToEventMs": 26,
+   "actAtEvent": true,
+   "gotIt": true
+  },
+  {
+   "kind": "k",
+   "want": "play",
+   "dispatchToInputMs": 1,
+   "inputToEventMs": 7,
+   "actAtEvent": true,
+   "gotIt": true
+  }
+ ],
+ "summary": {
+  "n": 30,
+  "p50": 28,
+  "p90": 245,
+  "max": 268,
+  "byKind": {
+   "click": [
+    242,
+    228,
+    234,
+    231,
+    245,
+    214,
+    251,
+    227,
+    243,
+    268
+   ],
+   "space": [
+    43,
+    16,
+    50,
+    22,
+    37,
+    12,
+    34,
+    11,
+    25,
+    15
+   ],
+   "k": [
+    22,
+    21,
+    28,
+    6,
+    21,
+    15,
+    22,
+    15,
+    26,
+    7
+   ]
+  }
+ }
+}
