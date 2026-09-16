@@ -1423,4 +1423,4 @@ never explained it. Its slow recovery is still uninvestigated.
 Servo against §41's "now" columns: `slow-to-buffer` 11/15 → **8/10** (mean
 10/16 → 8/14), `asymmetry+cmds` 293/600 → **320/657** (mean 298/599 → 324/647),
 `command-storm` 68/295 → **97/295** (mean 78/325 → 104/327). Every other servo
-row is unchanged.
+row keeps its anchorErr and `skipped`.
