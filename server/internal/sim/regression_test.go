@@ -3,6 +3,7 @@ package sim
 import (
 	"testing"
 
+	"github.com/qwreey/videosync/server/internal/room"
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
 
@@ -534,9 +535,16 @@ func TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers(t *testing.T) {
 	// buffering), not from when the play arrived at t=10 s. So the play is
 	// released at ~30 s and was held for ~20 s. Getting this backwards would
 	// mean a member could re-enter the gate and restart the clock forever.
-	if r.GateHoldMs < 12000 || r.GateHoldMs > 32000 {
-		t.Errorf("gate held for %d ms; want release ~20 s in (GATE_TIMEOUT 30 s "+
-			"measured from when the member started buffering at ~t=0)", r.GateHoldMs)
+	//
+	// The window has to exclude the wrong rule's answer, or the test does not
+	// test it: timed from the held command, the hold is GATE_TIMEOUT itself
+	// (~30 s). An earlier bound of 32 s accepted exactly that.
+	playAt := int64(10000)
+	want := room.GateTimeoutMs - playAt
+	if r.GateHoldMs < want-3000 || r.GateHoldMs > want+3000 {
+		t.Errorf("gate held for %d ms; want ~%d ms (GATE_TIMEOUT %d ms measured from when the "+
+			"member started buffering at ~t=0, not from the play at %d ms)",
+			r.GateHoldMs, want, room.GateTimeoutMs, playAt)
 	}
 	if r.GateHoldMs >= 79000 {
 		t.Error("the room was held for the rest of the run: the anti-hang timeout did not fire")
