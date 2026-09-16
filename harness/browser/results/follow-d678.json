@@ -1,0 +1,58 @@
+{
+  "when": "2026-09-16T19:06:27.202Z",
+  "checks": [
+    {
+      "name": "joining by code takes the member to the room's video",
+      "ok": true,
+      "detail": "https://www.youtube.com/watch?v=aqz-KE-bpKQ -> https://laftel.net/player/45462/93304 after 2560 ms"
+    },
+    {
+      "name": "and rejoins the same room there, unprompted",
+      "ok": true,
+      "detail": "rejoined after 819 ms, 2 members"
+    },
+    {
+      "name": "A still in the room after its own SPA navigation",
+      "ok": true,
+      "detail": "laftel:/player/45462/93304"
+    },
+    {
+      "name": "A is offered \"move the room here\", and presses it",
+      "ok": true
+    },
+    {
+      "name": "B follows the room to the new episode",
+      "ok": true,
+      "detail": "after 2396 ms"
+    },
+    {
+      "name": "and rejoins again",
+      "ok": true,
+      "detail": "2 members"
+    },
+    {
+      "name": "A was not navigated by its own command",
+      "ok": true
+    },
+    {
+      "name": "a member's own navigation is not undone by the room",
+      "ok": true,
+      "detail": "B at https://laftel.net/player/45462/93296, room on laftel:/player/45462/93295"
+    },
+    {
+      "name": "it is offered \"move the room here\" instead",
+      "ok": true
+    },
+    {
+      "name": "\"stay here\" is offered before leaving the page",
+      "ok": true
+    },
+    {
+      "name": "and declining keeps the member where they are, still in the room",
+      "ok": true,
+      "detail": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+    }
+  ],
+  "notes": [],
+  "roomId": "0qdWmpsQdK6wh2izu7_uoQ"
+}

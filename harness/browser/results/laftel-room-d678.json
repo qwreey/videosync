@@ -1,0 +1,468 @@
+{
+  "when": "2026-09-16T19:03:41.093Z",
+  "server": "http://127.0.0.1:8787",
+  "press": "adapter",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 525,
+        "otherStartsAfterMs": 577,
+        "presserNetMs": -628,
+        "gapAtEndMs": 17
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 35,
+        "gapAtEndMs": -5
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "playsHeld": 1,
+        "reportsDeferred": 4,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 545,
+        "otherStartsAfterMs": 555,
+        "presserNetMs": -587,
+        "gapAtEndMs": -180
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 54,
+        "gapAtEndMs": -217
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "playsHeld": 1,
+        "reportsDeferred": 8,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 27,
+            "jumpMs": -217
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 526,
+        "otherStartsAfterMs": 559,
+        "presserNetMs": -702,
+        "gapAtEndMs": -17
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 33,
+        "gapAtEndMs": -33
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "playsHeld": 2,
+        "reportsDeferred": 9,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 536,
+        "otherStartsAfterMs": 568,
+        "presserNetMs": -666,
+        "gapAtEndMs": -124
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 55,
+        "gapAtEndMs": -145
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "playsHeld": 2,
+        "reportsDeferred": 13,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 29,
+            "jumpMs": -145
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 526,
+        "otherStartsAfterMs": 554,
+        "presserNetMs": -735,
+        "gapAtEndMs": -177
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 41,
+        "gapAtEndMs": -204
+      },
+      "presserStats": {
+        "cmdsSent": 7,
+        "playsHeld": 3,
+        "reportsDeferred": 12,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 25,
+            "jumpMs": -204
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 551,
+        "presserNetMs": -695,
+        "gapAtEndMs": -101
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 30,
+        "gapAtEndMs": -117
+      },
+      "presserStats": {
+        "cmdsSent": 6,
+        "playsHeld": 3,
+        "reportsDeferred": 18,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      0,
+      0,
+      -217,
+      0,
+      -145,
+      -204
+    ],
+    "playGapAtEndMs": [
+      17,
+      -180,
+      -17,
+      -124,
+      -177,
+      -101
+    ],
+    "playPresserStartsAfterMs": [
+      525,
+      545,
+      526,
+      536,
+      526,
+      527
+    ],
+    "playOtherStartsAfterMs": [
+      577,
+      555,
+      559,
+      568,
+      554,
+      551
+    ],
+    "playPresserNetMs": [
+      -628,
+      -587,
+      -702,
+      -666,
+      -735,
+      -695
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      -5,
+      -217,
+      -33,
+      -145,
+      -204,
+      -117
+    ]
+  },
+  "notes": [],
+  "roomId": "Rbe8Wu_l50LO6KXsVunMSA",
+  "clock": {
+    "a": {
+      "rttMs": 1.5999999940395355,
+      "uncertaintyMs": 0.7999999970197678
+    },
+    "b": {
+      "rttMs": 1.6999999955296516,
+      "uncertaintyMs": 0.8499999977648258
+    }
+  },
+  "traceA": [
+    {
+      "at": 13899,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "seek",
+        "positionMs": 145465,
+        "reqId": "kWvmGQC8dLs-1"
+      }
+    },
+    {
+      "at": 13902,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 1,
+        "when": 1789585422894,
+        "kind": "seek",
+        "reqId": "kWvmGQC8dLs-1",
+        "anchor": "145465P@1789585422894"
+      }
+    },
+    {
+      "at": 17247,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 145583,
+        "reqId": "kWvmGQC8dLs-2"
+      }
+    },
+    {
+      "at": 17251,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789585426742,
+        "kind": "play",
+        "reqId": "kWvmGQC8dLs-2",
+        "anchor": "145465-@1789585426742"
+      }
+    },
+    {
+      "at": 22184,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 149790,
+        "reqId": "kWvmGQC8dLs-3"
+      }
+    },
+    {
+      "at": 22186,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789585431178,
+        "kind": "pause",
+        "reqId": "kWvmGQC8dLs-3",
+        "anchor": "149790P@1789585431178"
+      }
+    },
+    {
+      "at": 28116,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789585437608,
+        "kind": "play",
+        "anchor": "149790-@1789585437608"
+      }
+    },
+    {
+      "at": 33050,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789585442043,
+        "kind": "pause",
+        "anchor": "154153P@1789585442043"
+      }
+    },
+    {
+      "at": 38976,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 154468,
+        "reqId": "kWvmGQC8dLs-4"
+      }
+    },
+    {
+      "at": 38981,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789585448471,
+        "kind": "play",
+        "reqId": "kWvmGQC8dLs-4",
+        "anchor": "154153-@1789585448471"
+      }
+    },
+    {
+      "at": 43908,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 158618,
+        "reqId": "kWvmGQC8dLs-5"
+      }
+    },
+    {
+      "at": 43910,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789585452902,
+        "kind": "pause",
+        "reqId": "kWvmGQC8dLs-5",
+        "anchor": "158618P@1789585452902"
+      }
+    },
+    {
+      "at": 49850,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789585459342,
+        "kind": "play",
+        "anchor": "158618-@1789585459342"
+      }
+    },
+    {
+      "at": 54801,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789585463793,
+        "kind": "pause",
+        "anchor": "162944P@1789585463793"
+      }
+    },
+    {
+      "at": 60722,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 163187,
+        "reqId": "kWvmGQC8dLs-6"
+      }
+    },
+    {
+      "at": 60727,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 10,
+        "when": 1789585470216,
+        "kind": "play",
+        "reqId": "kWvmGQC8dLs-6",
+        "anchor": "162944-@1789585470216"
+      }
+    },
+    {
+      "at": 65666,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 167308,
+        "reqId": "kWvmGQC8dLs-7"
+      }
+    },
+    {
+      "at": 65667,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 11,
+        "when": 1789585474660,
+        "kind": "pause",
+        "reqId": "kWvmGQC8dLs-7",
+        "anchor": "167308P@1789585474660"
+      }
+    },
+    {
+      "at": 71590,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 12,
+        "when": 1789585481082,
+        "kind": "play",
+        "anchor": "167308-@1789585481082"
+      }
+    },
+    {
+      "at": 76521,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 13,
+        "when": 1789585485514,
+        "kind": "pause",
+        "anchor": "171773P@1789585485514"
+      }
+    }
+  ],
+  "rateAfterLeave": {
+    "a": 1,
+    "b": 1
+  }
+}

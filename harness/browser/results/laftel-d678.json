@@ -1,0 +1,262 @@
+{
+  "when": "2026-09-16T19:02:53.031Z",
+  "checks": [
+    {
+      "name": "a currentTime write sticks",
+      "ok": true,
+      "detail": "worst distance from the line through the target: 0.098 s"
+    },
+    {
+      "name": "play() starts playback",
+      "ok": true,
+      "detail": "position 124.94"
+    },
+    {
+      "name": "a programmatic pause() sticks for 5 s",
+      "ok": true,
+      "detail": "position moved 0.000 s while paused"
+    },
+    {
+      "name": "playbackRate 1.1 is held for 10 s",
+      "ok": true,
+      "detail": "distinct rates seen: 1.1"
+    },
+    {
+      "name": "media actually advances at 1.1x",
+      "ok": true,
+      "detail": "ratio 1.0972"
+    },
+    {
+      "name": "mediaKey changes when the episode changes (in-app click)",
+      "ok": true,
+      "detail": "laftel:/player/45462/93304 -> laftel:/player/45462/93295 (spa)"
+    },
+    {
+      "name": "the adapter follows the player onto the new episode",
+      "ok": true,
+      "detail": "readyState 4, duration 1431.433349609375"
+    },
+    {
+      "name": "mediaKey is stable across a full reload of the same episode",
+      "ok": true,
+      "detail": "laftel:/player/45462/93304"
+    }
+  ],
+  "measurements": {
+    "start": {
+      "positionS": 164.356739,
+      "paused": false,
+      "rate": 1,
+      "readyState": 4,
+      "muted": false,
+      "hasAudio": true,
+      "durationS": 1431.4300537109375,
+      "buffered": [
+        {
+          "start": 138.014666,
+          "end": 210.014666
+        }
+      ],
+      "bufferedAheadS": 45.657927,
+      "bufferedBehindS": 26.342073,
+      "ended": false
+    },
+    "seek_samples": [
+      {
+        "pos": 120,
+        "dt": 0.00020000000298023223,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 120.160251,
+        "dt": 0.25039999999850987,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 120.405722,
+        "dt": 0.5008000000044703,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 120.655623,
+        "dt": 0.7513000000044704,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 120.905547,
+        "dt": 1.0016000000014902,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 121.155373,
+        "dt": 1.2518000000044704,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 121.405019,
+        "dt": 1.5022000000029803,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 121.6548,
+        "dt": 1.7525,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 121.92091,
+        "dt": 2.0028000000044703,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 122.171539,
+        "dt": 2.25360000000149,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 122.421955,
+        "dt": 2.50410000000149,
+        "paused": false,
+        "rate": 1
+      },
+      {
+        "pos": 122.672097,
+        "dt": 2.7545,
+        "paused": false,
+        "rate": 1
+      }
+    ],
+    "pause_samples": [
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      },
+      {
+        "paused": true,
+        "pos": 124.939
+      }
+    ],
+    "rate_hold": {
+      "rates": [
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1,
+        1.1
+      ],
+      "mediaS": 10.981663999999995,
+      "wallS": 10.00839999999851,
+      "paused": false
+    },
+    "episode_links": {
+      "here": "/player/45462/93304",
+      "other": "/player/45462/93295"
+    },
+    "navigation": {
+      "how": "spa",
+      "path1": "/player/45462/93295",
+      "key0": "laftel:/player/45462/93304",
+      "key1": "laftel:/player/45462/93295"
+    }
+  },
+  "notes": [
+    "visibility: visible"
+  ],
+  "browser": "Chrome/153.0.8010.36"
+}
