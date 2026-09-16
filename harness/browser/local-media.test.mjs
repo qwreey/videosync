@@ -2,10 +2,10 @@
 // that dies or hands back the wrong bytes makes every video stall, and a
 // stalled video reads as a sync or player finding.
 //
-//   node --test harness/browser/local-media.test.mjs
+//   node --test harness/browser/local-media.test.mjs     (also part of `mise run test`)
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, it } from 'node:test';
@@ -18,24 +18,41 @@ const media = Buffer.from(Array.from({ length: SIZE }, (_, i) => i % 251));
 
 let proc = null;
 let base = '';
+let dir = '';
+
+// Resolves true once THIS child says it is listening, false if it exits first
+// (a port somebody else holds). Polling the port for any 200 instead could
+// pass against an unrelated server that happened to own it.
+function listening(child) {
+  return new Promise((resolve) => {
+    let out = '';
+    child.stdout.on('data', (b) => { out += b; if (out.includes('local media on')) resolve(true); });
+    child.on('exit', () => resolve(false));
+    setTimeout(() => resolve(false), 5000);
+  });
+}
 
 before(async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'vs-media-'));
+  dir = mkdtempSync(join(tmpdir(), 'vs-media-'));
   const file = join(dir, 'test.mp4');
   writeFileSync(file, media);
-  const port = 20000 + Math.floor(Math.random() * 4000);
-  proc = spawn(process.execPath, [script], {
-    env: { ...process.env, MEDIA: file, PORT: String(port) }, stdio: 'ignore',
-  });
-  base = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 100; i++) {
-    try { if ((await fetch(`${base}/watch/1`)).ok) return; } catch {}
-    await new Promise((r) => setTimeout(r, 50));
+  // This runs in `mise run test`, next to whatever else holds ports on the
+  // machine, so one taken port must not fail the suite.
+  for (let i = 0; i < 10; i++) {
+    const port = 20000 + Math.floor(Math.random() * 20000);
+    proc = spawn(process.execPath, [script], {
+      env: { ...process.env, MEDIA: file, PORT: String(port) }, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    if (await listening(proc)) { base = `http://127.0.0.1:${port}`; return; }
+    proc.kill();
   }
-  throw new Error('local-media.mjs never listened');
+  throw new Error('local-media.mjs never listened on any of 10 ports');
 });
 
-after(() => { proc?.kill(); });
+after(() => {
+  proc?.kill();
+  if (dir) rmSync(dir, { recursive: true, force: true });
+});
 
 const get = (range) => fetch(`${base}/test.mp4`, range ? { headers: { range } } : {});
 
