@@ -3,7 +3,8 @@
  * server and where they keep a setting.
  *
  * The userscript and the extension differ in exactly three injected pieces:
- * storage, the transport, and how a room gets created. Every other line -- find
+ * storage, the transport, and how an HTTP call reaches the server. Every other
+ * line -- find
  * the element, name the media, mount the panel, wire the engine, decide what a
  * navigation means -- is identical, so it lives here rather than in two files
  * that would drift.
@@ -17,6 +18,10 @@ import type { EngineStatus } from '../engine/engine.ts';
 import type { MemberInfo } from '../engine/protocol.ts';
 import type { Transport } from '../engine/transport.ts';
 import { Panel } from '../ui/panel.ts';
+import type { SignInInput } from '../ui/panel.ts';
+import { AuthRequiredError, ServerAuth } from './auth.ts';
+import type { SignInResult } from './auth.ts';
+import type { AuthFetch } from './authfetch.ts';
 
 /** A place to keep the server URL and the last room. Synchronous on purpose:
  *  the panel is built from it before anything can await. */
@@ -35,9 +40,17 @@ export interface Platform {
   /** How this shim reaches the server. The extension relays through its
    *  service worker; the userscript opens the socket directly. */
   makeTransport(serverUrl: string): Transport;
-  /** Room creation is HTTP, and the extension cannot make that call from the
-   *  page either -- so it is injected alongside the transport. */
-  createRoom(serverUrl: string, mediaKey: string, mediaUrl: string): Promise<{ roomId: string; secret: string }>;
+  /**
+   * Every HTTP call to the server -- room creation, sign-in, tickets. Made
+   * from the shim's privileged side (the extension's background, the
+   * userscript's `GM_xmlhttpRequest`), which is also where the device token
+   * lives: the app never sees it (`authfetch.ts`). The extension could not
+   * make these calls from the page anyway, for the same reason the socket
+   * lives in its worker.
+   */
+  authFetch: AuthFetch;
+  /** Open a login tab. Without it, `window.open`, which a popup blocker may eat. */
+  openTab?(url: string): void;
   /**
    * Why this server cannot be reached from this page, if it cannot. Returns a
    * human sentence or null. The two shims have genuinely different answers:
@@ -155,7 +168,8 @@ export function redactInvite(href: string): string {
 /**
  * What a refused join tells the user to do. Only `join_refused` is about the
  * ID or the secret; a full room was reached with both right, and sending that
- * user off to re-check them is sending them the wrong way.
+ * user off to re-check them is sending them the wrong way. (`auth_required`
+ * never gets here: it opens the sign-in section instead.)
  */
 function refusalText(code: string | undefined): string {
   if (code === 'room_full') return `방이 가득 찼어요 — 자리가 나면 다시 참가해주세요 (${code})`;
@@ -222,6 +236,17 @@ export function start(p: Platform): App {
   let ownRejoin = '';
   let lastStatus: EngineStatus = 'idle';
   let session: { server: string; roomId: string; secret: string; name: string } | null = null;
+  /** Whether `session` was started by its room's creator (`adoptLocalStateOnJoin`). */
+  let sessionAdopts = false;
+  /** What a successful sign-in should do next, and for which server. */
+  let signInFor: { server: string; retry: () => void } | null = null;
+  /** The server this page knows the device to be signed in to. */
+  let signedInTo = '';
+  /**
+   * A `hello` refused for want of a ticket is retried once, after asking the
+   * server what it needs: what we believed about it may simply be stale.
+   */
+  let authRetried = false;
   let waitingOn: readonly string[] = [];
   let members: readonly MemberInfo[] = [];
 
@@ -239,7 +264,21 @@ export function start(p: Platform): App {
     onChat: (text) => engine?.chat(text),
     onRotate: () => engine?.rotateSecret(),
     onGesture: () => { void engine?.resumeAfterGesture(); },
+    onSignIn: (c) => { void signIn(c); },
+    onBrowserSignIn: () => { void browserSignIn(); },
+    onCancelSignIn: () => {
+      auth.cancelBrowser();
+      panel.showSignInCode(null);
+      panel.setSignInNotice('취소했어요. 다시 로그인하거나 다른 방법을 고르세요.', '');
+    },
+    onSignOut: () => { void signOut(); },
   }, p.openPanel ? 'open' : 'closed');
+
+  const openTab = p.openTab ?? ((url: string) => { window.open(url, '_blank', 'noopener'); });
+  const auth = new ServerAuth(p.authFetch, p.store, {
+    setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+    clearTimer: (h) => { clearTimeout(h); },
+  }, openTab);
 
   const watcher = new PageWatcher({
     doc: document,
@@ -456,21 +495,148 @@ export function start(p: Platform): App {
     }
     panel.setStatus('방을 만드는 중…');
     try {
-      const out = await p.createRoom(serverUrl, mediaKey, mediaUrl);
+      const out = await requestRoom(serverUrl);
       panel.setFields(out);
       // The creator seeds the room from their own player. Only here: a joiner
       // conforms to the anchor, a creator IS the anchor.
       join(serverUrl, out.roomId, out.secret, name, true);
       return out;
     } catch (e) {
+      if (e instanceof AuthRequiredError) {
+        askSignIn(serverUrl, e.methods, () => { void createRoom(serverUrl, name).catch(() => {}); });
+        throw e;
+      }
       panel.setStatus(`방을 만들지 못했어요: ${(e as Error).message}. ` +
         '서버가 켜져 있는지, 주소가 맞는지 확인해주세요.', 'err');
       throw e;
     }
   }
 
+  /**
+   * `POST /api/rooms`, with a ticket if the server is known to want one. A
+   * server that refuses for want of one is asked what it needs, once, and the
+   * request is made again.
+   */
+  async function requestRoom(serverUrl: string, retried = false): Promise<{ roomId: string; secret: string }> {
+    const ticket = auth.needs(serverUrl) === 'none' ? '' : await auth.ticket(serverUrl, 'create');
+    if (ticket) noteSignedIn(serverUrl);
+    const r = await p.authFetch(serverUrl, '/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({ mediaKey, mediaUrl, ...(ticket ? { ticket } : {}) }),
+    });
+    if (r.status === 401 && !r.gateway) {
+      if (retried) throw new AuthRequiredError((await auth.info(serverUrl).catch(() => null))?.methods ?? []);
+      await auth.learnRefusal(serverUrl, 'create');
+      return requestRoom(serverUrl, true);
+    }
+    if (r.status !== 201) {
+      if (r.gateway) throw new Error(`서버 앞의 프록시가 막았어요 (${r.status})`);
+      throw new Error(r.status ? `서버가 ${r.status}로 거절했어요` : (r.error ?? '응답이 없어요'));
+    }
+    const out = JSON.parse(r.body) as { roomId?: unknown; secret?: unknown };
+    if (typeof out.roomId !== 'string' || typeof out.secret !== 'string') {
+      throw new Error('서버의 응답을 이해할 수 없어요');
+    }
+    return { roomId: out.roomId, secret: out.secret };
+  }
+
+  // --- signing in -------------------------------------------------------------
+
+  function noteSignedIn(server: string, who = ''): void {
+    signedInTo = server;
+    panel.setSignedIn(who);
+  }
+
+  /** Stop and ask. `retry` is what the sign-in was for. */
+  function askSignIn(server: string, methods: readonly string[], retry: () => void): void {
+    signInFor = { server, retry };
+    if (signedInTo === server) {
+      // Whatever this page believed, the server just said otherwise.
+      signedInTo = '';
+      panel.setSignedIn(null);
+    }
+    panel.showSignIn({ methods, notice: '이 서버는 로그인이 필요해요.' });
+    panel.setStatus('로그인이 필요해요 — 아래에서 로그인해주세요.', 'warn');
+  }
+
+  function finishSignIn(target: { server: string; retry: () => void }, r: SignInResult): void {
+    if (signInFor !== target) return; // superseded, or the member left
+    panel.showSignInCode(null);
+    if (!r.ok) {
+      if (r.why !== 'cancelled') panel.setSignInNotice(r.text, 'err');
+      return;
+    }
+    signInFor = null;
+    authRetried = false;
+    panel.hideSignIn();
+    noteSignedIn(target.server, r.sub);
+    panel.setStatus('로그인했어요.');
+    target.retry();
+  }
+
+  async function signIn(c: SignInInput): Promise<void> {
+    const target = signInFor;
+    if (!target) return;
+    panel.setSignInNotice('로그인하는 중…', '');
+    finishSignIn(target, await auth.signIn(target.server, c));
+  }
+
+  async function browserSignIn(): Promise<void> {
+    const target = signInFor;
+    if (!target) return;
+    panel.setSignInNotice('새 탭에서 로그인하세요. 탭에 아래와 같은 코드가 보일 때만 계속하세요.', '');
+    panel.showSignInCode('…');
+    finishSignIn(target, await auth.browserSignIn(target.server, (code) => { panel.showSignInCode(code); }));
+  }
+
+  async function signOut(): Promise<void> {
+    const server = signedInTo || panel.fields().serverUrl;
+    if (!server) return;
+    await auth.signOut(server);
+    signedInTo = '';
+    panel.setSignedIn(null);
+    panel.setStatus('로그아웃했어요. 이 기기는 다음에 다시 로그인해야 해요.');
+  }
+
+  /**
+   * The engine's ticket source. Synchronous for a server not known to gate
+   * joining, so connecting to one costs exactly what it always did.
+   */
+  function joinTicket(server: string): Promise<string> | string {
+    if (auth.needs(server) !== 'all') return '';
+    return auth.ticket(server, 'join').then((t) => {
+      if (t) noteSignedIn(server);
+      return t;
+    }, (e: unknown) => {
+      if (e instanceof AuthRequiredError) askSignIn(server, e.methods, joinAgain);
+      throw e;
+    });
+  }
+
+  /** Join the current session again, as it is now. */
+  function joinAgain(): void {
+    const s = session;
+    if (s) join(s.server, s.roomId, s.secret, s.name, sessionAdopts, true);
+  }
+
+  /** The server refused `hello` for want of a ticket. */
+  function onAuthRefused(server: string): void {
+    if (signInFor) return; // already asking
+    if (!authRetried) {
+      authRetried = true;
+      const e = engine;
+      void auth.learnRefusal(server, 'join').then(() => {
+        if (engine === e && session?.server === server) joinAgain();
+      });
+      return;
+    }
+    void auth.info(server).then((i) => i.methods, () => [] as readonly string[]).then((methods) => {
+      if (session?.server === server && !signInFor) askSignIn(server, methods, joinAgain);
+    });
+  }
+
   function join(
-    serverUrl: string, roomId: string, secret: string, name: string, adopt = false,
+    serverUrl: string, roomId: string, secret: string, name: string, adopt = false, internal = false,
   ): void {
     if (!serverUrl || !roomId || !secret) {
       panel.setStatus('서버 주소, 방 ID, 비밀키가 모두 필요해요.', 'err');
@@ -497,6 +663,9 @@ export function start(p: Platform): App {
     p.store.save('secret', secret);
     p.store.save('name', name);
     session = { server: serverUrl, roomId, secret, name };
+    sessionAdopts = adopt;
+    // A join the member asked for gets its own retry.
+    if (!internal) authRetried = false;
 
     engine = new SyncEngine({
       adapter,
@@ -505,6 +674,7 @@ export function start(p: Platform): App {
       setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
       clearTimer: (h) => { clearTimeout(h); },
       isHidden: () => document.hidden,
+      ticket: () => joinTicket(serverUrl),
     }, {
       ...DEFAULT_ENGINE_CONFIG,
       room: roomId, secret, name: name || '익명', mediaKey, mediaUrl,
@@ -521,6 +691,13 @@ export function start(p: Platform): App {
         // not news: "connection lost" in place of "check the room ID or
         // secret" sends the user off to debug their network.
         if (prev === 'refused' && s === 'closed') return;
+        if (s === 'joined') authRetried = false;
+        if (s === 'refused' && detail === 'auth_required') {
+          // The sign-in section says it, or is about to; a retry needs no words.
+          if (!signInFor && !authRetried) panel.setStatus('로그인 상태를 확인하는 중…');
+          onAuthRefused(serverUrl);
+          return;
+        }
         const text: Record<EngineStatus, string> = {
           idle: '', connecting: '연결하는 중…', joining: '방에 들어가는 중…',
           joined: '연결됨', refused: refusalText(detail), closed: '연결이 끊겼어요',
@@ -576,6 +753,7 @@ export function start(p: Platform): App {
         }
         // Said by `onStatus` already, in words that tell the user what to
         // check; the server's own words, when it has any, are added to them.
+        if (code === 'auth_required') return; // `onStatus` acts on it
         if (code === 'join_refused' || code === 'room_full') {
           if (msg) panel.setStatus(`${refusalText(code)} — ${msg}`, 'err');
           return;
@@ -590,6 +768,10 @@ export function start(p: Platform): App {
 
   function leave(): void {
     cancelFollow();
+    // A sign-in asked for by what is being left would, on success, bring it back.
+    auth.cancelBrowser();
+    signInFor = null;
+    panel.hideSignIn();
     // A follow may already be on its way to the next page. The navigation
     // cannot be taken back, but arriving must not rejoin a room left on
     // purpose.
@@ -663,6 +845,13 @@ export function start(p: Platform): App {
         mediaUrl,
         roomMediaKey,
         roomMediaUrl,
+        // Never a token or a ticket: this code never holds the one, and the
+        // other is spent by the time anyone could read it.
+        auth: {
+          needs: session ? auth.needs(session.server) : null,
+          askingToSignIn: signInFor !== null,
+          signedIn: signedInTo !== '',
+        },
         engine: engine ? {
           state: engine.state,
           selfId: engine.id,

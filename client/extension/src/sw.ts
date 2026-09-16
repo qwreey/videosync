@@ -9,10 +9,15 @@
  *
  * It also means the worker holds no session state, so a teardown costs a
  * reconnect and nothing else -- the content script's engine already knows how
- * to do that.
+ * to do that. The one thing it keeps is a device token per server, in its own
+ * database (`tokens.ts`), which is state about the browser and not about a
+ * session.
  */
-import { PORT_NAME } from './relay.ts';
-import type { FromWorker, ToWorker } from './relay.ts';
+import { fetchHttp, makeAuthFetch, serverOrigin } from '@videosync/core/app/authfetch.ts';
+
+import { PORT_NAME, SERVER_KEY } from './relay.ts';
+import type { FromWorker, ToWorker, WorkerRequest } from './relay.ts';
+import { idbTokens } from './tokens.ts';
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PORT_NAME) return;
@@ -82,13 +87,47 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 /**
- * Room creation is HTTP, and a content script on a public-origin page cannot
- * make that call to a private address either -- so it is relayed too.
+ * Every HTTP call to the server -- room creation, sign-in, tickets -- is made
+ * here, for two reasons. A content script on a public-origin page cannot reach
+ * a private address at all. And the device token lives here and only here
+ * (`tokens.ts`); the content script gets tickets.
+ *
+ * This used to fetch whatever `msg.url` said, from the one context that can
+ * reach the LAN. Now the URL is built from the server the settings store
+ * holds and a fixed path list (`makeAuthFetch`), and a token only ever goes to
+ * the origin that issued it.
  */
-chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
-  if (msg?.t !== 'createRoom') return false;
-  fetch(msg.url, { method: 'POST', body: msg.body })
-    .then(async (r) => respond({ ok: r.ok, status: r.status, body: await r.text() }))
-    .catch((e) => respond({ ok: false, status: 0, body: '', error: String(e) }));
-  return true; // async response
+const authFetch = makeAuthFetch(fetchHttp, idbTokens());
+
+async function storedServer(): Promise<string> {
+  const got = await chrome.storage.local.get(SERVER_KEY);
+  const v = got[SERVER_KEY];
+  return typeof v === 'string' ? v : '';
+}
+
+chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
+  // Only our own content scripts; a page cannot message an extension that
+  // declares no `externally_connectable`, and this makes that explicit.
+  if (sender.id !== chrome.runtime.id) return false;
+  switch (msg?.t) {
+    case 'auth': {
+      storedServer()
+        .then((server) => serverOrigin(server)
+          ? authFetch(server, msg.path, msg.req)
+          : { status: 0, body: '', error: 'no server configured' })
+        .then(respond, (e: unknown) => respond({ status: 0, body: '', error: String(e) }));
+      return true; // async response
+    }
+    case 'openTab': {
+      // A login page, from the server's answer. Web URLs only: this is a
+      // privileged `tabs.create`, and it must not open an extension page or
+      // a `javascript:` one on anybody's say-so.
+      if (typeof msg.url === 'string' && /^https?:\/\//i.test(msg.url)) {
+        void chrome.tabs.create({ url: msg.url, active: true });
+      }
+      return false;
+    }
+    default:
+      return false;
+  }
 });

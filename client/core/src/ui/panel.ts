@@ -49,6 +49,9 @@ button.action:disabled { opacity: .5; cursor: default; }
 .status { font-size: 12px; color: #9a9ca6; min-height: 1.45em; }
 .status.warn { color: #e0b23a; }
 .status.err { color: #e05a4f; }
+.note { font-size: 12px; color: #9a9ca6; }
+.note.warn { color: #e0b23a; }
+.note.err { color: #e05a4f; }
 .members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 96px; overflow-y: auto; }
 .members li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .members .tag { font-size: 10px; color: #9a9ca6; border: 1px solid #303138; border-radius: 4px; padding: 0 4px; }
@@ -57,6 +60,11 @@ button.action:disabled { opacity: .5; cursor: default; }
 .log .line { font-size: 12px; word-break: break-word; }
 .log .who { color: #7f97ff; font-weight: 600; }
 .log .sys { color: #9a9ca6; font-style: italic; }
+.auth { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid #303138; border-radius: 6px; background: #1b1c21; }
+.auth .code { font: 600 16px ui-monospace, monospace; letter-spacing: .1em; text-align: center; padding: 4px; border: 1px dashed #4a4c58; border-radius: 6px; }
+.signed { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #9a9ca6; }
+.signed span { flex: 1; }
+.signed button.action { width: auto; padding: 2px 8px; }
 .gesture {
   position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.72); font: 600 18px system-ui, sans-serif; color: #fff; cursor: pointer;
@@ -74,6 +82,21 @@ export interface UIHandlers {
   onChat(text: string): void;
   onRotate(): void;
   onGesture(): void;
+  /** A key, or a user and password, typed into the sign-in section. */
+  onSignIn?(c: SignInInput): void;
+  /** "Sign in in the browser": a login tab. */
+  onBrowserSignIn?(): void;
+  onCancelSignIn?(): void;
+  onSignOut?(): void;
+}
+
+export type SignInInput = { key: string } | { user: string; password: string };
+
+/** What the sign-in section offers, by the methods the server named. */
+export interface SignInOffer {
+  /** Methods from the server; empty when it did not say, which offers everything. */
+  methods: readonly string[];
+  notice: string;
 }
 
 export interface UIFields {
@@ -172,6 +195,13 @@ export class Panel {
     const mediaWrap = mk('div');
     mediaWrap.style.display = 'none';
     mediaWrap.append(mediaNotice, mediaBtn);
+    const auth = this.buildSignIn(doc, mk);
+    const signed = mk('div', 'signed');
+    const signedText = mk('span', '', '서버에 로그인됨');
+    const signOut = mk('button', 'action secondary', '로그아웃');
+    signOut.addEventListener('click', () => this.h.onSignOut?.());
+    signed.append(signedText, signOut);
+    signed.style.display = 'none';
     const members = mk('ul', 'members');
     const log = mk('div', 'log');
     const chatInput = mk('input');
@@ -213,6 +243,8 @@ export class Panel {
       row(copy, rotate),
       leave,
       status,
+      auth,
+      signed,
       mediaWrap,
       members,
       log,
@@ -223,9 +255,129 @@ export class Panel {
     Object.assign(this.el, {
       dot, title, status, members, log, create, join, leave, copy, rotate,
       server, name, room, secret, chatInput, mediaWrap, mediaNotice, mediaBtn,
+      signed, signedText,
     });
     this.setJoined(false);
     return panel;
+  }
+
+  /**
+   * Hidden until a server asks. Only what that server accepts is shown: a key
+   * field for `token`, user and password for `password`, a login tab for
+   * `oidc` and `proxy`.
+   */
+  private buildSignIn(
+    doc: Document,
+    mk: <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string) => HTMLElementTagNameMap[K],
+  ): HTMLElement {
+    void doc;
+    const wrap = mk('div', 'auth');
+    wrap.style.display = 'none';
+    // Not `.status`: that class is the panel's one status line.
+    const notice = mk('div', 'note warn');
+    const secretInput = (placeholder: string) => {
+      const i = mk('input');
+      i.type = 'password';
+      i.placeholder = placeholder;
+      i.autocomplete = 'off';
+      // Site hotkeys must not see a password being typed, and Enter submits
+      // unless an IME is still composing (see the chat box).
+      for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+        i.addEventListener(t, (e: KeyboardEvent) => {
+          e.stopPropagation();
+          if (t === 'keydown' && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) submit();
+        });
+      }
+      return i;
+    };
+    const key = secretInput('접속 키');
+    const user = mk('input');
+    user.placeholder = '사용자';
+    user.autocomplete = 'off';
+    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+      user.addEventListener(t, (e) => { e.stopPropagation(); });
+    }
+    const password = secretInput('비밀번호');
+    const signIn = mk('button', 'action', '로그인');
+    const browser = mk('button', 'action secondary', '브라우저에서 로그인');
+    const code = mk('div', 'code');
+    const cancel = mk('button', 'action secondary', '취소');
+
+    const submit = () => {
+      const u = user.value.trim();
+      // A password is never kept in the page longer than it takes to send.
+      let c: SignInInput | null = null;
+      if (this.shown.password && u && password.value) c = { user: u, password: password.value };
+      else if (this.shown.key && key.value.trim()) c = { key: key.value.trim() };
+      if (!c) {
+        this.setSignInNotice('키나 사용자·비밀번호를 입력해주세요.', 'err');
+        return;
+      }
+      password.value = '';
+      key.value = '';
+      this.h.onSignIn?.(c);
+    };
+    signIn.addEventListener('click', submit);
+    browser.addEventListener('click', () => this.h.onBrowserSignIn?.());
+    cancel.addEventListener('click', () => this.h.onCancelSignIn?.());
+
+    const keyWrap = mk('div');
+    keyWrap.append(mk('label', '', '접속 키'), key);
+    const pwWrap = mk('div');
+    pwWrap.append(mk('label', '', '사용자'), user, mk('label', '', '비밀번호'), password);
+    const buttons = mk('div', 'row');
+    buttons.append(signIn, browser);
+    wrap.append(notice, keyWrap, pwWrap, buttons, code, cancel);
+    Object.assign(this.el, {
+      authWrap: wrap, authNotice: notice, authKey: keyWrap, authPw: pwWrap,
+      authSignIn: signIn, authBrowser: browser, authCode: code, authCancel: cancel,
+    });
+    return wrap;
+  }
+
+  private shown = { key: false, password: false };
+
+  /** Ask to sign in, offering what the server accepts. */
+  showSignIn(offer: SignInOffer): void {
+    const all = offer.methods.length === 0;
+    const has = (m: string) => all || offer.methods.includes(m);
+    this.shown = { key: has('token'), password: has('password') };
+    const show = (k: string, on: boolean) => { this.el[k]!.style.display = on ? '' : 'none'; };
+    show('authKey', this.shown.key);
+    show('authPw', this.shown.password);
+    show('authSignIn', this.shown.key || this.shown.password);
+    show('authBrowser', has('oidc') || has('proxy'));
+    this.showSignInCode(null);
+    this.setSignInNotice(offer.notice, 'warn');
+    show('authWrap', true);
+  }
+
+  /** The browser login is waiting on its tab; `null` when it is not. */
+  showSignInCode(code: string | null): void {
+    const c = this.el.authCode!;
+    c.textContent = code ?? '';
+    c.style.display = code ? '' : 'none';
+    this.el.authCancel!.style.display = code !== null ? '' : 'none';
+    (this.el.authBrowser as HTMLButtonElement).disabled = code !== null;
+    (this.el.authSignIn as HTMLButtonElement).disabled = code !== null;
+  }
+
+  setSignInNotice(text: string, level: '' | 'warn' | 'err' = 'warn'): void {
+    this.el.authNotice!.className = `note ${level}`;
+    this.el.authNotice!.textContent = text;
+  }
+
+  hideSignIn(): void {
+    this.showSignInCode(null);
+    this.el.authWrap!.style.display = 'none';
+  }
+
+  get signInShown(): boolean { return this.el.authWrap!.style.display !== 'none'; }
+
+  /** Whether this page knows the device to be signed in, and as whom. */
+  setSignedIn(who: string | null): void {
+    this.el.signed!.style.display = who === null ? 'none' : '';
+    this.el.signedText!.textContent = who ? `서버에 ${who}(으)로 로그인됨` : '서버에 로그인됨';
   }
 
   /** Drag by the header. Pointer events so it works with a touch screen too. */
