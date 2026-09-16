@@ -52,9 +52,32 @@ says so at startup.
 
 ## Adding a provider
 
-One `@match` line. There is no per-site code: the script finds the largest
-playing `<video>`, names the media from the URL, and syncs position and play
-state. Confirmed working on YouTube (`docs/BROWSER-FINDINGS.md` §8).
+There is no per-site code: the script finds the largest playing `<video>`,
+names the media from the URL, and syncs position and play state. Confirmed
+working on YouTube (`docs/BROWSER-FINDINGS.md` §8). What a site needs said
+about it is a provider descriptor (`providers/*.json`, D7).
+
+The built-ins are compiled in, and the `@match` lines are generated from them
+at build time (`meta.txt` has a `// @match-providers` placeholder), so the sites
+the script runs on and the sites it knows cannot drift.
+
+Without rebuilding, the Tampermonkey menu has three commands:
+
+- **VideoSync: 제공자 설명 추가** — paste a descriptor; it is validated (its
+  `examples` run) and saved in the script's storage.
+- **VideoSync: 서버 제공자 설명** — what the server you last joined offers
+  (`videosyncd -providers DIR`): adopt one (pinned by sha256, with the
+  difference shown; replacing a built-in asks separately), and turn
+  auto-adopt of non-widening updates on or off for that server.
+- **VideoSync: 사용 중인 제공자 설명** — the descriptors in force, and deleting
+  your own.
+
+A userscript cannot add sites to itself. After adding a descriptor for a new
+site, the menu shows the exact `// @match` line to add to the script's header;
+until then the script does not run there, and the room does not send you there
+from another site. When the server changes a descriptor you adopted, the panel
+mentions it the next time you press play on that site, and the decision is made
+from the menu.
 
 If a site turns out to need special handling, that is a
 `ProviderAdapter` in `client/core/src/adapter/` — the seam exists for it.

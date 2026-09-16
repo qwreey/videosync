@@ -22,7 +22,8 @@ import {
 import type { ProviderState } from '../src/providers/adoption.ts';
 import { compileDescriptor, parseDescriptor } from '../src/providers/descriptor.ts';
 import {
-  adopt, autoUpdate, decline, dynamicPagePatterns, grantedBy, originsFor, removeUser, saveUser, setAutoAdopt, unadopt,
+  adopt, autoUpdate, decline, dynamicPagePatterns, grantedBy, missingMatches, originsFor, removeUser, saveUser,
+  setAutoAdopt, unadopt,
 } from '../src/providers/manage.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
@@ -490,6 +491,16 @@ describe('what a user can do with descriptors', () => {
     files.example = wider; // the server lies: the index says narrower
     const lie = await autoUpdate(on, SERVER, [await entryFor(narrower)], fetchBody);
     assert.deepEqual(lie.applied, []);
+  });
+
+  it('tells a userscript user which @match lines to add', () => {
+    const d = variant({ pageHosts: ['www.video.example', '*.video.example'] });
+    assert.deepEqual(missingMatches(d, ['https://laftel.net/*']), [
+      '// @match        https://www.video.example/*', '// @match        https://*.video.example/*',
+    ]);
+    assert.deepEqual(missingMatches(d, ['https://*.video.example/*']), []);
+    assert.deepEqual(missingMatches(variant({}), ['https://video.example/*']), ['// @match        https://*.video.example/*'],
+      'no pageHosts: every host');
   });
 
   it('turns granted match patterns into a host test', () => {

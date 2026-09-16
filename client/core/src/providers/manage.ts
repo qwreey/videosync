@@ -202,3 +202,15 @@ export function dynamicPagePatterns(reg: ProviderRegistry, granted: (hostname: s
   }
   return out;
 }
+
+/**
+ * The `@match` lines a userscript still needs for a descriptor's pages. A
+ * userscript cannot add sites to itself; the user has to, and this says
+ * exactly what to add.
+ */
+export function missingMatches(d: Descriptor, matches: readonly string[]): string[] {
+  const has = grantedBy(matches);
+  return (d.pageHosts ?? d.hosts)
+    .filter((h) => !has(h.startsWith('*.') ? `x.${h.slice(2)}` : h))
+    .map((h) => `// @match        https://${h}/*`);
+}
