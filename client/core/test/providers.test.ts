@@ -14,7 +14,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { Html5Adapter } from '../src/adapter/html5.ts';
-import { followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
+import { continuesMedia, followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
 import {
   buildRegistry, diffDescriptors, mayAutoAdopt, openOffers, parseIndex, pendingUpdates, readState,
   serverOrigin, sha256Hex, widens, writeState,
@@ -396,6 +396,42 @@ describe('the effective registry', () => {
     const free = buildRegistry({ ...EMPTY, user: [await stored(a), await stored(b)] }, () => true);
     assert.equal(free.lookup('video.example').blocked, undefined);
     assert.equal(normalizeMediaKey('https://video.example/logout', free), 'video.example:/logout');
+  });
+
+  it('decides the next episode by the descriptor in force, not a hard-coded rule (D8)', async () => {
+    const ep = (s: number, e: number) => `https://laftel.net/player/${s}/${e}`;
+    const key = (u: string, reg: ProviderRegistry) => normalizeMediaKey(u, reg)!;
+    const lf = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'laftel.json')!.source) as Descriptor;
+    const builtins = builtinRegistry();
+    assert.equal(continuesMedia(key(ep(1, 2), builtins), key(ep(1, 3), builtins), builtins), true, 'control: the built-in');
+
+    // The user's Laftel copy says nothing continues: the room is not moved.
+    const quiet = { ...lf, continues: undefined, examples: lf.examples.filter((e) => 'url' in e) };
+    delete (quiet as { continues?: unknown }).continues;
+    const noCont = buildRegistry({ ...EMPTY, user: [await stored(quiet)] }, () => true);
+    assert.equal(continuesMedia(key(ep(1, 2), noCont), key(ep(1, 3), noCont), noCont), false);
+
+    // A descriptor on another site says its own next episode continues.
+    const series = variant({
+      id: 'series', keyPrefix: 'series',
+      identity: [{ path: '/watch/{show}/{n:int}', key: '/w/{show}/{n}', watch: 'https://video.example/watch/{show}/{n}' }],
+      continues: [{ from: '/w/{show}/{n:int}', to: '/w/{show}/{m:int}' }],
+      examples: [{ url: 'https://video.example/watch/a/1', key: 'series:/w/a/1' },
+        { from: 'series:/w/a/1', to: 'series:/w/a/2', continues: true }],
+    });
+    const reg = buildRegistry({ ...EMPTY, user: [await stored(series)] }, () => true);
+    const a1 = key('https://video.example/watch/a/1', reg);
+    assert.equal(continuesMedia(a1, key('https://video.example/watch/a/2', reg), reg), true);
+    assert.equal(continuesMedia(a1, key('https://video.example/watch/b/2', reg), reg), false);
+    assert.equal(continuesMedia(a1, a1, reg), false);
+    assert.equal(continuesMedia('series:/w/a/1', 'series:/w/a/2'), false, 'without that descriptor in force, nothing continues');
+
+    // Two in force minting one prefix: neither is believed.
+    const twin = { ...series, id: 'twin', hosts: ['other.example'], canonicalHost: 'other.example',
+      identity: [{ path: '/watch/{show}/{n:int}', key: '/w/{show}/{n}', watch: 'https://other.example/watch/{show}/{n}' }],
+      examples: [{ url: 'https://other.example/watch/a/1', key: 'series:/w/a/1' }] };
+    const both = buildRegistry({ ...EMPTY, user: [await stored(series), await stored(twin)] }, () => true);
+    assert.equal(continuesMedia('series:/w/a/1', 'series:/w/a/2', both), false);
   });
 
   it('skips a stored descriptor that no longer validates, with a note', () => {
