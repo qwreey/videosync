@@ -437,6 +437,25 @@ describe('buffering', () => {
     assert.equal(hb.suspended, false, 'buffering is not absence: the room may wait for us');
   });
 
+  it('a playing element whose clock freezes at readyState 4 is a stall, not a seek', async () => {
+    // The other half of the stall guard: a decoder that stops advancing
+    // without ever dropping readyState. Dead-reckoned, the held reference
+    // walks away from the frozen position while the room keeps moving, and
+    // within a second both diffs are large -- a backward "seek" the whole room
+    // would follow. The readyState test above cannot catch this one.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(1000);
+    const before = h.tr.sentOf('cmd').length;
+    const stalls = h.engine.detector.stallDetections;
+    const read = h.player.readState.bind(h.player);
+    const frozenAt = read().positionS;
+    h.player.readState = () => ({ ...read(), positionS: frozenAt });
+    await h.vt.advance(4000);
+    assert.deepEqual(h.tr.sentOf('cmd').slice(before), [], 'a frozen element was broadcast as a seek');
+    assert.ok(h.engine.detector.stallDetections > stalls, 'the freeze was not recognised as a stall');
+  });
+
   it('holds back an unready report while the buffer is full, briefly', async () => {
     // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
     // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
@@ -579,10 +598,10 @@ describe('the element being replaced under us', () => {
     // two-diff test calls it a user seek and the whole room follows it into a
     // video nobody else is watching.
     //
-    // Note the direction. A swap to an element at 0 is absorbed for free: a
-    // BACKWARD jump makes `posMs - lastEvalPos` negative, the stall guard reads
-    // that as frozen playback and re-baselines. Only the forward case reaches
-    // the two-diff test, which is exactly why it needed a test of its own.
+    // What absorbs it is the `elementreplaced` reset, in both directions. The
+    // stall guard does not: since the detector compares the held reference
+    // even while unready or frozen (BROWSER-FINDINGS §19), a jump that is
+    // large in both diffs is a seek there too.
     const h = swapHarness();
     await join(h);
     const before = h.tr.sentOf('cmd').length;
@@ -594,10 +613,11 @@ describe('the element being replaced under us', () => {
     assert.deepEqual(sent, [], `the swap produced commands: ${JSON.stringify(sent)}`);
   });
 
-  it('the backward case is absorbed by the stall guard', async () => {
-    // Documented rather than assumed: this is why the bug above only shows up
-    // in one direction, and it would be easy to "fix" the stall guard in a way
-    // that quietly opened the second half of the hole.
+  it('the backward case is absorbed by the same element-replaced reset', async () => {
+    // A swap to an element at 0 is a 300 s BACKWARD jump. It once looked as if
+    // the stall guard absorbed that for free; it does not, and making the
+    // reset conditional on direction would broadcast every such swap as a
+    // seek to 0.
     const h = swapHarness();
     await join(h);
     const before = h.tr.sentOf('cmd').length;
