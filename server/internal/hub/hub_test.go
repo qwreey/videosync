@@ -923,18 +923,53 @@ func TestASecondHelloIsRefusedNotReprocessed(t *testing.T) {
 func TestReportedClientIDIsIgnored(t *testing.T) {
 	// Identity comes from the connection. If a report could name someone else,
 	// one member could steer another member's corrections.
-	f := start(t, nil)
+	//
+	// Replies go back on the reporter's own socket whatever the report says,
+	// so "a gets the correction" cannot tell the cases apart. What can is who
+	// the corrector is asked about: its per-client state is keyed by that id,
+	// and a wrong key is one member steering another's servo.
+	rec := &askLog{}
+	f := start(t, func(c *Config) {
+		c.NewCorrector = func() vsync.Corrector { return rec }
+	})
 	id, secret := f.createRoom("yt:abc")
 	a, _, _ := f.dial(id, secret, "a", "yt:abc")
 	b, _, _ := f.dial(id, secret, "b", "yt:abc")
 	a.await("members")
 
-	r := hb(0, 8000, nil)
-	r.ClientID = b.id
-	a.send(r)
+	// Written by hand: vsync.Report.ClientID is json:"-", so encoding a struct
+	// would never put the field on the wire at all.
+	raw := fmt.Sprintf(`{"t":"hb","clientId":%q,"residualMs":8000,"readyState":4,`+
+		`"bufferedAheadS":30,"bufferedBehindS":30,"lastAppliedSeq":0,"uncertaintyMs":10,`+
+		`"rttMs":40,"clockSamples":10}`, b.id)
+	if err := a.sock.WriteText([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
 	// The correction lands on the reporter, not on the named victim.
 	a.await("correct")
 	b.quiet(300*time.Millisecond, "correct")
+	if asked := rec.all(); len(asked) == 0 || asked[0] != a.id || len(asked) != 1 {
+		t.Fatalf("corrector was asked about %q; want exactly the reporter %q", asked, a.id)
+	}
+}
+
+// askLog is a corrector that always seeks and records who it was asked about.
+type askLog struct {
+	mu    sync.Mutex
+	asked []string
+}
+
+func (c *askLog) Name() string { return "asklog" }
+func (c *askLog) Decide(r vsync.Report, _ vsync.Anchor, _ int64, _ vsync.Tunables) vsync.Decision {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asked = append(c.asked, r.ClientID)
+	return vsync.Decision{Action: vsync.ActionSeek, Why: "asklog"}
+}
+func (c *askLog) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.asked...)
 }
 
 func TestOriginAllowlistIsEnforced(t *testing.T) {
