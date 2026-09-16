@@ -11,7 +11,8 @@ own legal access to what they are watching, and this tool cannot give it to
 them.
 
 There is **no host**. Rooms are for people who already know each other; everyone
-can play, pause and seek, and the room link is the entire access control.
+can play, pause and seek, and the room link is what lets you into a room. Who may
+use the server at all is up to you — see [Closing your server](#closing-your-server).
 
 ## Try it
 
@@ -42,6 +43,50 @@ Adding a provider is one line — a `@match` in the userscript's metadata block 
 a `content_scripts.matches` entry in the extension manifest. There is no
 per-site code: the client finds the largest playing `<video>`, names the media
 from the URL, and syncs position and play state.
+
+## Closing your server
+
+By default anyone who can reach the server can create rooms (`-auth none`).
+That is fine on a tailnet or a LAN. On a public address, turn on one or more
+sign-in methods; any one of them succeeding is enough. The panel asks for
+whatever the server accepts, and each device signs in once.
+
+| method | flags | the person signing in… |
+|---|---|---|
+| `token` | `-auth-tokens-file keys.txt` | types a shared access key. One key per line, or `sha256:<hex>` of one. Make keys random: `openssl rand -base64 24` |
+| `password` | `-auth-users-file users.txt` | types a user name and password. Write each line with `videosyncd hash-password alice` (reads the password from stdin; PBKDF2-SHA256, so htpasswd/bcrypt files cannot be used) |
+| `proxy` | `-trusted-proxies 127.0.0.1` and optionally `-auth-user-header Remote-User` | signs in to your reverse proxy or gateway (Basic auth, tinyauth, Authelia, authentik, oauth2-proxy) in a browser tab |
+| `oidc` | `-oidc-issuer https://idp.example.com -oidc-client-id videosync -oidc-client-secret-file secret.txt -public-url https://sync.example.com`, optionally `-oidc-allow email:you@example.com,group:friends` | signs in to your identity provider in a browser tab. Register `https://sync.example.com/auth/oidc/callback` with it |
+
+```bash
+./videosyncd -addr :443 -tls-cert fullchain.pem -tls-key privkey.pem \
+  -auth token -auth-tokens-file keys.txt -auth-key-file device.key
+```
+
+- **`-auth-scope create`** (the default once a method is on) gates creating
+  rooms. A friend you send an invite link to still joins without an account —
+  the room's secret is their credential. **`-auth-scope all`** makes joining
+  need a sign-in too.
+- **`-auth-key-file`** signs the tokens devices keep (`openssl rand -hex 32 >
+  device.key`). Without it, every device has to sign in again whenever the
+  server restarts, and the server says so at startup. Replacing the file signs
+  every device out. `-auth-token-ttl` (default `720h`) is how long a device
+  stays signed in.
+- The server refuses to start with a method it cannot honour — a method without
+  its file, `-auth proxy` without `-trusted-proxies`, OIDC without
+  `-public-url`.
+- **Behind a reverse proxy**, list it in `-trusted-proxies` so rate limits apply
+  to your visitors and not to the proxy. With `-auth proxy`, require sign-in at
+  the proxy for **`/api/session` and `/auth/`** only, and leave everything else
+  open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, and every
+  `OPTIONS` request. The server checks those itself; a proxy that gates a
+  preflight breaks the extension and the userscript with nothing but "Failed to
+  fetch". The proxy must overwrite any `-auth-user-header` a visitor sends, and
+  the server must not be reachable except through it.
+- The userscript makes these calls with `GM_xmlhttpRequest`; Tampermonkey asks
+  you once to allow your server's domain.
+
+The design, and what is still unmeasured, is in `docs/design/auth.md`.
 
 ## How it works, in six lines
 
