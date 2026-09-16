@@ -725,6 +725,33 @@ extension: **0 gate frames** on the wire (2–4 per run before), and the play
 numbers unchanged — presser 508–518 ms, other member 525–548 ms, no step back
 after the hold, median gap ~90 ms.
 
+## 17. The same room on YouTube
+
+`probe-laftel-room.mjs` with `MATCH='youtube\.com/watch' LABEL=youtube-room`,
+Big Buck Bunny in two windows of the same profile, after the §16 changes and
+the rate-release fix. Six trials for each way of pressing
+(`results/youtube-room.json`, `-click.json`, `-space.json`):
+
+| press | presser starts | other starts | gap 4 s later (range) |
+|---|---|---|---|
+| adapter | 506–508 ms | 515–528 ms | −178 to +15 ms |
+| Space | 505–517 ms | 518–522 ms | −194 to +143 ms |
+| click on the video | 708–727 ms | 723–730 ms | −141 to +121 ms |
+
+- **No step back after the hold, no correction seeks, no reconciles, 0 gate
+  frames**, and exactly two commands per trial, on every path.
+- A click starts both members ~200 ms later than Space does. That is YouTube
+  delaying a single click until it is sure it is not a double click (which
+  means fullscreen); the hold and the lead are unchanged.
+- In some trials the presser's element shows one transition, not three: the
+  hold finished inside one 10 ms sampling tick. `playsHeld` confirms it ran.
+- YouTube reports `readyState < 3` with buffer in hand often enough that
+  `reportsDeferred` reached 2–7 per member over a run — every one of which
+  would have been a gate frame (§16).
+- **After leaving, both players were back at rate 1.** Before the fix, two
+  Laftel tabs that had left their room were found playing at 0.997× and
+  1.036×: `stop()` never undid the servo's last nudge.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

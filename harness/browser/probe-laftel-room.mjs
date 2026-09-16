@@ -37,19 +37,23 @@ const TRIALS = +(process.env.TRIALS || 6);
 // The site path is the one users take, and the site has its own idea of
 // whether it is playing, which the hold contradicts.
 const PRESS = process.env.PRESS || 'adapter';
+// Which tabs to drive, and what to call the results. Laftel by default; the
+// same probe runs on YouTube with MATCH=youtube.com/watch LABEL=youtube-room.
+const MATCH = new RegExp(process.env.MATCH || 'laftel\\.net/player/');
+const LABEL = process.env.LABEL || 'laftel-room';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const results = { when: new Date().toISOString(), server: SERVER, press: PRESS, trials: [], summary: {}, notes: [] };
 function flush() {
   mkdirSync(join(HERE, 'results'), { recursive: true });
-  const name = PRESS === 'adapter' ? 'laftel-room.json' : `laftel-room-${PRESS}.json`;
+  const name = PRESS === 'adapter' ? `${LABEL}.json` : `${LABEL}-${PRESS}.json`;
   writeFileSync(join(HERE, 'results', name), JSON.stringify(results, null, 2));
 }
 
 async function attachAll() {
   const list = (await (await fetch(`${CDP}/json/list`)).json())
-    .filter((x) => x.type === 'page' && /laftel\.net\/player\//.test(x.url));
-  if (list.length < 2) throw new Error(`need two laftel player tabs, found ${list.length}`);
+    .filter((x) => x.type === 'page' && MATCH.test(x.url));
+  if (list.length < 2) throw new Error(`need two tabs matching ${MATCH}, found ${list.length}`);
   const out = [];
   for (const [i, t] of list.slice(0, 2).entries()) {
     const s = await new Session(t.webSocketDebuggerUrl).open();
@@ -224,7 +228,15 @@ async function main() {
   };
   console.log(JSON.stringify(results.summary));
   flush();
-  for (const m of [a, b]) { await iso(m, 'VideoSync.leave(); return true'); m.s.close(); }
+  // Leaving must hand back any rate the servo left on the player.
+  results.rateAfterLeave = {};
+  for (const m of [a, b]) {
+    await iso(m, 'VideoSync.leave(); return true');
+    results.rateAfterLeave[m.name] = await iso(m, 'return VideoSync.adapter.readState().rate');
+  }
+  console.log('rate after leave', JSON.stringify(results.rateAfterLeave));
+  flush();
+  for (const m of [a, b]) m.s.close();
 }
 
 main().then(() => process.exit(0)).catch((e) => {

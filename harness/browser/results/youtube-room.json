@@ -1,0 +1,468 @@
+{
+  "when": "2026-09-16T09:09:47.643Z",
+  "server": "http://127.0.0.1:8787",
+  "press": "adapter",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 506,
+        "otherStartsAfterMs": 528,
+        "presserNetMs": -562,
+        "gapAtEndMs": 15
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 10,
+        "gapAtEndMs": 24
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "playsHeld": 1,
+        "reportsDeferred": 3,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 11,
+            "jumpMs": 91
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 1,
+        "presserStartsAfterMs": 507,
+        "otherStartsAfterMs": 518,
+        "presserNetMs": -448,
+        "gapAtEndMs": -10
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 9,
+        "gapAtEndMs": -7
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "playsHeld": 1,
+        "reportsDeferred": 0,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 506,
+        "otherStartsAfterMs": 518,
+        "presserNetMs": -556,
+        "gapAtEndMs": -178
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 13,
+        "gapAtEndMs": -178
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "playsHeld": 2,
+        "reportsDeferred": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 8,
+            "jumpMs": -177
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 507,
+        "otherStartsAfterMs": 523,
+        "presserNetMs": -681,
+        "gapAtEndMs": -55
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 14,
+        "gapAtEndMs": -49
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "playsHeld": 2,
+        "reportsDeferred": 2,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 508,
+        "otherStartsAfterMs": 515,
+        "presserNetMs": -627,
+        "gapAtEndMs": -119
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 13,
+        "gapAtEndMs": -96
+      },
+      "presserStats": {
+        "cmdsSent": 7,
+        "playsHeld": 3,
+        "reportsDeferred": 7,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 7,
+            "jumpMs": -96
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 507,
+        "otherStartsAfterMs": 523,
+        "presserNetMs": -678,
+        "gapAtEndMs": -98
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 12,
+        "gapAtEndMs": -126
+      },
+      "presserStats": {
+        "cmdsSent": 6,
+        "playsHeld": 3,
+        "reportsDeferred": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      0,
+      0,
+      0,
+      -177,
+      0,
+      -96
+    ],
+    "playGapAtEndMs": [
+      15,
+      -10,
+      -178,
+      -55,
+      -119,
+      -98
+    ],
+    "playPresserStartsAfterMs": [
+      506,
+      507,
+      506,
+      507,
+      508,
+      507
+    ],
+    "playOtherStartsAfterMs": [
+      528,
+      518,
+      518,
+      523,
+      515,
+      523
+    ],
+    "playPresserNetMs": [
+      -562,
+      -448,
+      -556,
+      -681,
+      -627,
+      -678
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      24,
+      -7,
+      -178,
+      -49,
+      -96,
+      -126
+    ]
+  },
+  "notes": [],
+  "roomId": "Ux3wxD55cDFY6EjUOB1t7Q",
+  "clock": {
+    "a": {
+      "rttMs": 0.6000000014901161,
+      "uncertaintyMs": 0.30000000074505806
+    },
+    "b": {
+      "rttMs": 0.19999999925494194,
+      "uncertaintyMs": 0.09999999962747097
+    }
+  },
+  "traceA": [
+    {
+      "at": 24849,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "seek",
+        "positionMs": 22828,
+        "reqId": "VaHpzM450PM-1"
+      }
+    },
+    {
+      "at": 24850,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 1,
+        "when": 1789549788429,
+        "kind": "seek",
+        "reqId": "VaHpzM450PM-1",
+        "anchor": "22828P@1789549788429"
+      }
+    },
+    {
+      "at": 29263,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 22933,
+        "reqId": "VaHpzM450PM-2"
+      }
+    },
+    {
+      "at": 29269,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789549793343,
+        "kind": "play",
+        "reqId": "VaHpzM450PM-2",
+        "anchor": "22828-@1789549793343"
+      }
+    },
+    {
+      "at": 34189,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 27213,
+        "reqId": "VaHpzM450PM-3"
+      }
+    },
+    {
+      "at": 34193,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789549797769,
+        "kind": "pause",
+        "reqId": "VaHpzM450PM-3",
+        "anchor": "27213P@1789549797769"
+      }
+    },
+    {
+      "at": 40104,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789549804184,
+        "kind": "play",
+        "anchor": "27213-@1789549804184"
+      }
+    },
+    {
+      "at": 45029,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789549808608,
+        "kind": "pause",
+        "anchor": "31663P@1789549808608"
+      }
+    },
+    {
+      "at": 50941,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 31757,
+        "reqId": "VaHpzM450PM-4"
+      }
+    },
+    {
+      "at": 50949,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789549815022,
+        "kind": "play",
+        "reqId": "VaHpzM450PM-4",
+        "anchor": "31663-@1789549815022"
+      }
+    },
+    {
+      "at": 55863,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 36043,
+        "reqId": "VaHpzM450PM-5"
+      }
+    },
+    {
+      "at": 55870,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789549819444,
+        "kind": "pause",
+        "reqId": "VaHpzM450PM-5",
+        "anchor": "36043P@1789549819444"
+      }
+    },
+    {
+      "at": 61775,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789549825855,
+        "kind": "play",
+        "anchor": "36043-@1789549825855"
+      }
+    },
+    {
+      "at": 66696,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789549830275,
+        "kind": "pause",
+        "anchor": "40469P@1789549830275"
+      }
+    },
+    {
+      "at": 72605,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 40627,
+        "reqId": "VaHpzM450PM-6"
+      }
+    },
+    {
+      "at": 72609,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 10,
+        "when": 1789549836685,
+        "kind": "play",
+        "reqId": "VaHpzM450PM-6",
+        "anchor": "40469-@1789549836685"
+      }
+    },
+    {
+      "at": 77528,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 44830,
+        "reqId": "VaHpzM450PM-7"
+      }
+    },
+    {
+      "at": 77533,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 11,
+        "when": 1789549841108,
+        "kind": "pause",
+        "reqId": "VaHpzM450PM-7",
+        "anchor": "44830P@1789549841108"
+      }
+    },
+    {
+      "at": 83441,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 12,
+        "when": 1789549847520,
+        "kind": "play",
+        "anchor": "44830-@1789549847520"
+      }
+    },
+    {
+      "at": 88356,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 13,
+        "when": 1789549851936,
+        "kind": "pause",
+        "anchor": "49155P@1789549851936"
+      }
+    }
+  ],
+  "rateAfterLeave": {
+    "a": 1,
+    "b": 1
+  }
+}

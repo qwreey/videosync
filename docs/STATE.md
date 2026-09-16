@@ -47,7 +47,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 72 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
+  build step. 74 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -66,7 +66,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   | `probe-extension.mjs` | the same with the extension shim, `dump()` included | 12/12 |
   | `probe-youtube.mjs` | the real YouTube player | 9/9 |
   | `probe-laftel.mjs` | the real Laftel player, logged in, attached over CDP (not the container) | 8/8 — §14 |
-  | `probe-laftel-room.mjs` | two members on Laftel: the `play` jump, pause, the gate | 10 trials — §15 |
+  | `probe-laftel-room.mjs` | two members in one room: the `play` jump, pause, the gate; `PRESS=adapter\|click\|space`, `MATCH=` for YouTube | Laftel §15–16, YouTube §17 |
   | `probe-csp.mjs` | can a page reach a private-address server? | no — §8 |
   | `probe-ext.mjs` | what an MV3 content script may do | §9 |
   | `probe-swlife.mjs` | does the worker hold a socket? | 10 min, both arms |
@@ -206,6 +206,9 @@ Small things left from this, none blocking:
   next live run (BROWSER-FINDINGS §16).
 - A pause leaves any member within `seekToleranceMs` where they are, so the next play starts with
   that offset (the presser is re-aimed; the others are not). Measured 35–200 ms.
+- Verified on YouTube too, through the adapter, a click and Space (BROWSER-FINDINGS §17), and on
+  Laftel through its own click and Space handlers (§16) — neither site fights the hold.
+- Leaving a room now hands back the servo's playback rate (it used to stay at e.g. 1.036×).
 - The 500 ms floor itself is now only the length of the wait after pressing play. Whether it can
   come down is a question for a real two-person session over a real network, not for loopback.
 
