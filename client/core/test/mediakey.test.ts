@@ -190,6 +190,42 @@ function settlesWithin(p: Promise<unknown>, ms: number): Promise<string> {
 }
 
 describe('the HTML5 adapter', () => {
+  it('confirms a seek the browser clamped to the end', async () => {
+    // The spec clamps a seek past the end to the duration. Waiting for the
+    // exact target there waits out the whole timeout -- and every play or
+    // pause queued behind the seek waits with it.
+    const el = new FakeVideoEl(120);
+    const a = new Html5Adapter(asEl(el));
+    assert.equal(await settlesWithin(a.seekTo(50), 500), 'resolved', 'control: an in-range seek');
+    assert.equal(await settlesWithin(a.seekTo(1_000_000), 500), 'resolved', 'past the end');
+    assert.equal(await settlesWithin(a.seekTo(-5), 500), 'resolved', 'before the start');
+    // An unknown duration gives nothing to clamp to.
+    const live = new FakeVideoEl(Infinity);
+    const b = new Html5Adapter(asEl(live));
+    assert.equal(await settlesWithin(b.seekTo(30), 500), 'resolved', 'no finite duration');
+    // And a seek that lands somewhere else is still not ours.
+    const p = a.seekTo(60, 150);
+    p.catch(() => {});
+    (el as unknown as { pos: number }).pos = 0;
+    el.dispatchEvent(new Event('seeked')); // somebody else's, at 0
+    assert.equal(await settlesWithin(p, 1), 'pending', 'a seeked at another position resolved ours');
+    a.destroy();
+    b.destroy();
+  });
+
+  it('settles a pending seek when it is destroyed', async () => {
+    // The page replaced the element mid-seek; the old one will never report
+    // it. The engine's apply chain is waiting on this promise.
+    const el = new FakeVideoEl(120);
+    el.fireSeeked = false;
+    const a = new Html5Adapter(asEl(el));
+    const p = a.seekTo(50);
+    a.destroy();
+    assert.equal(await settlesWithin(p, 200), 'rejected');
+    // And a destroyed adapter does not start a seek that nothing will settle.
+    assert.equal(await settlesWithin(a.seekTo(10), 200), 'rejected');
+  });
+
   it('says whether the media has sound at all, where the browser lets it', () => {
     const cases: Array<[Record<string, unknown>, boolean | undefined]> = [
       [{}, undefined], // nothing exposed: unknown
