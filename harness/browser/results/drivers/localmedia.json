@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "id": "localmedia",
+  "keyPrefix": "local",
+  "name": "Local media (test)",
+  "version": "1.0.0",
+  "adapter": "html5",
+  "hosts": [
+    "127.0.0.1"
+  ],
+  "pageHosts": [
+    "127.0.0.1"
+  ],
+  "canonicalHost": "127.0.0.1",
+  "identity": [
+    {
+      "path": "/watch/{n:int}",
+      "key": "/watch/{n}",
+      "watch": "https://127.0.0.1/watch/{n}"
+    }
+  ],
+  "pathFallback": false,
+  "examples": [
+    {
+      "url": "http://127.0.0.1:8898/watch/2?site=x#videosync=a.b",
+      "key": "local:/watch/2",
+      "watch": "https://127.0.0.1/watch/2"
+    },
+    {
+      "url": "http://127.0.0.1:8898/",
+      "key": null
+    }
+  ],
+  "notes": "Test descriptor for harness/browser/local-media.mjs pages (BROWSER-FINDINGS 22). The watch URL is https because the grammar requires it; local-media serves http, so following by this URL does not reach it."
+}

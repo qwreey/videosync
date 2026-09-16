@@ -1,0 +1,402 @@
+{
+ "when": "2026-09-16T19:15:18.323Z",
+ "server": "http://127.0.0.1:8787",
+ "flags": "-auth token -auth-tokens-file <1 key> -auth-scope create",
+ "checks": [
+  {
+   "name": "creating a room asks to sign in",
+   "ok": true,
+   "detail": "이 서버는 로그인이 필요해요."
+  },
+  {
+   "name": "and the room was not created",
+   "ok": true,
+   "detail": "{\"state\":\"idle\",\"selfId\":\"\",\"seq\":0,\"blocked\":false,\"acquisition\":\"\",\"positionS\":0,\"paused\":true,\"readyState\":4,\"expectedMs\":null,\"mediaKey\":\"127.0.0.1:/watch/1\",\"roomMediaKey\":\"\",\"members\":0,\"waitingOn\":[],\"stats\":null}"
+  },
+  {
+   "name": "a login tab opens on the server's origin",
+   "ok": true,
+   "detail": "http://127.0.0.1:8787/auth/login?flow=…"
+  },
+  {
+   "name": "the login tab asks for the access key",
+   "ok": true,
+   "detail": "flow:hidden method:hidden key:password"
+  },
+  {
+   "name": "the tab shows the code the panel shows",
+   "ok": true,
+   "detail": "panel RSXH-9B3M"
+  },
+  {
+   "name": "the panel has no key field of its own",
+   "ok": true,
+   "detail": "[\"http://localhost:8787\",\"이름\",\"방 ID\",\"참가 비밀키\",\"메시지…\"]"
+  },
+  {
+   "name": "a wrong key is refused, and the panel keeps waiting",
+   "ok": true,
+   "detail": "{\"url\":\"/auth/login\",\"text\":\"VideoSync 로그인\\n\\nVideoSync 패널에 표시된 코드가 아래와 같을 때만 계속하세요. 다르면 이 탭을 닫으세요 — 다른 사람이 보낸 링크일 수 있어요.\\n\\nRSXH-9B3M\\n\\n키나 비밀번호가 맞지 않아요.\\n\\n접속 키\\n접속 키로 로그인\",\"again\":true}"
+  },
+  {
+   "name": "after the key, the room is created and A is in it",
+   "ok": true,
+   "detail": "room iqY0gfal1rsNFbgvKBrRfg"
+  },
+  {
+   "name": "the panel says signed in, and the sign-in box is gone",
+   "ok": true,
+   "detail": "서버에 key(으)로 로그인됨"
+  },
+  {
+   "name": "while signed in the device can get a ticket",
+   "ok": true,
+   "detail": "POST /api/ticket -> 200"
+  },
+  {
+   "name": "after signing out the device holds no token",
+   "ok": true,
+   "detail": "POST /api/ticket -> 401"
+  },
+  {
+   "name": "A stays in the room after signing out (scope create)",
+   "ok": true,
+   "detail": "{\"state\":\"joined\",\"selfId\":\"NFuNNeOZM2g\",\"seq\":0,\"blocked\":false,\"acquisition\":\"detached\",\"positionS\":0,\"paused\":true,\"readyState\":4,\"expectedMs\":0,\"mediaKey\":\"127.0.0.1:/watch/1\",\"roomMediaKey\":\"127.0.0.1:/watch/1\",\"members\":1,\"waitingOn\":[],\"stats\":{\"cmdsSent\":0,\"statesApplied\":0,\"acksApplied\":0,\"correctionsSeek\":0,\"correctionsNudge\":0,\"nudgesUnsupported\":0,\"reportsSent\":2,\"timeSamples\":5,\"reconnects\":0,\"lateApplies\":0,\"echoesSuppressed\":0,\"badFrames\":0,\"skippedOffMedia\":0,\"supersededApplies\":0,\"connectFailures\":0,\"ticketFailures\":0,\"playFailures\":0,\"playsHeld\":0,\"reportsDeferred\":0,\"reconciles\":0,\"mediaEpochs\":0,\"acquisitions\":0,\"siteMovesAbsorbed\":0,\"ungesturedIgnored\":0,\"gesturedIntents\":0,\"fought\":0,\"endsNotSent\":0,\"mediaStale\":0,\"continuations\":0,\"namings\":0,\"adoptions\":0,\"skippedAcquiring\":0}}"
+  },
+  {
+   "name": "the invite link fills in the room and secret",
+   "ok": true
+  },
+  {
+   "name": "B joins by invite link without signing in",
+   "ok": true,
+   "detail": "{\"state\":\"joined\",\"selfId\":\"eTtt5hhGNLo\",\"seq\":0,\"blocked\":false,\"acquisition\":\"detached\",\"positionS\":0,\"paused\":true,\"readyState\":4,\"expectedMs\":0,\"mediaKey\":\"127.0.0.1:/watch/1\",\"roomMediaKey\":\"127.0.0.1:/watch/1\",\"members\":2,\"waitingOn\":[],\"stats\":{\"cmdsSent\":0,\"statesApplied\":0,\"acksApplied\":0,\"correctionsSeek\":0,\"correctionsNudge\":0,\"nudgesUnsupported\":0,\"reportsSent\":0,\"timeSamples\":3,\"reconnects\":0,\"lateApplies\":0,\"echoesSuppressed\":0,\"badFrames\":0,\"skippedOffMedia\":0,\"supersededApplies\":0,\"connectFailures\":0,\"ticketFailures\":0,\"playFailures\":0,\"playsHeld\":0,\"reportsDeferred\":0,\"reconciles\":0,\"mediaEpochs\":0,\"acquisitions\":0,\"siteMovesAbsorbed\":0,\"ungesturedIgnored\":0,\"gesturedIntents\":0,\"fought\":0,\"endsNotSent\":0,\"mediaStale\":0,\"continuations\":0,\"namings\":0,\"adoptions\":0,\"skippedAcquiring\":0}}"
+  },
+  {
+   "name": "A sees two members",
+   "ok": true,
+   "detail": "{\"state\":\"joined\",\"selfId\":\"NFuNNeOZM2g\",\"seq\":0,\"blocked\":false,\"acquisition\":\"detached\",\"positionS\":0,\"paused\":true,\"readyState\":4,\"expectedMs\":0,\"mediaKey\":\"127.0.0.1:/watch/1\",\"roomMediaKey\":\"127."
+  },
+  {
+   "name": "the server logged the join and no error for it",
+   "ok": true,
+   "detail": "2026/09/17 04:15:25 [iqY0gfal1rsNFbgvKBrRfg] join eTtt5hhGNLo name=\"B\" mediaKey=\"127.0.0.1:/watch/1\" members=2 | 2026/09/17 04:15:25 [iqY0gfal1rsNFbgvKBrRfg] -> NFuNNeOZM2g {\"t\":\"members\",\"members\":[{\"id\":\"NFuNNeOZM2g\",\"name\":\"A\",\"suspended\":true,\"ready\":true},{\"id\":\"eTtt5hhGNLo\",\"name\":\"B\",\"suspended\":false,\"ready\":true}],\"joined\":\"eTtt5hhGNLo\"}"
+  }
+ ],
+ "steps": [
+  {
+   "t": "2026-09-16T19:15:20.233Z",
+   "a": "click 방 만들기",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:15:20.391Z",
+   "a": "panel after create",
+   "state": {
+    "status": "로그인이 필요해요 — 아래에서 로그인해주세요.",
+    "authShown": true,
+    "authNotice": "이 서버는 로그인이 필요해요.",
+    "code": "",
+    "signed": null,
+    "inputs": [
+     {
+      "ph": "http://localhost:8787",
+      "v": "http://127.0.0.1:8787"
+     },
+     {
+      "ph": "이름",
+      "v": "A"
+     },
+     {
+      "ph": "방 ID",
+      "v": "FjeclKvjLv7nhEQ-ctmRgw"
+     },
+     {
+      "ph": "참가 비밀키",
+      "v": "FJ-GluiIUHjEzdGG38cDDw"
+     },
+     {
+      "ph": "메시지…",
+      "v": ""
+     }
+    ]
+   }
+  },
+  {
+   "t": "2026-09-16T19:15:20.405Z",
+   "a": "click 브라우저에서 로그인",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:15:20.586Z",
+   "login": "page",
+   "page": {
+    "text": "VideoSync 로그인\n\nVideoSync 패널에 표시된 코드가 아래와 같을 때만 계속하세요. 다르면 이 탭을 닫으세요 — 다른 사람이 보낸 링크일 수 있어요.\n\nRSXH-9B3M\n접속 키\n접속 키로 로그인",
+    "fields": [
+     "flow:hidden",
+     "method:hidden",
+     "key:password"
+    ]
+   },
+   "panelCode": "RSXH-9B3M"
+  },
+  {
+   "t": "2026-09-16T19:15:22.099Z",
+   "login": "after wrong key",
+   "wrong": {
+    "url": "/auth/login",
+    "text": "VideoSync 로그인\n\nVideoSync 패널에 표시된 코드가 아래와 같을 때만 계속하세요. 다르면 이 탭을 닫으세요 — 다른 사람이 보낸 링크일 수 있어요.\n\nRSXH-9B3M\n\n키나 비밀번호가 맞지 않아요.\n\n접속 키\n접속 키로 로그인",
+    "again": true
+   },
+   "panel": {
+    "status": "로그인이 필요해요 — 아래에서 로그인해주세요.",
+    "authShown": true,
+    "authNotice": "새 탭에서 로그인하세요. 탭에 아래와 같은 코드가 보일 때만 계속하세요.",
+    "code": "RSXH-9B3M",
+    "signed": null,
+    "inputs": [
+     {
+      "ph": "http://localhost:8787",
+      "v": "http://127.0.0.1:8787"
+     },
+     {
+      "ph": "이름",
+      "v": "A"
+     },
+     {
+      "ph": "방 ID",
+      "v": "FjeclKvjLv7nhEQ-ctmRgw"
+     },
+     {
+      "ph": "참가 비밀키",
+      "v": "FJ-GluiIUHjEzdGG38cDDw"
+     },
+     {
+      "ph": "메시지…",
+      "v": ""
+     }
+    ]
+   }
+  },
+  {
+   "t": "2026-09-16T19:15:23.095Z",
+   "login": "after right key",
+   "doneText": "로그인했어요\n\n이 탭을 닫고 VideoSync 패널로 돌아가세요.",
+   "panel": {
+    "status": "연결됨",
+    "authShown": false,
+    "authNotice": "새 탭에서 로그인하세요. 탭에 아래와 같은 코드가 보일 때만 계속하세요.",
+    "code": "",
+    "signed": "서버에 key(으)로 로그인됨",
+    "inputs": [
+     {
+      "ph": "http://localhost:8787",
+      "v": "http://127.0.0.1:8787"
+     },
+     {
+      "ph": "이름",
+      "v": "A"
+     },
+     {
+      "ph": "방 ID",
+      "v": "iqY0gfal1rsNFbgvKBrRfg"
+     },
+     {
+      "ph": "참가 비밀키",
+      "v": "p5OQESt4peoYal6cbXa_tw"
+     },
+     {
+      "ph": "메시지…",
+      "v": ""
+     }
+    ]
+   },
+   "status": {
+    "state": "joined",
+    "selfId": "NFuNNeOZM2g",
+    "seq": 0,
+    "blocked": false,
+    "acquisition": "detached",
+    "positionS": 0,
+    "paused": true,
+    "readyState": 4,
+    "expectedMs": 0,
+    "mediaKey": "127.0.0.1:/watch/1",
+    "roomMediaKey": "127.0.0.1:/watch/1",
+    "members": 1,
+    "waitingOn": [],
+    "stats": {
+     "cmdsSent": 0,
+     "statesApplied": 0,
+     "acksApplied": 0,
+     "correctionsSeek": 0,
+     "correctionsNudge": 0,
+     "nudgesUnsupported": 0,
+     "reportsSent": 1,
+     "timeSamples": 3,
+     "reconnects": 0,
+     "lateApplies": 0,
+     "echoesSuppressed": 0,
+     "badFrames": 0,
+     "skippedOffMedia": 0,
+     "supersededApplies": 0,
+     "connectFailures": 0,
+     "ticketFailures": 0,
+     "playFailures": 0,
+     "playsHeld": 0,
+     "reportsDeferred": 0,
+     "reconciles": 0,
+     "mediaEpochs": 0,
+     "acquisitions": 0,
+     "siteMovesAbsorbed": 0,
+     "ungesturedIgnored": 0,
+     "gesturedIntents": 0,
+     "fought": 0,
+     "endsNotSent": 0,
+     "mediaStale": 0,
+     "continuations": 0,
+     "namings": 0,
+     "adoptions": 0,
+     "skippedAcquiring": 0
+    }
+   }
+  },
+  {
+   "t": "2026-09-16T19:15:23.113Z",
+   "a": "click 로그아웃",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:15:23.927Z",
+   "a": "ticket after sign-out",
+   "ticketAfter": {
+    "status": 401
+   }
+  },
+  {
+   "t": "2026-09-16T19:15:25.718Z",
+   "b": "panel on the invite link",
+   "panel": {
+    "status": "영상을 찾았어요. 방을 만들거나 참가하세요.",
+    "authShown": false,
+    "authNotice": "",
+    "code": "",
+    "signed": null,
+    "inputs": [
+     {
+      "ph": "http://localhost:8787",
+      "v": "http://127.0.0.1:8787"
+     },
+     {
+      "ph": "이름",
+      "v": "A"
+     },
+     {
+      "ph": "방 ID",
+      "v": "iqY0gfal1rsNFbgvKBrRfg"
+     },
+     {
+      "ph": "참가 비밀키",
+      "v": "p5OQESt4peoYal6cbXa_tw"
+     },
+     {
+      "ph": "메시지…",
+      "v": ""
+     }
+    ]
+   }
+  },
+  {
+   "t": "2026-09-16T19:15:25.728Z",
+   "b": "click 참가",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:15:26.889Z",
+   "b": "after invite",
+   "status": {
+    "state": "joined",
+    "selfId": "eTtt5hhGNLo",
+    "seq": 0,
+    "blocked": false,
+    "acquisition": "detached",
+    "positionS": 0,
+    "paused": true,
+    "readyState": 4,
+    "expectedMs": 0,
+    "mediaKey": "127.0.0.1:/watch/1",
+    "roomMediaKey": "127.0.0.1:/watch/1",
+    "members": 2,
+    "waitingOn": [],
+    "stats": {
+     "cmdsSent": 0,
+     "statesApplied": 0,
+     "acksApplied": 0,
+     "correctionsSeek": 0,
+     "correctionsNudge": 0,
+     "nudgesUnsupported": 0,
+     "reportsSent": 0,
+     "timeSamples": 3,
+     "reconnects": 0,
+     "lateApplies": 0,
+     "echoesSuppressed": 0,
+     "badFrames": 0,
+     "skippedOffMedia": 0,
+     "supersededApplies": 0,
+     "connectFailures": 0,
+     "ticketFailures": 0,
+     "playFailures": 0,
+     "playsHeld": 0,
+     "reportsDeferred": 0,
+     "reconciles": 0,
+     "mediaEpochs": 0,
+     "acquisitions": 0,
+     "siteMovesAbsorbed": 0,
+     "ungesturedIgnored": 0,
+     "gesturedIntents": 0,
+     "fought": 0,
+     "endsNotSent": 0,
+     "mediaStale": 0,
+     "continuations": 0,
+     "namings": 0,
+     "adoptions": 0,
+     "skippedAcquiring": 0
+    }
+   },
+   "panel": {
+    "status": "연결됨",
+    "authShown": false,
+    "authNotice": "",
+    "code": "",
+    "signed": null,
+    "inputs": [
+     {
+      "ph": "http://localhost:8787",
+      "v": "http://127.0.0.1:8787"
+     },
+     {
+      "ph": "이름",
+      "v": "B"
+     },
+     {
+      "ph": "방 ID",
+      "v": "iqY0gfal1rsNFbgvKBrRfg"
+     },
+     {
+      "ph": "참가 비밀키",
+      "v": "p5OQESt4peoYal6cbXa_tw"
+     },
+     {
+      "ph": "메시지…",
+      "v": ""
+     }
+    ]
+   }
+  }
+ ],
+ "roomId": "iqY0gfal1rsNFbgvKBrRfg",
+ "serverLog": [
+  "2026/09/17 04:15:25 [iqY0gfal1rsNFbgvKBrRfg] join eTtt5hhGNLo name=\"B\" mediaKey=\"127.0.0.1:/watch/1\" members=2",
+  "2026/09/17 04:15:25 [iqY0gfal1rsNFbgvKBrRfg] -> NFuNNeOZM2g {\"t\":\"members\",\"members\":[{\"id\":\"NFuNNeOZM2g\",\"name\":\"A\",\"suspended\":true,\"ready\":true},{\"id\":\"eTtt5hhGNLo\",\"name\":\"B\",\"suspended\":false,\"ready\":true}],\"joined\":\"eTtt5hhGNLo\"}"
+ ]
+}

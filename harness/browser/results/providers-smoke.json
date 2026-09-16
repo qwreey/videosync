@@ -1,0 +1,140 @@
+{
+ "when": "2026-09-16T19:18:40.971Z",
+ "server": "http://127.0.0.1:8787",
+ "flags": "-providers <dir: localmedia.json>",
+ "checks": [
+  {
+   "name": "the options page lists the server descriptor as an offer",
+   "ok": true,
+   "detail": "v1.0.0 | sha256 ab860a8d9189 | 새 설명"
+  },
+  {
+   "name": "with its hosts and hash",
+   "ok": true,
+   "detail": "Local media (test) localmedia v1.0.0 sha256 ab860a8d9189 새 설명 주소: 127.0.0.1 살펴보기 거절"
+  },
+  {
+   "name": "it is not in force before adopting",
+   "ok": true,
+   "detail": "page key 127.0.0.1:/watch/1"
+  },
+  {
+   "name": "reviewing shows the difference and an apply button",
+   "ok": true,
+   "detail": "{\"rows\":6,\"buttons\":[\"살펴보기\",\"거절\",\"적용\",\"닫기\"]}"
+  },
+  {
+   "name": "applying it succeeds",
+   "ok": true,
+   "detail": "Local media (test) v1.0.0을(를) 적용했어요 (sha256 ab860a8d9189). 사이트 권한이 필요하면 위에서 허용하고, 열려 있는 페이지는 새로고침하세요."
+  },
+  {
+   "name": "the offer now reads \"in use\"",
+   "ok": true,
+   "detail": "v1.0.0 | sha256 ab860a8d9189 | 사용 중"
+  },
+  {
+   "name": "and it is listed among the descriptors in force, as a server one",
+   "ok": true,
+   "detail": "Local media (test) localmedia 서버 v1.0.0 sha256 ab860a8d9189 사이트 권한 있음 주소: 127.0.0.1 · 실행 페이지: 127.0.0.1"
+  },
+  {
+   "name": "a local-media page now keys by the adopted descriptor",
+   "ok": true,
+   "detail": "page key local:/watch/1"
+  },
+  {
+   "name": "a room created there carries the new key",
+   "ok": true,
+   "detail": "room I22NpSnh7MIK4tqjIYhl-Q key local:/watch/1"
+  },
+  {
+   "name": "stopping it puts the page back on the generic key",
+   "ok": true,
+   "detail": "page key 127.0.0.1:/watch/1"
+  }
+ ],
+ "steps": [
+  {
+   "t": "2026-09-16T19:18:41.391Z",
+   "page": "before",
+   "key": "127.0.0.1:/watch/1"
+  },
+  {
+   "t": "2026-09-16T19:18:41.832Z",
+   "opt": "click 불러오기",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:18:41.990Z",
+   "opt": "offer card",
+   "card": {
+    "text": "Local media (test)\nlocalmedia\nv1.0.0\nsha256 ab860a8d9189\n새 설명\n주소: 127.0.0.1\n살펴보기\n거절",
+    "tags": [
+     "v1.0.0",
+     "sha256 ab860a8d9189",
+     "새 설명"
+    ],
+    "buttons": [
+     "살펴보기",
+     "거절"
+    ]
+   },
+   "status": "1개를 받았어요."
+  },
+  {
+   "t": "2026-09-16T19:18:41.993Z",
+   "opt": "click 살펴보기",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:18:42.150Z",
+   "opt": "review",
+   "diff": {
+    "rows": 6,
+    "buttons": [
+     "살펴보기",
+     "거절",
+     "적용",
+     "닫기"
+    ]
+   },
+   "status": "Local media (test): 차이를 확인하고 적용하세요."
+  },
+  {
+   "t": "2026-09-16T19:18:42.154Z",
+   "opt": "click 적용",
+   "clicked": true
+  },
+  {
+   "t": "2026-09-16T19:18:42.619Z",
+   "opt": "after apply",
+   "applied": "Local media (test) v1.0.0을(를) 적용했어요 (sha256 ab860a8d9189). 사이트 권한이 필요하면 위에서 허용하고, 열려 있는 페이지는 새로고침하세요.",
+   "tags": [
+    "v1.0.0",
+    "sha256 ab860a8d9189",
+    "사용 중"
+   ]
+  },
+  {
+   "t": "2026-09-16T19:18:45.141Z",
+   "page": "after adopt + reload",
+   "key": "local:/watch/1"
+  },
+  {
+   "t": "2026-09-16T19:18:45.144Z",
+   "page": "dump",
+   "dump": {
+    "providerNotes": null,
+    "providerConflict": null
+   }
+  },
+  {
+   "t": "2026-09-16T19:18:47.122Z",
+   "opt": "click 사용 중지",
+   "stopped": true,
+   "status": "Local media (test): 서버 설명을 더 이상 쓰지 않아요."
+  }
+ ],
+ "extensionId": "eemappapipandejabdcibddpdomgmkpd"
+}
