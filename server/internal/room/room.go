@@ -223,6 +223,12 @@ func (r *Room) Leave(now int64, id string) {
 	if f, ok := r.corrector.(Forgetter); ok {
 		f.Forget(id)
 	}
+	if len(r.members) == 0 {
+		// Nobody is left to start playing for. Released here, a held play
+		// would run the anchor of an empty room for the whole idle TTL, and
+		// whoever came back would land minutes past where everyone stopped.
+		r.held = nil
+	}
 	// Jellyfin's anti-hang rule: a member who leaves while buffering counts as
 	// ready, so a dropped connection cannot freeze the room.
 	r.releaseGate(now)

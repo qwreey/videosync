@@ -139,3 +139,49 @@ func TestAPauseOutsideAnyLeadStopsWhereThePauserStopped(t *testing.T) {
 		t.Fatalf("anchor %+v, want paused at the pauser's 602900", got)
 	}
 }
+
+// --- the gate and an emptying room -------------------------------------------
+
+// holdPlay leaves a room of a and b with b buffering and a's play held.
+func holdPlay(t *testing.T) *Room {
+	t.Helper()
+	c := &scripted{}
+	r, _ := newRoom(c, vsync.Anchor{PositionMs: 10_000, AtServerMs: 0, Paused: true})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	c.action = vsync.ActionGate
+	unready := report(0, 0)
+	unready.ReadyState = 1
+	r.OnReport(100, "b", unready)
+	r.OnCmd(200, "a", Cmd{ReqID: "go", Kind: "play"})
+	if !r.Held() {
+		t.Fatal("the play was not held; the test measures nothing")
+	}
+	return r
+}
+
+// Jellyfin's anti-hang rule releases a held play when the member it waited
+// on leaves. When that member was the last one, the play used to go through
+// into a room with nobody in it, and the anchor ran for the whole idle TTL:
+// whoever came back found the room minutes past where everyone had stopped.
+func TestAHeldPlayIsNotReleasedIntoAnEmptyRoom(t *testing.T) {
+	r := holdPlay(t)
+	r.Leave(300, "a")
+	r.Leave(400, "b")
+	if got := r.Anchor(); !got.Paused {
+		t.Fatalf("an empty room started playing: %+v (seq %d)", got, r.Seq())
+	}
+	if r.Held() {
+		t.Fatal("an empty room still holds a play for whoever joins next")
+	}
+}
+
+// The control: a room that still has members DOES get the held play when the
+// member it waited for leaves.
+func TestAHeldPlayIsReleasedWhenTheBufferingMemberLeaves(t *testing.T) {
+	r := holdPlay(t)
+	r.Leave(300, "b")
+	if got := r.Anchor(); got.Paused {
+		t.Fatalf("the held play was dropped although a is still here: %+v", got)
+	}
+}
