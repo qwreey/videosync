@@ -22,7 +22,7 @@ import {
 import type { ProviderState } from '../src/providers/adoption.ts';
 import { compileDescriptor, parseDescriptor } from '../src/providers/descriptor.ts';
 import {
-  adopt, autoUpdate, decline, dynamicPagePatterns, grantedBy, missingMatches, originsFor, removeUser, saveUser,
+  adopt, autoUpdate, autoUpdateStored, decline, dynamicPagePatterns, grantedBy, missingMatches, originsFor, removeUser, saveUser,
   setAutoAdopt, unadopt,
 } from '../src/providers/manage.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
@@ -491,6 +491,56 @@ describe('what a user can do with descriptors', () => {
     files.example = wider; // the server lies: the index says narrower
     const lie = await autoUpdate(on, SERVER, [await entryFor(narrower)], fetchBody);
     assert.deepEqual(lie.applied, []);
+  });
+
+  it('applies an automatic update over what the user changed while it was fetching, and writes only the pin', async () => {
+    const v1 = JSON.stringify(BASE);
+    const narrower = JSON.stringify(variant({ version: '1.0.1', video: { exclude: ['.ad'] } }));
+    const pinned = await adopt(EMPTY, SERVER, await entryFor(v1), v1, false);
+    assert.ok(pinned.ok);
+    const on = setAutoAdopt(pinned.state, SERVER, true);
+    const index = [await entryFor(narrower)];
+    const userDesc = JSON.stringify(variant({ id: 'mine', name: 'Mine', hosts: ['mine.example'],
+      identity: [{ path: '/v/{id}', key: '/v/{id}', watch: 'https://mine.example/v/{id}' }],
+      canonicalHost: 'mine.example', examples: [{ url: 'https://mine.example/v/a', key: 'mine:/v/a' }] }));
+    const withUser = await saveUser(on, userDesc);
+    assert.ok(withUser.ok);
+
+    /** Stored state, and a user who acts while the file is being fetched. */
+    async function run(start: ProviderState, meanwhile: (s: ProviderState) => ProviderState | Promise<ProviderState>) {
+      const kv = new Map<string, string>();
+      writeState((k, v) => kv.set(k, v), start);
+      const writes: string[] = [];
+      const load = (k: string, fb = '') => kv.get(k) ?? fb;
+      const pending = await autoUpdateStored(() => readState(load), (k, v) => { writes.push(k); kv.set(k, v); },
+        SERVER, index, async () => {
+          writeState((k, v) => kv.set(k, v), await meanwhile(readState(load)));
+          return narrower;
+        });
+      return { state: readState(load), writes, pending };
+    }
+
+    // Nobody interferes: applied, and only the pin is written.
+    const plain = await run(withUser.state, (s) => s);
+    assert.equal(plain.state.adopted[0]!.source, narrower);
+    assert.deepEqual(plain.writes, ['providers.adopted']);
+    assert.deepEqual(plain.pending, []);
+
+    // The user deletes their own descriptor meanwhile: it stays deleted.
+    const deleted = await run(withUser.state, (s) => removeUser(s, 'mine'));
+    assert.equal(deleted.state.user.length, 0, 'a deleted user descriptor came back');
+    assert.equal(deleted.state.adopted[0]!.source, narrower);
+
+    // Stops using it meanwhile: not re-adopted, and nothing offered.
+    const dropped = await run(withUser.state, (s) => unadopt(s, 'example'));
+    assert.deepEqual(dropped.state.adopted, [], 'an unadopted descriptor came back');
+    assert.deepEqual(dropped.pending, []);
+
+    // Turns auto-adopt off meanwhile: it stays off, and the update waits.
+    const off = await run(withUser.state, (s) => setAutoAdopt(s, SERVER, false));
+    assert.equal(off.state.servers['https://sync.example']?.autoAdopt, false, 'auto-adopt was turned back on');
+    assert.equal(off.state.adopted[0]!.source, v1);
+    assert.deepEqual(off.pending.map((e) => e.id), ['example']);
   });
 
   it('tells a userscript user which @match lines to add', () => {

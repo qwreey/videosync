@@ -7,7 +7,7 @@
  * nothing -- are written, and tested, once.
  */
 import {
-  diffDescriptors, mayAutoAdopt, pendingUpdates, serverOrigin, sha256Hex,
+  diffDescriptors, mayAutoAdopt, pendingUpdates, serverOrigin, sha256Hex, STORE_KEYS,
 } from './adoption.ts';
 import type { FieldChange, IndexEntry, ProviderState } from './adoption.ts';
 import { parseDescriptor } from './descriptor.ts';
@@ -213,4 +213,46 @@ export function missingMatches(d: Descriptor, matches: readonly string[]): strin
   return (d.pageHosts ?? d.hosts)
     .filter((h) => !has(h.startsWith('*.') ? `x.${h.slice(2)}` : h))
     .map((h) => `// @match        https://${h}/*`);
+}
+
+/**
+ * `autoUpdate` against stored state that other places change meanwhile (the
+ * options page, the userscript menu, another tab), and write back only what
+ * it applied.
+ *
+ * The index and the files are fetched between reading the state and writing
+ * it, and whatever the user did in that time wins: a pin that was dropped or
+ * changed, or auto-adopt turned off, is left alone. Only the `adopted` key is
+ * written -- rewriting the user's own descriptors and the server preferences
+ * from the copy read before the fetch would undo a deletion made in between.
+ * `read` must return the state as stored now, each time it is called.
+ */
+export async function autoUpdateStored(
+  read: () => ProviderState | Promise<ProviderState>,
+  save: (key: string, value: string) => void,
+  server: string, index: readonly IndexEntry[], fetchBody: (id: string) => Promise<string>,
+): Promise<IndexEntry[]> {
+  const before = await read();
+  const r = await autoUpdate(before, server, index, fetchBody);
+  if (!r.applied.length) return r.pending;
+  const origin = serverOrigin(server);
+  const now = await read();
+  const pending = [...r.pending];
+  let adopted = now.adopted;
+  let changed = false;
+  for (const id of r.applied) {
+    const was = before.adopted.find((a) => a.id === id && a.server === origin);
+    const got = r.state.adopted.find((a) => a.id === id && a.server === origin);
+    const cur = now.adopted.find((a) => a.id === id && a.server === origin);
+    if (!was || !got || !cur) continue; // unadopted meanwhile: nothing to update, nothing to offer
+    if (cur.sha256 !== was.sha256 || cur.source !== was.source || now.servers[origin]?.autoAdopt !== true) {
+      const e = index.find((x) => x.id === id);
+      if (e && cur.sha256 !== e.sha256) pending.push(e);
+      continue;
+    }
+    adopted = adopted.map((a) => (a === cur ? { ...a, source: got.source, sha256: got.sha256 } : a));
+    changed = true;
+  }
+  if (changed) save(STORE_KEYS.adopted, JSON.stringify(adopted));
+  return pending;
 }
