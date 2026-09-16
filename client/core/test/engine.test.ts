@@ -479,6 +479,23 @@ describe('reconnect', () => {
     assert.equal(h.tr.connects, connects + 1);
   });
 
+  it('reconnects with the secret the room rotated to, not the one it joined with', async () => {
+    // The server replaces the secret on rotation and checks every hello
+    // against the new one. Sending the old one gets `join_refused`, which ends
+    // the session for good -- for everybody whose link blips afterwards,
+    // including whoever pressed rotate.
+    const h = harness();
+    await h.join();
+    h.tr.deliver({ t: 'secret', secret: 'NEW', rotated: 'other-1' });
+    h.tr.drop('link blip');
+    await h.vt.advance(1000);
+    h.tr.open();
+    const hellos = h.tr.sentOf('hello');
+    assert.equal(hellos.length, 2);
+    assert.equal(hellos[0]!.secret, 's');
+    assert.equal(hellos[1]!.secret, 'NEW', 'reconnected with a secret the server no longer accepts');
+  });
+
   it('does not reconnect after a clean stop', async () => {
     const h = harness();
     await h.join();

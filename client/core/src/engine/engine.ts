@@ -283,6 +283,11 @@ export class SyncEngine {
    * deadlocks silently and forever (`content.ts:87-104`).
    */
   private applyingRemote = false;
+  /**
+   * The current room secret: the one joined with, until the room rotates it.
+   * Every reconnect's `hello` is checked against the server's CURRENT secret.
+   */
+  private secret: string;
 
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
@@ -360,6 +365,7 @@ export class SyncEngine {
     this.ev = events;
     this.localMediaKey = cfg.mediaKey;
     this.localMediaUrl = cfg.mediaUrl ?? '';
+    this.secret = cfg.secret;
     this.pendingAdopt = cfg.adoptLocalStateOnJoin;
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
@@ -468,7 +474,9 @@ export class SyncEngine {
     this.reconnectAttempt = 0;
     this.setStatus('joining');
     this.tx({
-      t: 'hello', room: this.cfg.room, secret: this.cfg.secret,
+      // Not `cfg.secret`: after a rotation the server accepts only the new one,
+      // and a refused reconnect ends the session for good.
+      t: 'hello', room: this.cfg.room, secret: this.secret,
       name: this.cfg.name,
       // The CURRENT media, not the one we joined with: a reconnect after a
       // navigation would otherwise announce the wrong thing.
@@ -603,6 +611,7 @@ export class SyncEngine {
         break;
 
       case 'secret':
+        this.secret = f.secret;
         this.ev.onSecretRotated?.(f.secret, f.rotated);
         break;
 
