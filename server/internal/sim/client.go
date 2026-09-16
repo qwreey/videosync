@@ -44,12 +44,23 @@ type ClientProfile struct {
 	// JoinAtMs is when this member joins. A late joiner arrives with zero clock
 	// samples, so every confidence-gated correction refuses to act -- the
 	// member most in need of correction is the one that cannot be corrected.
+	// Its player has not been running before then: it starts from StartPos
+	// when the member joins, wherever the room is.
 	JoinAtMs int64
-	// Disconnects are [start, end) windows where nothing reaches this member
-	// and nothing leaves. On reconnect it holds a stale anchor and, because its
-	// residual is measured AGAINST that stale anchor, reports ~0 while being
-	// arbitrarily out of position.
+	// Disconnects are [start, end) windows where the connection is gone. The
+	// member leaves the room at the start (the corrector forgets it, the gate
+	// releases it) and joins again at the end with a welcome carrying the
+	// room's current seq and anchor, a fresh clock and a fresh detector -- the
+	// path the engine and the hub actually take. Its video keeps playing
+	// throughout.
 	Disconnects [][2]int64
+	// DropsDown are [start, end) windows where the connection stays up and no
+	// frame reaches this member. That is the only way to end up holding a
+	// stale anchor -- which, because the residual is measured AGAINST that
+	// anchor, reports ~0 while arbitrarily out of position. A WebSocket does
+	// not do this on its own (the hub closes a connection whose outbox
+	// overflows); it is the case the stale-anchor resend is a backstop for.
+	DropsDown [][2]int64
 }
 
 // Client is a simulated player plus the client half of the sync protocol.
@@ -72,6 +83,10 @@ type Client struct {
 	bestRTT      int64
 	haveOffset   bool
 	clockSamples int
+
+	// --- session ---
+	joined      bool
+	connectedAt int64 // start of the current session; probes run fast after it
 
 	// --- sync state ---
 	anchor         vsync.Anchor
@@ -209,6 +224,39 @@ func (c *Client) Offline(serverMs int64) bool {
 		}
 	}
 	return false
+}
+
+// dropsDown reports whether a frame to this member is lost right now.
+func (c *Client) dropsDown(serverMs int64) bool {
+	for _, w := range c.P.DropsDown {
+		if serverMs >= w[0] && serverMs < w[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// Joined reports whether this member has ever been in the room.
+func (c *Client) Joined() bool { return c.joined }
+
+// Welcome is the start of a session: the room's seq and anchor as the welcome
+// frame carries them. Like the engine, it does not move the player -- the
+// clock has not settled, and the first reports bring it in.
+func (c *Client) Welcome(seq uint64, a vsync.Anchor, serverMs int64) {
+	c.anchor = a
+	c.lastAppliedSeq = seq
+	c.connectedAt = serverMs
+	c.joined = true
+}
+
+// Disconnect is the end of a session, and throws away what the engine throws
+// away: queued transitions, the clock estimate (measured over a socket that no
+// longer exists) and the detector's history.
+func (c *Client) Disconnect() {
+	c.pending = nil
+	c.haveOffset, c.clockSamples, c.bestRTT, c.estOffsetMs = false, 0, 0, 0
+	c.haveEvalPos, c.stallSuspected = false, false
+	c.residualHist = nil
 }
 
 func (c *Client) inSuspendWindow(serverMs int64) bool {

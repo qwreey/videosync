@@ -30,6 +30,18 @@ func NewServer(c vsync.Corrector, t vsync.Tunables, start vsync.Anchor) *Server 
 	return &Server{Room: room.New("sim", c, t, start, sink), sink: sink}
 }
 
+// Connect and Disconnect are the hub's join and leave: membership changes that
+// can themselves send frames (a leave releases the gate and announces it).
+func (s *Server) Connect(now int64, net *Network, id string) {
+	s.sink.net, s.sink.now = net, now
+	s.Join(now, id, id)
+}
+
+func (s *Server) Disconnect(now int64, net *Network, id string) {
+	s.sink.net, s.sink.now = net, now
+	s.Leave(now, id)
+}
+
 func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string]*Client) {
 	s.sink.net, s.sink.now = net, now
 	switch v := e.msg.(type) {

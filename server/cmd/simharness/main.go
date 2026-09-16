@@ -104,8 +104,11 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
-			// A member offline across a seek comes back holding a stale anchor
-			// and reports residual ~0 against it.
+			// A member offline across a seek. It leaves, rejoins with a welcome
+			// carrying the new anchor, and has to be corrected 560 s forward.
+			// (Until POC-FINDINGS 41 the harness kept it joined and dropped its
+			// frames, so it came back on a stale anchor -- a state a reconnect
+			// cannot produce.)
 			Name: "reconnect", Seed: 31, DurationMs: 90000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
