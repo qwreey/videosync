@@ -30,6 +30,18 @@ function audiblyPlaying(v: VideoLike): boolean {
   return !v.paused && v.readyState >= 1 && !v.muted && v.volume > 0;
 }
 
+const area = (v: VideoLike): number => (v.videoWidth || 0) * (v.videoHeight || 0);
+
+/**
+ * How much larger another picture must be to take over from a quiet current
+ * element. The size is intrinsic -- the rendition being streamed, not the
+ * layout -- so an adaptive player's picture moves by 2.25x between 720p and
+ * 1080p on its own, and comparable players must not trade places over that.
+ * A 320x180 banner against a 720p feature is 16x. The cost of the margin: a
+ * feature still on a 360p start-up rendition loses to a paused 1080p element.
+ */
+const OUTCLASSED = 4;
+
 /**
  * Choose the element the user is watching.
  *
@@ -38,28 +50,35 @@ function audiblyPlaying(v: VideoLike): boolean {
  * hover-preview must never win over the paused feature presentation.
  *
  * `current` is the element already chosen, and it is kept while it is still
- * on the page with media loaded, unless another element is audibly playing
- * and it is not. Every change of element resets the detector and moves the
- * new element to the room's state, so switching on anything less -- the
- * feature pausing with the room, or dipping to readyState 1 during a seek
- * while a preview runs -- moves the room onto a preview and swallows the
- * user's seek.
+ * on the page with media loaded, unless it is not audibly playing and another
+ * element either is, or has a picture more than `OUTCLASSED` times larger.
+ * Every change of element resets the detector and moves the new element to
+ * the room's state, so switching on anything less -- the feature pausing with
+ * the room, or dipping to readyState 1 during a seek while a preview runs --
+ * moves the room onto a preview and swallows the user's seek.
+ *
+ * The area escape is what lets a wrong first pick go. A banner that was on
+ * the page before the feature would otherwise be held until the user presses
+ * play with sound on the feature, and swapping elements at that moment resets
+ * the detector, so the play is never reported and the room's paused state is
+ * applied over it.
  */
 export function pickVideo<T extends VideoLike>(videos: readonly T[], current: T | null = null): T | null {
   let best: T | null = null;
   let bestScore = -1;
   for (const v of videos) {
-    const area = (v.videoWidth || 0) * (v.videoHeight || 0);
     const playing = audiblyPlaying(v) ? 1 : 0;
     // Area dominates within a playing/not-playing tier; readyState only breaks
     // ties between elements that have not reported a size yet.
-    const score = playing * 1e12 + area * 10 + Math.min(v.readyState, 4);
+    const score = playing * 1e12 + area(v) * 10 + Math.min(v.readyState, 4);
     if (score > bestScore) { bestScore = score; best = v; }
   }
   if (current && best !== current && current.readyState >= 1 && videos.includes(current)) {
     // `videos` comes from the live document, so membership means "still on
     // the page". readyState 0 means its media was taken away.
-    if (!(best && audiblyPlaying(best) && !audiblyPlaying(current))) return current;
+    if (audiblyPlaying(current) || !best) return current;
+    if (audiblyPlaying(best) || area(best) > OUTCLASSED * area(current)) return best;
+    return current;
   }
   return best;
 }

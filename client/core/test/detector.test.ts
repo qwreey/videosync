@@ -319,6 +319,71 @@ describe('SeekDetector', () => {
     }
   });
 
+  test('a long gap widens the stall range only for an element that was playing through it', () => {
+    // The allowance for "played for part of the gap, then froze" exists only
+    // when there was playback to account for. An element that was paused, or
+    // already stalled, at the previous evaluation cannot have moved on its own
+    // -- so a forward jump smaller than gap*rate is still the user seeking.
+    // The jump is sized to fit inside that allowance, or the test says nothing.
+    const gap = 4000;
+    const jumpMs = 3000;
+
+    // Paused: a seek drops readyState, so it is judged by the stall branch.
+    {
+      const d = new SeekDetector(visible);
+      let t = 0;
+      const pos = 100_000;
+      for (let i = 0; i < 5; i++) {
+        d.evaluate(state({ positionS: pos / 1000, paused: true }), pos, t);
+        t += 1000;
+      }
+      t += gap - 1000;
+      const { observation } = d.evaluate(
+        state({ positionS: (pos + jumpMs) / 1000, paused: true, readyState: 1, bufferedAheadS: 0 }), pos, t,
+      );
+      assert.equal(observation.kind, 'seek', `a ${jumpMs} ms seek on a paused element read as ${observation.kind}`);
+    }
+
+    // Already stalled: the readiness gate holds the room at the stalled
+    // position, and the user seeks forward while the element is still unready.
+    {
+      const d = new SeekDetector(visible);
+      let t = 0;
+      let pos = 100_000;
+      for (let i = 0; i < 5; i++) {
+        d.evaluate(state({ positionS: pos / 1000 }), pos, t);
+        t += 1000;
+        pos += 1000;
+      }
+      pos -= 1000; // froze right after the last evaluation
+      const stalled = d.evaluate(state({ positionS: pos / 1000, readyState: 2, bufferedAheadS: 0 }), pos, t);
+      assert.equal(stalled.observation.kind, 'stall', 'setup: the element should be stalled');
+      t += gap;
+      const { observation } = d.evaluate(
+        state({ positionS: (pos + jumpMs) / 1000, readyState: 1, bufferedAheadS: 0 }), pos, t,
+      );
+      assert.equal(observation.kind, 'seek', `a ${jumpMs} ms seek on a stalled element read as ${observation.kind}`);
+    }
+
+    // Control: the same move after the element played through the gap is
+    // playback that stopped, not a seek.
+    {
+      const d = new SeekDetector(visible);
+      let t = 0;
+      let pos = 100_000;
+      for (let i = 0; i < 5; i++) {
+        d.evaluate(state({ positionS: pos / 1000 }), pos, t);
+        t += gap;
+        pos += gap;
+      }
+      pos -= gap;
+      const { observation } = d.evaluate(
+        state({ positionS: (pos + jumpMs) / 1000, readyState: 2, bufferedAheadS: 0 }), pos + gap + 1500, t,
+      );
+      assert.equal(observation.kind, 'stall', `control: playback then a stall read as ${observation.kind}`);
+    }
+  });
+
   test('slope measures the rate error and is immune to a constant offset', () => {
     const d = new SeekDetector(visible);
     // The element runs 1% slow: residual grows by 10 ms per second. A constant

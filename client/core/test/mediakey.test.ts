@@ -141,6 +141,26 @@ describe('picking the element the user is watching', () => {
     assert.equal(pickVideo([loaded], gone), loaded, 'the current element left the document');
   });
 
+  it('gives up a wrong first pick for a far larger picture', () => {
+    // A banner that was on the page first gets picked first. Holding on to it
+    // leaves the feature unwatched until the user presses play with sound --
+    // and swapping elements at that moment undoes the play.
+    const banner = v({ videoWidth: 320, videoHeight: 180, paused: true, readyState: 4 });
+    const paused = v({ videoWidth: 1920, videoHeight: 1080, paused: true, readyState: 4 });
+    const mutedPlaying = v({ videoWidth: 1920, videoHeight: 1080, paused: false, readyState: 4, muted: true });
+    assert.equal(pickVideo([banner, paused], banner), paused, 'paused feature');
+    assert.equal(pickVideo([banner, mutedPlaying], banner), mutedPlaying, 'muted feature');
+    const sized0 = v({ paused: true, readyState: 1 });
+    assert.equal(pickVideo([sized0, paused], sized0), paused, 'current has no picture at all');
+    // Controls: stickiness still holds between comparable pictures, and
+    // nothing takes over from an element the user is listening to.
+    const hd = v({ videoWidth: 1280, videoHeight: 720, paused: true, readyState: 4 });
+    assert.equal(pickVideo([hd, paused], hd), hd, '720p current, 1080p other: not outclassed');
+    const listening = v({ videoWidth: 320, videoHeight: 180, paused: false, readyState: 4 });
+    assert.equal(pickVideo([listening, paused], listening), listening, 'audible current');
+    assert.equal(pickVideo([listening, mutedPlaying], listening), listening, 'audible current, muted feature');
+  });
+
   it('prefers the largest picture among elements that are all paused', () => {
     // A hover-preview must never win over the feature presentation.
     const preview = v({ videoWidth: 320, videoHeight: 180, readyState: 4 });
@@ -250,6 +270,9 @@ describe('the HTML5 adapter', () => {
     const live = new FakeVideoEl(Infinity);
     const b = new Html5Adapter(asEl(live));
     assert.equal(await settlesWithin(b.seekTo(30), 500), 'resolved', 'no finite duration');
+    // ...but the start still clamps: a live stream corrected to a negative
+    // position lands on 0.
+    assert.equal(await settlesWithin(b.seekTo(-5), 500), 'resolved', 'before the start, no finite duration');
     // And a seek that lands somewhere else is still not ours.
     const p = a.seekTo(60, 150);
     p.catch(() => {});
@@ -283,6 +306,14 @@ describe('the HTML5 adapter', () => {
       [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 0 }, undefined], // nothing decoded yet
       [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, false], // picture, no sound
       [{ webkitAudioDecodedByteCount: 800, webkitVideoDecodedByteCount: 5000 }, true],
+      // Before metadata, Firefox's "no audio" is only "not loaded yet".
+      [{ readyState: 0, mozHasAudio: false }, undefined],
+      [{ readyState: 0, audioTracks: { length: 0 } }, undefined],
+      // Protected media may be decoded where the audio counter is not kept:
+      // no sound counted there is not evidence of no sound.
+      [{ mediaKeys: {}, webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, undefined],
+      [{ mediaKeys: {}, webkitAudioDecodedByteCount: 800, webkitVideoDecodedByteCount: 5000 }, true],
+      [{ mediaKeys: null, webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, false],
     ];
     for (const [props, want] of cases) {
       const el = Object.assign(new FakeVideoEl(), props);

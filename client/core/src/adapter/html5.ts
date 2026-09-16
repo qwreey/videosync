@@ -70,7 +70,7 @@ export class Html5Adapter implements ProviderAdapter {
       readyState: this.el.readyState,
       muted: this.el.muted || this.el.volume === 0,
       hasAudio: this.hasAudio(),
-      durationS:Number.isFinite(this.el.duration) ? this.el.duration : 0,
+      durationS: Number.isFinite(this.el.duration) ? this.el.duration : 0,
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
@@ -81,10 +81,19 @@ export class Html5Adapter implements ProviderAdapter {
    * Whether the media has an audio track, from whichever non-standard signal
    * this browser exposes; undefined when there is none to read.
    *
-   * Chrome exposes only decode counters, so "no audio" there means pictures
-   * have been decoded and sound has not. Before anything is decoded the answer
-   * is unknown, not "silent": the detector treats unknown as audible, which is
-   * the safe side (see `SeekDetector`).
+   * Unknown is the safe answer: the detector counts it as sound, and calling
+   * sound silent would read a real media-key pause in a hidden tab as the
+   * browser's suspension (see `SeekDetector`). So only an answer the signal
+   * can actually support is given:
+   *  - Firefox's `mozHasAudio` and `audioTracks` say false before metadata
+   *    has loaded, which is not knowledge;
+   *  - Chrome exposes only decode counters, so "no audio" there means
+   *    pictures have been decoded and sound has not. That is only trusted for
+   *    clear media. Protected media can be decoded outside the renderer (a
+   *    decrypt-and-decode CDM, hardware-secure playback), where nothing says
+   *    the audio counter is kept -- and Laftel, the main target, is
+   *    protected. Positive evidence of sound is trusted either way. None of
+   *    this is measured beyond clear media (BROWSER-FINDINGS §5).
    */
   private hasAudio(): boolean | undefined {
     const el = this.el as HTMLVideoElement & {
@@ -93,12 +102,16 @@ export class Html5Adapter implements ProviderAdapter {
       webkitAudioDecodedByteCount?: number;
       webkitVideoDecodedByteCount?: number;
     };
-    if (typeof el.mozHasAudio === 'boolean') return el.mozHasAudio;
-    if (el.audioTracks && typeof el.audioTracks.length === 'number') return el.audioTracks.length > 0;
+    const haveMetadata = el.readyState >= 1;
+    if (typeof el.mozHasAudio === 'boolean') return haveMetadata ? el.mozHasAudio : undefined;
+    if (el.audioTracks && typeof el.audioTracks.length === 'number') {
+      return haveMetadata ? el.audioTracks.length > 0 : undefined;
+    }
     const audio = el.webkitAudioDecodedByteCount;
     const video = el.webkitVideoDecodedByteCount;
     if (typeof audio === 'number' && audio > 0) return true;
-    if (typeof audio === 'number' && typeof video === 'number' && video > 0) return false;
+    const clear = el.mediaKeys == null;
+    if (clear && typeof audio === 'number' && typeof video === 'number' && video > 0) return false;
     return undefined;
   }
 
