@@ -25,6 +25,9 @@ export class Html5Adapter implements ProviderAdapter {
 
   private readonly listeners = new Map<AdapterEvent, Set<() => void>>();
   private readonly domHandlers: Array<[string, EventListener]> = [];
+  /** Seeks still waiting for `seeked`; calling one rejects and cleans it up. */
+  private readonly pendingSeeks = new Set<() => void>();
+  private destroyed = false;
 
   private readonly el: HTMLVideoElement;
 
@@ -66,11 +69,37 @@ export class Html5Adapter implements ProviderAdapter {
       rate: this.el.playbackRate,
       readyState: this.el.readyState,
       muted: this.el.muted || this.el.volume === 0,
-      durationS: Number.isFinite(this.el.duration) ? this.el.duration : 0,
+      hasAudio: this.hasAudio(),
+      durationS:Number.isFinite(this.el.duration) ? this.el.duration : 0,
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
     };
+  }
+
+  /**
+   * Whether the media has an audio track, from whichever non-standard signal
+   * this browser exposes; undefined when there is none to read.
+   *
+   * Chrome exposes only decode counters, so "no audio" there means pictures
+   * have been decoded and sound has not. Before anything is decoded the answer
+   * is unknown, not "silent": the detector treats unknown as audible, which is
+   * the safe side (see `SeekDetector`).
+   */
+  private hasAudio(): boolean | undefined {
+    const el = this.el as HTMLVideoElement & {
+      mozHasAudio?: boolean;
+      audioTracks?: { length: number };
+      webkitAudioDecodedByteCount?: number;
+      webkitVideoDecodedByteCount?: number;
+    };
+    if (typeof el.mozHasAudio === 'boolean') return el.mozHasAudio;
+    if (el.audioTracks && typeof el.audioTracks.length === 'number') return el.audioTracks.length > 0;
+    const audio = el.webkitAudioDecodedByteCount;
+    const video = el.webkitVideoDecodedByteCount;
+    if (typeof audio === 'number' && audio > 0) return true;
+    if (typeof audio === 'number' && typeof video === 'number' && video > 0) return false;
+    return undefined;
   }
 
   /**
@@ -79,22 +108,41 @@ export class Html5Adapter implements ProviderAdapter {
    * caller that assumes completion is wrong exactly when it matters most.
    */
   seekTo(positionS: number, timeoutMs = 10_000): Promise<void> {
+    if (this.destroyed) return Promise.reject(new Error('seek on a destroyed adapter'));
     return new Promise<void>((resolve, reject) => {
       let timer = 0;
+      const settle = (err: Error | null) => {
+        this.el.removeEventListener('seeked', done);
+        clearTimeout(timer);
+        this.pendingSeeks.delete(abandon);
+        if (err) reject(err); else resolve();
+      };
       const done = () => {
         // A `seeked` from somebody else -- the user dragging the scrubber, or
         // the site's own player -- must not resolve OUR seek. Two promises
         // resolving on one event is how a superseded transition finishes after
         // the one that replaced it.
-        if (Math.abs(this.el.currentTime - positionS) > 0.5) return;
-        this.el.removeEventListener('seeked', done);
-        clearTimeout(timer);
-        resolve();
+        //
+        // Compared against where the browser actually puts us: per spec a
+        // target past the end lands on the duration, one before the start on
+        // 0. Against the raw target that `seeked` never matches, and the whole
+        // apply queue waits out the timeout behind it.
+        const d = this.el.duration;
+        const lands = Number.isFinite(d) && d > 0
+          ? Math.min(Math.max(positionS, 0), d)
+          : Math.max(positionS, 0);
+        if (Math.abs(this.el.currentTime - lands) > 0.5) return;
+        settle(null);
       };
+      // The adapter is being let go of -- the page replaced the element, and
+      // the old one may never report this seek. The engine's apply queue is
+      // waiting on it and must not wait out the timeout for an element nobody
+      // is watching any more.
+      const abandon = () => { settle(new Error(`seek to ${positionS}s abandoned: element replaced`)); };
+      this.pendingSeeks.add(abandon);
       this.el.addEventListener('seeked', done);
       timer = setTimeout(() => {
-        this.el.removeEventListener('seeked', done);
-        reject(new Error(`seek to ${positionS}s did not complete within ${timeoutMs}ms`));
+        settle(new Error(`seek to ${positionS}s did not complete within ${timeoutMs}ms`));
       }, timeoutMs) as unknown as number;
       this.el.currentTime = positionS;
     });
@@ -114,6 +162,8 @@ export class Html5Adapter implements ProviderAdapter {
   setRate(rate: number): void { this.el.playbackRate = rate; }
 
   destroy(): void {
+    this.destroyed = true;
+    for (const abandon of [...this.pendingSeeks]) abandon();
     for (const [type, h] of this.domHandlers) this.el.removeEventListener(type, h);
     this.domHandlers.length = 0;
     this.listeners.clear();

@@ -16,25 +16,50 @@ export interface VideoLike {
   readonly duration: number;
   readonly paused: boolean;
   readonly readyState: number;
+  readonly muted: boolean;
+  readonly volume: number;
+}
+
+/**
+ * Something the user evidently chose to watch: running, with sound. A muted
+ * autoplaying preview is running too, and is exactly what must not count.
+ * readyState 1 still counts -- a seek drops to it, and a seek is the user
+ * watching.
+ */
+function audiblyPlaying(v: VideoLike): boolean {
+  return !v.paused && v.readyState >= 1 && !v.muted && v.volume > 0;
 }
 
 /**
  * Choose the element the user is watching.
  *
- * Order: something that is playing beats something that is not; then the
+ * Order: something audibly playing beats something that is not; then the
  * largest picture; then the one furthest along in loading. A muted 320x180
  * hover-preview must never win over the paused feature presentation.
+ *
+ * `current` is the element already chosen, and it is kept while it is still
+ * on the page with media loaded, unless another element is audibly playing
+ * and it is not. Every change of element resets the detector and moves the
+ * new element to the room's state, so switching on anything less -- the
+ * feature pausing with the room, or dipping to readyState 1 during a seek
+ * while a preview runs -- moves the room onto a preview and swallows the
+ * user's seek.
  */
-export function pickVideo<T extends VideoLike>(videos: readonly T[]): T | null {
+export function pickVideo<T extends VideoLike>(videos: readonly T[], current: T | null = null): T | null {
   let best: T | null = null;
   let bestScore = -1;
   for (const v of videos) {
     const area = (v.videoWidth || 0) * (v.videoHeight || 0);
-    const playing = !v.paused && v.readyState >= 2 ? 1 : 0;
+    const playing = audiblyPlaying(v) ? 1 : 0;
     // Area dominates within a playing/not-playing tier; readyState only breaks
     // ties between elements that have not reported a size yet.
     const score = playing * 1e12 + area * 10 + Math.min(v.readyState, 4);
     if (score > bestScore) { bestScore = score; best = v; }
+  }
+  if (current && best !== current && current.readyState >= 1 && videos.includes(current)) {
+    // `videos` comes from the live document, so membership means "still on
+    // the page". readyState 0 means its media was taken away.
+    if (!(best && audiblyPlaying(best) && !audiblyPlaying(current))) return current;
   }
   return best;
 }
@@ -98,7 +123,7 @@ export class PageWatcher {
   };
 
   readonly check = (): void => {
-    const el = pickVideo(Array.from(this.d.doc.querySelectorAll('video')));
+    const el = pickVideo(Array.from(this.d.doc.querySelectorAll('video')), this.lastEl);
     const href = this.d.win.location.href;
     if (el === this.lastEl && href === this.lastHref) return;
     this.lastEl = el;
