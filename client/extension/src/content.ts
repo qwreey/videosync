@@ -2,8 +2,8 @@
  * VideoSync — browser extension content script.
  *
  * The same three injected pieces the userscript provides, with different
- * answers: storage is `chrome.storage.local`, the transport relays through the
- * service worker, and almost nothing is unreachable — because the worker is
+ * answers: storage is `chrome.storage.local`, the transport and every HTTP call
+ * go through the service worker, and almost nothing is unreachable — because the worker is
  * exempt from the private-address block that stops a userscript talking to a
  * server on your own machine (docs/BROWSER-FINDINGS.md §8, §9).
  *
@@ -12,14 +12,17 @@
  */
 import { start } from '@videosync/core/app/bootstrap.ts';
 import type { Platform, Store } from '@videosync/core/app/bootstrap.ts';
+import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
 
 import { PortTransport } from './porttransport.ts';
+import type { WorkerRequest } from './relay.ts';
 
 const PREFIX = 'videosync.';
 // Every key the app reads must be listed: only these are hydrated, and a key
 // that is saved but not listed is written and then never seen again -- which is
 // exactly how following the room to its video first lost the session.
-const KEYS = ['server', 'room', 'secret', 'name', 'rejoin'] as const;
+// (No device token among them: that lives in the worker, see tokens.ts.)
+const KEYS = ['server', 'room', 'secret', 'name', 'rejoin', 'authScope'] as const;
 
 /**
  * `chrome.storage` is async and the panel is built before anything can await,
@@ -59,39 +62,56 @@ function wsUrl(serverUrl: string): string {
  */
 const OPEN_PANEL = ['videosync-panel:closed'][0] === 'videosync-panel:open';
 
-const platform = async (): Promise<Platform> => ({
-  store: await hydrate(),
-  openPanel: OPEN_PANEL,
-  makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
-  async createRoom(serverUrl, mediaKey, mediaUrl) {
-    const url = new URL('/api/rooms', serverUrl).toString();
-    const r = await new Promise<{ ok: boolean; status: number; body: string; error?: string }>((res) => {
-      chrome.runtime.sendMessage(
-        { t: 'createRoom', url, body: JSON.stringify({ mediaKey, mediaUrl }) },
-        (out) => res(out ?? { ok: false, status: 0, body: '', error: String(chrome.runtime.lastError?.message) }),
-      );
-    });
-    if (!r.ok) throw new Error(r.error ?? `서버가 ${r.status}로 거절했어요`);
-    return JSON.parse(r.body) as { roomId: string; secret: string };
-  },
-  /**
-   * Only the one case the worker cannot fix. A private address is fine here --
-   * that is the whole point of the extension -- but the worker still cannot
-   * reach a plaintext server from a page it has no permission for, and a bad
-   * URL is worth catching before it becomes a hang.
-   */
-  unreachable(serverUrl) {
-    try {
-      const u = new URL(serverUrl);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-        return '서버 주소는 http:// 나 https:// 로 시작해야 해요.';
+async function platform(): Promise<Platform> {
+  const store = await hydrate();
+  return {
+    store,
+    openPanel: OPEN_PANEL,
+    makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
+    /**
+     * The worker makes the call against the server the settings store holds
+     * -- it takes a path from here, never a URL -- so the server this call is
+     * for is written there first, and the write is waited for.
+     */
+    async authFetch(serverUrl, path, req) {
+      if (store.load('server', '') !== serverUrl) store.save('server', serverUrl);
+      await store.flush?.();
+      return new Promise<AuthResponse>((res) => {
+        try {
+          chrome.runtime.sendMessage({ t: 'auth', server: serverUrl, path, req } satisfies WorkerRequest, (out?: AuthResponse) => {
+            res(out ?? { status: 0, body: '', error: String(chrome.runtime.lastError?.message ?? 'no reply') });
+          });
+        } catch (e) {
+          // The extension was reloaded under this tab.
+          res({ status: 0, body: '', error: String(e) });
+        }
+      });
+    },
+    /** Through the worker: a tab it opens is not the popup blocker's business. */
+    openTab(url) {
+      try {
+        void chrome.runtime.sendMessage({ t: 'openTab', url } satisfies WorkerRequest);
+      } catch { /* the extension was reloaded under this tab */ }
+    },
+    /**
+     * Only the one case the worker cannot fix. A private address is fine here --
+     * that is the whole point of the extension -- but the worker still cannot
+     * reach a plaintext server from a page it has no permission for, and a bad
+     * URL is worth catching before it becomes a hang.
+     */
+    unreachable(serverUrl) {
+      try {
+        const u = new URL(serverUrl);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+          return '서버 주소는 http:// 나 https:// 로 시작해야 해요.';
+        }
+      } catch {
+        return '서버 주소를 이해할 수 없어요.';
       }
-    } catch {
-      return '서버 주소를 이해할 수 없어요.';
-    }
-    return null;
-  },
-});
+      return null;
+    },
+  };
+}
 
 void (async () => {
   const app = start(await platform());

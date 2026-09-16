@@ -77,6 +77,12 @@ Join is refused with `{"t":"error","code":"join_refused"}` for both an unknown r
 secret — deliberately the same message, so an unauthenticated peer cannot probe which room ids
 exist. A full room is refused with `code:"room_full"`.
 
+With `-auth-scope all` (§8), `hello` also carries `"ticket":"<single-use ticket>"`. The ticket is
+spent **before** the room is looked up, and a missing, unknown, expired or already-spent one is
+refused with `{"t":"error","code":"auth_required"}` — its own code, not `join_refused`, so a
+client can tell "sign in" from "check the room ID", and still nothing about which rooms exist. In
+any other scope a `ticket` is ignored.
+
 ### Amendment: the room says where its media is
 
 `mediaKey` is lossy on purpose (`yt:abc`, `laftel:/player/45462/93304`), so a room could say *what*
@@ -445,7 +451,9 @@ Rooms: >=128-bit CSPRNG id, rotatable join secret (the no-host replacement for "
 idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control this design has.
 
 Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"...","mediaUrl":"..."}` returns
-`{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`.
+`{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`. With access control
+on (§8) the body also carries `"ticket"`, `/healthz` adds `"auth":{"methods":[...],"scope":"..."}`,
+and a creation without a live ticket is `401 {"error":"auth_required","methods":[...]}`.
 
 Both endpoints send **CORS** headers, and this is not a nicety: a userscript or
 a content script always runs on the OTT site's origin and never on the sync
@@ -456,6 +464,11 @@ bare `TypeError: Failed to fetch` naming neither CORS nor the origin. With no
 credentials are involved: the room secret travels in the `hello` frame, never in
 a cookie. The WebSocket upgrade is **not** subject to CORS; it is governed by
 the `Origin` allowlist instead.
+
+The preflight allows `Content-Type, Authorization`. The sign-in endpoints (§8) carry a bearer header,
+and `Access-Control-Allow-Headers: *` would **not** cover `Authorization`. A bearer header is not a
+CORS credential, and nothing under `/api` reads a cookie, so `*` stays sound with access control on;
+`Access-Control-Allow-Credentials` is never sent.
 
 Rotation:
 
@@ -490,12 +503,61 @@ the readiness gate does for the command it holds.
 ### Errors
 
 `{"t":"error","code":"<stable machine-readable>","msg":"<for humans>"}`. Codes in use:
-`join_refused`, `room_full`, `already_joined`, `bad_frame`, `bad_kind`, `bad_cmd`, `rate_limited`.
+`join_refused`, `room_full`, `already_joined`, `bad_frame`, `bad_kind`, `bad_cmd`, `rate_limited`,
+`auth_required` (§2, §8). A client treats `auth_required` like `join_refused` — the session ends,
+no reconnect — and asks the member to sign in.
 
 An unknown frame type is answered with `bad_frame` and the connection **stays open** — a client
 from a newer build must not be able to kill its own session by sending something we have not heard
 of. The decoder accepts client-originated types only: a `state`, `ack` or `correct` arriving from a
 client is `bad_frame`, because either would move room state without passing the per-room mutex.
+
+## 8. Server access (D6)
+
+Opt-in (`-auth`, default `none`: none of this exists and nothing is gated). Design:
+`docs/design/auth.md`. It is a separate layer from room access, which stays the room id + secret.
+
+Whatever authenticates a person, the server hands out two credentials of its own:
+
+- a **device token** — `base64url(json).base64url(HMAC-SHA256)`, payload
+  `{"v":1,"sub","via","iat","exp"}` (ms). Stateless; kept by the client, sent only to `/api/ticket`.
+  Refused once expired, once the signing key changes, or once the method named in `via` is turned off.
+- a **ticket** — random, single-use, 60 s, in memory. Spent by `POST /api/rooms` (body `ticket`)
+  and, with `-auth-scope all`, by `hello` (`ticket`).
+
+| endpoint | request | answers |
+|---|---|---|
+| `GET /healthz` | — | adds `"auth":{"methods":["token","password","proxy","oidc"],"scope":"create"\|"all"}` |
+| `POST /api/session` | `Authorization: Bearer <access key>`, or `Basic` (user:password, or any user with the key as password), or no credentials through a trusted proxy | `200 {"token","expiresMs","sub"}`; `401 {"error":"auth_failed","methods"}` (never a `WWW-Authenticate: Basic`, which would make a browser draw its own dialog) |
+| `POST /api/ticket` | `Authorization: Bearer <device token>` — **only** that | `200 {"ticket","expiresMs"}`; `401 {"error":"auth_required","methods"}` |
+| `POST /api/auth/begin` | — | `200 {"loginUrl","pollId","code","expiresMs"}`; `404 {"error":"no_browser_login"}` without `oidc` or `proxy` |
+| `POST /api/auth/poll` | `{"pollId"}` | `200 {"pending":true}`; once: `200 {"token","expiresMs","sub"}` or `403 {"error":"login_denied","msg"}`; then `404 {"error":"login_expired"}` |
+| `GET /auth/login?flow=<id>` | a browser tab | the login page: shows `code`, offers the enabled browser methods, sets `vs_flow_<id>` (`Path=/auth/`, `HttpOnly`, `SameSite=Lax`) |
+| `POST /auth/login` | form `flow`, the flow cookie, through the trusted proxy | completes a `proxy` login. Cross-origin POSTs refused (`http.CrossOriginProtection`) |
+| `GET /auth/oidc/start?flow=<id>` | the flow cookie | `302` to the IdP: code flow, PKCE S256, `state`, `nonce` |
+| `GET /auth/oidc/callback` | the IdP's redirect, the flow cookie | exchanges the code at the token endpoint (TLS), checks the ID token, completes the flow |
+
+The sign-in answers carry `Cache-Control: no-store`; every JSON endpoint above is CORS-wrapped like
+`/api/rooms` and answers its own `OPTIONS`. `429 {"error":"rate_limited","retryMs"}` with
+`Retry-After` comes from a per-client token bucket on `session`, `ticket`, `begin` and `poll`; the
+client is the TCP peer, or — only when that peer is in `-trusted-proxies` — the rightmost
+`X-Forwarded-For` hop that is not itself a trusted proxy.
+
+The **browser login** is the one path for `oidc`, for a `proxy` gateway that wants a login, and for
+every shim, with no identity permission: begin, open `loginUrl` in a tab, poll every 2 s. The flow
+lives 5 minutes, its result is handed out once, the poll id never appears in a URL, and the page
+shows the same `code` the client shows, so a login link someone else sent can be recognised.
+
+**The proxy vouches only where it gates** (`/api/session`, `/auth/login`). `/api/ticket` accepts a
+device token and nothing else: a client's ticket request carries a bearer header that a Basic or
+cookie gateway would reject, so the gateway must leave that path open — and "came through the
+proxy" is then true of every request.
+
+**OIDC**: the server is the only relying party (confidential client). The ID token comes from the
+token endpoint over validated TLS and its signature is not verified (OIDC Core §3.1.3.7 allows
+this for the code flow); `iss` (exactly the configured issuer, which discovery must also name),
+`aud` ∋ client id, `azp` (when present, or when `aud` has several values), `exp`, `iat` (within 10
+min), `nonce` and `sub` are checked. Every IdP URL must be https for that reason.
 
 ## Constants (v0 — all tunable, all to be validated by the sim harness)
 

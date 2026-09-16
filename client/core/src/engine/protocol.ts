@@ -27,6 +27,8 @@ export interface HelloFrame {
   mediaKey: string;
   /** Only the first member's is kept -- see `mediaKey`. */
   mediaUrl?: string;
+  /** A server-access ticket, when the server gates joining. Single-use. */
+  ticket?: string;
 }
 
 export interface TimeFrame {
@@ -165,7 +167,7 @@ export interface MediaMismatchFrame {
 export interface SecretFrame { t: 'secret'; secret: string; rotated: string }
 
 export type ErrorCode =
-  | 'join_refused' | 'room_full' | 'already_joined'
+  | 'join_refused' | 'room_full' | 'already_joined' | 'auth_required'
   | 'bad_frame' | 'bad_kind' | 'bad_cmd' | 'rate_limited';
 
 export interface ErrorFrame { t: 'error'; code: ErrorCode | string; msg?: string }

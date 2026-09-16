@@ -13,19 +13,34 @@
  * inside the measured round trip, where min-RTT sampling already accounts for
  * it and it simply widens `uncertaintyMs` by half the hop.
  */
+import type { AuthPath, AuthRequest, AuthResponse } from '@videosync/core/app/authfetch.ts';
 import type { ClientFrame, ServerFrame } from '@videosync/core/engine/protocol.ts';
 
 export type ToWorker =
   | { t: 'open'; url: string }
   | { t: 'send'; frame: ClientFrame }
-  | { t: 'close' }
-  | { t: 'fetch'; url: string; body: string };
+  | { t: 'close' };
 
 export type FromWorker =
   | { t: 'open.ok' }
   | { t: 'frame'; frame: ServerFrame }
-  | { t: 'closed'; clean: boolean; reason: string }
-  | { t: 'fetch.ok'; id: number; status: number; body: string }
-  | { t: 'fetch.err'; id: number; error: string };
+  | { t: 'closed'; clean: boolean; reason: string };
+
+/**
+ * One-shot messages (`chrome.runtime.sendMessage`).
+ *
+ * `auth` names a path, never a URL: the worker builds the URL from the server
+ * the settings store holds, and answers with an `AuthResponse`. `server` is
+ * only compared with that, so a call cannot land on a server another tab has
+ * just switched the store to.
+ */
+export type WorkerRequest =
+  | { t: 'auth'; server: string; path: AuthPath; req: AuthRequest }
+  | { t: 'openTab'; url: string };
+
+export type WorkerAuthReply = AuthResponse;
 
 export const PORT_NAME = 'videosync';
+
+/** The settings store's key for the server URL (`content.ts` PREFIX + 'server'). */
+export const SERVER_KEY = 'videosync.server';

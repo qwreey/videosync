@@ -11,6 +11,9 @@
 // @match        https://laftel.net/*
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @grant        GM_openInTab
+// @connect      *
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -25,6 +28,12 @@
 // WebSocket. Most OTT sites ship a `connect-src` that does not list your
 // self-hosted server, so the socket would simply be refused. Granting any GM
 // API moves the script into the userscript sandbox, which has its own CSP.
+//
+// GM_xmlhttpRequest carries every HTTP call to your server -- room creation,
+// sign-in, tickets -- from Tampermonkey's background, where the page's CSP and
+// CORS do not apply and your sign-in token stays out of the page. The server is
+// yours to choose, so it cannot be named here: `@connect *` makes Tampermonkey
+// ask you once per server before the first call.
 //
 // @noframes because an embedded player in an iframe would otherwise mount a
 // second panel and a second member for the same person.

@@ -68,6 +68,15 @@ Granting any GM API moves the script into the userscript sandbox, which has its
 own CSP. Removing those lines will break the script in a way that looks like a
 network problem.
 
+`GM_xmlhttpRequest` and `@connect *` carry every HTTP call to your server —
+room creation, and signing in if your server asks for it (see the top-level
+README). It runs outside the page, so the page's CSP and CORS do not apply and
+the sign-in token (kept with `GM_setValue`) never enters the page. Your server is
+yours to choose, so the metadata cannot name it: Tampermonkey asks once per
+server. `GM_openInTab` opens a login tab when the server signs people in
+through a browser. Without the grants the script falls back to the page's
+`fetch` and keeps no token past the page.
+
 ## The room link is the whole security model
 
 There is no host and no moderation — the room is for people who already know

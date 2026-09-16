@@ -81,14 +81,85 @@ never holds it.
 - Tailnet or LAN: nothing (`-auth none`), extension.
 - Public, simplest: `-auth token -auth-tokens-file keys.txt` with TLS.
 - Public, accounts: `-auth password`.
-- Behind Caddy/nginx Basic or a forward-auth gateway: gate `/api/session`, `/api/ticket`,
-  `/api/auth/*` and `/auth/*` at the proxy; **leave `/ws`, `/healthz`, `/api/providers` and every
-  `OPTIONS` unauthenticated** (a gated preflight fails as a bare `Failed to fetch`); run
-  `-auth proxy -trusted-proxies <proxy address>`.
+- Behind Caddy/nginx Basic or a forward-auth gateway: gate `/api/session` and `/auth/*` at the
+  proxy; **leave `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/*`, `/api/providers`
+  and every `OPTIONS` unauthenticated** (a gated preflight fails as a bare `Failed to fetch`); run
+  `-auth proxy -trusted-proxies <proxy address>`. *(As built: the design first gated `/api/ticket`
+  and `/api/auth/*` too; see below.)*
 - An IdP: `-auth oidc` with the flags above; register `<public-url>/auth/oidc/callback`.
+
+## As built (2026-09-17)
+
+Server: `server/internal/auth` (+ `hub` wiring, `videosyncd` flags and `hash-password`). Client:
+`client/core/src/app/authfetch.ts` (the privileged side's HTTP policy, run by both shims),
+`client/core/src/app/auth.ts` (the app's flow), the panel's sign-in section, the engine's ticket
+source. Wire details in `docs/PROTOCOL.md` §8. Where this departs from the text above, or decides
+what it left open:
+
+- **The proxy vouches only where it gates.** `POST /api/ticket` takes a device token and nothing
+  else — not "or trusted proxy" as the table says. A client's ticket request carries its bearer
+  token, which a Basic or cookie gateway in front would reject, so the gateway has to leave
+  `/api/ticket` open; if coming through the proxy counted as signed in there, that open path would
+  sign in everyone. The proxy's word counts on `/api/session` and `/auth/login`. The recipe
+  changes accordingly: gate **`/api/session` and `/auth/*`** at the proxy, and leave `/api/ticket`,
+  `/api/auth/*`, `/api/rooms`, `/ws`, `/healthz` and every `OPTIONS` open. A trusted-network client
+  loses nothing: it takes its device token from `/api/session` with no credentials, which the
+  client tries on its own before prompting when `proxy` is enabled.
+- **`Platform.authFetch(serverUrl, path, req)`** replaces `Platform.createRoom`, so the shims still
+  differ in three pieces: storage, transport, HTTP. It takes the server because the userscript has
+  nowhere else to get it. The extension's background builds the URL from the server in the
+  settings store and a fixed path list, and fails a call whose `server` does not match the store
+  (two tabs on different servers must not cross). Tokens are keyed by origin and only ever sent to
+  the origin that issued them, and only on `/api/ticket`.
+- **Where the device token lives.** Extension: the background's own IndexedDB — not
+  `chrome.storage.local`, which content scripts read and whose access level the settings store
+  needs as it is; not `storage.session`, which dies with the browser. Userscript: GM storage;
+  without the grant, memory only (never the page's `localStorage`). `authfetch.ts` strips the token
+  from every answer before the app sees it; the app handles tickets only.
+- **`/healthz` is read lazily.** A server with access control off costs nothing extra: no health
+  check, no ticket, and a connect stays synchronous. A refused creation or `hello` makes the client
+  read `/healthz`, remember the scope per origin (store key `authScope`), and retry once; a
+  remembered `all` fetches a ticket before the first `hello`. So the first join to an `all` server
+  on a fresh profile costs one refused `hello`.
+- **The ticket for room creation** travels in the JSON body (`ticket`), as in `hello`.
+- **Sign-out** is `DELETE /api/session` inside `authFetch` and never reaches the server: the
+  server keeps no sessions, so signing out is forgetting the token.
+- **The login page** is Korean like the panel, is not frameable, and offers what applies: an
+  account button (`GET /auth/oidc/start`, which the table did not list) and, for a request that
+  came through the trusted proxy, a confirm button (`POST /auth/login`, under
+  `http.CrossOriginProtection`). The code is 8 characters from a 27-letter alphabet without
+  lookalikes or vowels.
+- **`-oidc-allow`** entries are `sub:<id>`, `email:<addr>`, `group:<name>`, or bare (matched
+  against sub and email). An email counts only if the IdP does not say it is unverified. The
+  `groups` scope is requested only when a `group:` entry exists, since some IdPs refuse scopes the
+  client was not configured with. With no `-oidc-allow` the server logs that anyone the IdP accepts
+  can use it. Discovery is fetched on first use and cached for an hour; the token call uses
+  `client_secret_basic` unless the IdP advertises only `client_secret_post`; the RP never follows a
+  redirect from the IdP's endpoints.
+- **Device-token `sub`** is display-only: the user name for `password`, `key` for `token`, the
+  proxy's user header or `proxy`, and `preferred_username`/`email`/`sub` for OIDC.
+- **Limits.** Per client: session 5 then 1 per 2 s, ticket 20 then 2/s, begin 5 then 1 per 5 s,
+  poll 30 then 2/s. Concurrent PBKDF2 checks are capped at half the CPUs, and an unknown user is
+  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 1 000
+  logins in progress. `-trusted-proxies` without `-auth` does nothing and says so; no per-address
+  room-creation limit was built (F39 is closed by the ticket instead).
+- **No cookies from the privileged side.** The background and the userscript call with
+  `credentials: 'omit'` / `anonymous` and `redirect: 'manual'`: a gateway's redirect or HTML
+  answer is reported as "a gateway wants a login" (and does not drop the token), which leads to
+  the tab flow. So the first open question below is moot for the shipped flow — cached proxy
+  credentials and gateway cookies are never relied on — though a gateway that gates the tab page
+  still needs its own browser login, which is the point.
+- **Login tabs** are opened by the extension's background (`tabs.create`, no permission needed)
+  and by `GM_openInTab`, so no popup blocker is involved after the `begin` round trip.
+- **`/api/providers`** does not exist on this branch. `auth.Server.ConsumeTicket` and `Refuse`
+  are what the providers work should call to gate listing under `-auth-scope create`.
 
 ## Open, to measure before documenting
 
 - Does the extension background's `fetch` send cached proxy Basic credentials or gateway cookies?
 - tinyauth's answer (302 vs 401 + `X-Tinyauth-Location`) to a non-navigating client.
-- Real Tampermonkey `GM_xmlhttpRequest` (still unverified in this project).
+- Real Tampermonkey `GM_xmlhttpRequest` (still unverified in this project), including whether it
+  honours `redirect: 'manual'` and how `@connect *` asks.
+- Nothing of the client flow has run in a browser: the extension background's IndexedDB and
+  `tabs.create` (Chromium and Firefox MV2), the panel's sign-in section, and a real IdP. All of it
+  is tested against fakes and, for the wire, against a real `videosyncd` (`test-e2e`).

@@ -149,6 +149,24 @@ export interface EngineDeps {
   setTimer(fn: () => void, ms: number): number;
   clearTimer(h: number): void;
   isHidden(): boolean;
+  /**
+   * A server-access ticket for the next `hello`, fetched before every connect
+   * (docs/design/auth.md). '' when the server wants none; a plain string
+   * (not a promise) when the answer is known without asking.
+   *
+   * A ticket is single-use and lives a minute, so one is never kept for a
+   * reconnect. A rejection whose `code` is `auth_required` means signing in
+   * is needed: the session is refused, like a wrong secret, rather than
+   * retried into the same answer. Any other rejection is a network failure
+   * and takes the ordinary reconnect path. Absent, a connect is exactly what
+   * it always was.
+   */
+  ticket?(): Promise<string> | string;
+}
+
+/** What a ticket source rejects with when only signing in can help. */
+export function isAuthRequired(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'auth_required';
 }
 
 interface Scheduled {
@@ -338,6 +356,14 @@ export class SyncEngine {
   private secret: string;
   /** Our own commands on their way back, oldest first. See `OWN_ACK_WAIT_MS`. */
   private unacked: OwnCmd[] = [];
+  /** The ticket for the `hello` about to be sent, spent by sending it. */
+  private ticket = '';
+  /**
+   * Bumped by every connect and by `stop()`. A ticket arrives
+   * asynchronously, and one that lands after its connect was abandoned must
+   * not open a socket.
+   */
+  private connectGen = 0;
   /** A click to sync arrived when there was no session to sync to. */
   private gestureRetryPending = false;
 
@@ -531,12 +557,52 @@ export class SyncEngine {
     this.pending = [];
     this.unacked = [];
     this.gestureRetryPending = false;
+    this.connectGen++;
+    this.ticket = '';
     this.d.transport.close();
     this.setStatus('closed');
   }
 
   private connect(): void {
     this.setStatus('connecting');
+    const gen = ++this.connectGen;
+    if (!this.d.ticket) {
+      this.openTransport();
+      return;
+    }
+    let got: Promise<string> | string;
+    try {
+      got = this.d.ticket();
+    } catch (e) {
+      got = Promise.reject(e);
+    }
+    if (typeof got === 'string') {
+      // Known without asking -- usually '' for a server that wants none -- so
+      // the connect stays synchronous, exactly as without a ticket source.
+      this.ticket = got;
+      this.openTransport();
+      return;
+    }
+    got.then((t) => {
+      if (gen !== this.connectGen || !this.running) return;
+      this.ticket = t;
+      this.openTransport();
+    }, (e: unknown) => {
+      if (gen !== this.connectGen || !this.running) return;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isAuthRequired(e)) {
+        // Nothing a retry can fix: the same request gets the same answer
+        // until somebody signs in. The app decides what happens then.
+        this.setStatus('refused', 'auth_required');
+        this.ev.onError?.('auth_required', msg);
+        return;
+      }
+      this.stats.connectFailures++;
+      this.onClose(false, `ticket: ${msg}`);
+    });
+  }
+
+  private openTransport(): void {
     try {
       this.d.transport.connect({
         onOpen: () => this.onOpen(),
@@ -559,6 +625,8 @@ export class SyncEngine {
   private onOpen(): void {
     this.reconnectAttempt = 0;
     this.setStatus('joining');
+    const ticket = this.ticket;
+    this.ticket = '';
     this.tx({
       // Not `cfg.secret`: after a rotation the server accepts only the new one,
       // and a refused reconnect ends the session for good.
@@ -568,6 +636,7 @@ export class SyncEngine {
       // navigation would otherwise announce the wrong thing.
       mediaKey: this.localMediaKey,
       ...(this.localMediaUrl ? { mediaUrl: this.localMediaUrl } : {}),
+      ...(ticket ? { ticket } : {}),
     });
     // Rapid probes first: nothing may be scheduled against an unsettled offset.
     for (let i = 0; i < this.cfg.connectProbes; i++) {
@@ -708,7 +777,9 @@ export class SyncEngine {
         break;
 
       case 'error':
-        if (f.code === 'join_refused' || f.code === 'room_full') this.setStatus('refused', f.code);
+        if (f.code === 'join_refused' || f.code === 'room_full' || f.code === 'auth_required') {
+          this.setStatus('refused', f.code);
+        }
         // A `bad_frame` is never the server's fault -- it means WE sent
         // something malformed, and the symptom is a mechanism quietly not
         // working rather than anything failing. Counted so a test can assert

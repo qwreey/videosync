@@ -235,6 +235,151 @@ func TestBinaryRefusesHalfConfiguredTLS(t *testing.T) {
 	}
 }
 
+// --- access control, through the binary -------------------------------------
+
+func TestAHashPasswordLineSignsInThroughTheBinary(t *testing.T) {
+	// The whole operator path: hash a password with the binary, point the
+	// server at the file, and sign in over HTTP. Each piece has unit tests;
+	// this is the one that notices when they stop fitting together.
+	bin := build(t)
+	cmd := exec.Command(bin, "hash-password", "-iterations", "10000", "alice")
+	cmd.Stdin = strings.NewReader("correct horse\n")
+	line, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("hash-password: %v", err)
+	}
+	if !strings.HasPrefix(string(line), "alice:$pbkdf2-sha256$i=10000$") {
+		t.Fatalf("hash-password wrote %q", line)
+	}
+	dir := t.TempDir()
+	users := filepath.Join(dir, "users")
+	key := filepath.Join(dir, "key")
+	if err := os.WriteFile(users, line, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte(strings.Repeat("0123456789abcdef", 4)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t)
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	s := startServer(t, os.Stderr, bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port),
+		"-auth", "password", "-auth-users-file", users, "-auth-key-file", key)
+	waitHealthy(t, http.DefaultClient, base+"/healthz", s)
+
+	post := func(path, authz, body string) (int, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", base+path, strings.NewReader(body))
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	if code, _ := post("/api/rooms", "", `{}`); code != 401 {
+		t.Fatalf("room created without signing in: %d", code)
+	}
+	req, _ := http.NewRequest("POST", base+"/api/session", nil)
+	req.SetBasicAuth("alice", "correct horse")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sess struct{ Token string }
+	json.NewDecoder(resp.Body).Decode(&sess)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || sess.Token == "" {
+		t.Fatalf("sign-in: %d", resp.StatusCode)
+	}
+	code, tk := post("/api/ticket", "Bearer "+sess.Token, "")
+	if code != 200 {
+		t.Fatalf("ticket: %d", code)
+	}
+	if code, _ := post("/api/rooms", "", fmt.Sprintf(`{"ticket":%q}`, tk["ticket"])); code != 201 {
+		t.Fatalf("room with a ticket: %d", code)
+	}
+}
+
+func TestBinaryRefusesAccessControlItCannotHonour(t *testing.T) {
+	// Each of these would be a server believed closed while it was open, or
+	// one that nobody could use.
+	bin := build(t)
+	for args, want := range map[string]string{
+		"-auth password":   "-auth-users-file",
+		"-auth proxy":      "-trusted-proxies",
+		"-auth-scope all":  "needs -auth",
+		"-auth ldap":       "unknown -auth method",
+		"-auth none,token": "cannot be combined",
+		"-auth oidc -oidc-issuer https://idp.example -oidc-client-id x": "-public-url",
+	} {
+		out, err := exec.Command(bin, append([]string{"-addr", "127.0.0.1:0"}, strings.Fields(args)...)...).CombinedOutput()
+		if err == nil {
+			t.Errorf("%s: started", args)
+			continue
+		}
+		if !strings.Contains(string(out), want) {
+			t.Errorf("%s: refusal does not mention %q:\n%s", args, want, out)
+		}
+	}
+}
+
+func TestBinarySaysDevicesWillNotSurviveARestart(t *testing.T) {
+	bin := build(t)
+	keys := filepath.Join(t.TempDir(), "keys")
+	if err := os.WriteFile(keys, []byte("a-long-enough-access-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t)
+	var logs syncBuffer
+	s := startServer(t, &logs, bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port),
+		"-auth", "token", "-auth-tokens-file", keys)
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitHealthy(t, http.DefaultClient, base+"/healthz", s)
+	if !strings.Contains(logs.String(), "sign in again after a restart") {
+		t.Fatalf("no word about the per-process key:\n%s", logs.String())
+	}
+	resp, err := http.Get(base + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var h struct {
+		Auth struct {
+			Methods []string
+			Scope   string
+		}
+	}
+	json.NewDecoder(resp.Body).Decode(&h)
+	if strings.Join(h.Auth.Methods, ",") != "token" || h.Auth.Scope != "create" {
+		t.Fatalf("healthz auth = %+v", h.Auth)
+	}
+}
+
+func TestHashPasswordRefusesWhatCannotBeSignedInWith(t *testing.T) {
+	bin := build(t)
+	for _, tc := range []struct {
+		args  []string
+		stdin string
+	}{
+		{[]string{"hash-password", "al:ice"}, "pw\n"},
+		{[]string{"hash-password", "alice"}, "\n"},
+		{[]string{"hash-password"}, "pw\n"},
+		{[]string{"hash-password", "-iterations", "1", "alice"}, "pw\n"},
+	} {
+		cmd := exec.Command(bin, tc.args...)
+		cmd.Stdin = strings.NewReader(tc.stdin)
+		out, err := cmd.Output()
+		if err == nil || len(out) != 0 {
+			t.Errorf("%v with %q: wrote %q, err %v", tc.args, tc.stdin, out, err)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (func() bool {
 		for i := 0; i+len(sub) <= len(s); i++ {

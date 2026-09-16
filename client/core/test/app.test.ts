@@ -12,6 +12,7 @@ import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
 import { FakeTransport, flush } from './fakes.ts';
+import { CODE, FakeServer, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
 import { installDom } from './fakedom.ts';
 import type { FakeElement, Installed } from './fakedom.ts';
 
@@ -45,6 +46,9 @@ interface H {
   app: App;
   store: FakeStore;
   transports: FakeTransport[];
+  server: FakeServer;
+  /** Login tabs the app asked for. */
+  opened: string[];
   tr(): FakeTransport;
   root(): FakeElement;
   button(label: string): FakeElement | undefined;
@@ -78,15 +82,18 @@ function useTab(tab: TabStorage | null): void {
 
 function harness(
   href: string, store: FakeStore = makeStore(), tab: TabStorage | null = new Map(), extra: Partial<Platform> = {},
+  server: FakeServer = new FakeServer(),
 ): H {
   mock.timers.enable({ apis: ['setTimeout'] });
   useTab(tab);
   const dom = installDom(href);
   const transports: FakeTransport[] = [];
+  const opened: string[] = [];
   const p: Platform = {
     store,
     makeTransport: () => { const t = new FakeTransport(); transports.push(t); return t; },
-    createRoom: () => Promise.resolve({ roomId: 'R', secret: 'S' }),
+    authFetch: server.fetch,
+    openTab: (url) => { opened.push(url); },
     unreachable: () => null,
     ...extra,
   };
@@ -95,7 +102,7 @@ function harness(
   // real one.
   const all = () => [...(dom.doc.getElementById('videosync-root')!.shadow!.walk())];
   const h: H = {
-    dom, app, store, transports,
+    dom, app, store, transports, server, opened,
     tr: () => transports[transports.length - 1]!,
     root: () => dom.doc.getElementById('videosync-root')!,
     button: (l) => all().find((e) => e.tagName === 'BUTTON' && e.textContent === l),
@@ -299,12 +306,9 @@ describe('a page that names no media', () => {
   const NOWHERE = 'https://www.youtube.com/results?search_query=x';
 
   it('does not create a room nobody could follow', async () => {
-    let created = 0;
-    const h = harness(NOWHERE, makeStore(), new Map(), {
-      createRoom: () => { created++; return Promise.resolve({ roomId: 'R', secret: 'S' }); },
-    });
+    const h = harness(NOWHERE);
     await h.app.api.createRoom(SERVER, 'me').catch(() => {});
-    assert.equal(created, 0, 'a keyless room is one the engine never follows');
+    assert.equal(h.server.to('/api/rooms').length, 0, 'a keyless room is one the engine never follows');
     assert.equal(h.transports.length, 0);
     assert.match(h.status().text, /영상/);
     assert.match(h.status().cls, /err/);
@@ -582,5 +586,225 @@ describe('the panel', () => {
       assert.doesNotMatch(text, /복사했어요/);
       assert.match(text, /#videosync=R\.S/, 'with no clipboard, the link has to be somewhere the user can take it');
     }
+  });
+});
+
+describe('signing in to a server', () => {
+  function input(h: H, placeholder: string): FakeElement {
+    const e = [...h.root().shadow!.walk()].find((x) => x.tagName === 'INPUT' && x.placeholder === placeholder);
+    if (!e) throw new Error(`no ${placeholder} field`);
+    return e;
+  }
+  const shownInput = (h: H, placeholder: string) => input(h, placeholder).shown;
+  const note = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'note')!;
+  const signInShown = (h: H) => note(h).shown;
+  const code = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className === 'code')!;
+
+  /** Everything the page could read, as one string. */
+  function pageText(h: H): string {
+    return [...h.root().shadow!.walk()].map((e) => `${e.textContent}|${e.value}`).join('\n') + h.app.api.dump();
+  }
+
+  async function create(h: H): Promise<void> {
+    await h.app.api.createRoom(SERVER, 'me').catch(() => {});
+    await h.tick(50);
+  }
+
+  it('costs a server with access control off nothing', async () => {
+    const h = harness(ROOM_URL);
+    await create(h);
+    assert.deepEqual(h.server.requests.map((r) => r.path), ['/api/rooms'],
+      'no /healthz, no ticket: a server without -auth must be reached exactly as before');
+    assert.equal(h.server.requests[0]!.body['ticket'], undefined);
+    assert.equal(h.transports.length, 1, 'the room was not joined');
+    assert.equal(signInShown(h), false);
+  });
+
+  it('asks for a key when room creation is refused, and creates the room once signed in', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    assert.equal(h.transports.length, 0);
+    assert.ok(signInShown(h), 'nothing asked the member to sign in');
+    assert.match(h.status().text, /로그인/);
+    assert.ok(shownInput(h, '접속 키'));
+    assert.equal(shownInput(h, '비밀번호'), false, 'this server has no passwords');
+    assert.equal(h.visibleButton('브라우저에서 로그인'), undefined, 'this server has no login page');
+
+    input(h, '접속 키').value = 'wrong';
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    assert.match(note(h).textContent, /맞지 않아요/);
+    assert.equal(h.transports.length, 0);
+
+    input(h, '접속 키').value = KEY;
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    assert.equal(input(h, '접속 키').value, '', 'the key stayed in the page');
+    assert.equal(signInShown(h), false);
+    assert.equal(h.transports.length, 1, 'signing in did not finish what it was for');
+    const rooms = server.to('/api/rooms');
+    assert.equal(rooms.length, 2);
+    assert.match(String(rooms[1]!.body['ticket']), /^T/, 'the second attempt carried no ticket');
+    const signedRow = h.visibleButton('로그아웃')!.parentNode!;
+    assert.match(signedRow.textContent, new RegExp(USER), 'the ticket that followed forgot who signed in');
+    assert.ok(!pageText(h).includes('DEVICE-'), 'the device token reached the page');
+    assert.ok(!pageText(h).includes(KEY), 'the access key stayed somewhere readable');
+  });
+
+  it('remembers what a server needs, so the next room goes straight for a ticket', async () => {
+    const server = new FakeServer();
+    server.methods = ['password'];
+    const store = makeStore();
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    await create(h);
+    assert.ok(shownInput(h, '비밀번호') && shownInput(h, '사용자'));
+    assert.equal(shownInput(h, '접속 키'), false);
+    input(h, '사용자').value = USER;
+    input(h, '비밀번호').value = PASSWORD;
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    assert.equal(input(h, '비밀번호').value, '', 'the password stayed in the page');
+    assert.equal(h.transports.length, 1);
+    unload(h);
+
+    const next = harness(ROOM_URL, store, new Map(), {}, server);
+    const before = server.requests.length;
+    await create(next);
+    assert.deepEqual(server.requests.slice(before).map((r) => r.path), ['/healthz', '/api/ticket', '/api/rooms'],
+      'a known server should not be refused first');
+    assert.equal(signInShown(next), false, 'signed in once, asked again');
+    assert.equal(next.transports.length, 1);
+  });
+
+  it('joins a server that gates joining with a ticket in hello, after learning so once', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    h.join();
+    // Not known yet: the first hello goes without, and is refused.
+    assert.equal(h.transports.length, 1);
+    h.tr().open();
+    assert.equal(h.tr().sentOf('hello')[0]!.ticket, undefined);
+    h.tr().deliver({ t: 'error', code: 'auth_required', msg: 'this server requires sign-in to join' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.doesNotMatch(h.status().text, /방 ID나 비밀키/, 'a sign-in problem was blamed on the room ID');
+    assert.ok(signInShown(h));
+    input(h, '접속 키').value = KEY;
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    assert.equal(h.transports.length, 3, 'one retry to learn, one join after signing in');
+    h.tr().open();
+    const t = h.tr().sentOf('hello')[0]!.ticket;
+    assert.ok(server.spend(t), `hello carried ${t}, not a live ticket`);
+    h.welcome({ mediaKey: ROOM_KEY });
+    assert.equal(h.app.api.engine()?.state, 'joined');
+  });
+
+  it('retries a refused hello once without asking, when the device is still good', async () => {
+    // A server restarted between the ticket and the hello loses the ticket;
+    // the device token is still fine and nobody should be asked anything.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    h.join();
+    await h.tick(50);
+    h.tr().open();
+    assert.match(String(h.tr().sentOf('hello')[0]!.ticket), /^T/);
+    h.tr().deliver({ t: 'error', code: 'auth_required' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.equal(signInShown(h), false);
+    h.tr().open();
+    assert.ok(server.spend(h.tr().sentOf('hello')[0]!.ticket));
+    // A second refusal in a row is not a stale ticket: ask.
+    h.tr().deliver({ t: 'error', code: 'auth_required' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.ok(signInShown(h), 'refused twice and still not asking');
+    assert.equal(h.transports.length, 2, 'retried more than once');
+  });
+
+  it('signs in through a browser tab and shows the code the tab will show', async () => {
+    const server = new FakeServer();
+    server.methods = ['oidc'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    assert.equal(shownInput(h, '접속 키'), false);
+    assert.equal(h.visibleButton('로그인'), undefined, 'a server with only a login page offered a password box');
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    assert.deepEqual(h.opened, [LOGIN_URL]);
+    assert.equal(code(h).textContent, CODE);
+    assert.ok(code(h).shown);
+    await h.tick(4000);
+    assert.ok(server.to('/api/auth/poll').length >= 2, 'not polling');
+    assert.equal(h.transports.length, 0);
+    server.browserDone = true;
+    await h.tick(2100);
+    assert.equal(signInShown(h), false);
+    assert.equal(h.transports.length, 1, 'the room was not created after the tab finished');
+    assert.ok(!pageText(h).includes('DEVICE-'));
+  });
+
+  it('stops polling when the member cancels or leaves', async () => {
+    const server = new FakeServer();
+    server.methods = ['oidc'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(2100);
+    h.visibleButton('취소')!.click();
+    const polls = server.to('/api/auth/poll').length;
+    server.browserDone = true;
+    await h.tick(10_000);
+    assert.equal(server.to('/api/auth/poll').length, polls, 'polled after cancel');
+    assert.equal(h.transports.length, 0, 'a cancelled sign-in still created the room');
+
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(100);
+    h.app.api.leave();
+    const after = server.to('/api/auth/poll').length;
+    await h.tick(10_000);
+    assert.equal(server.to('/api/auth/poll').length, after, 'polled after leaving');
+    assert.equal(signInShown(h), false);
+  });
+
+  it('asks nothing behind a proxy that already vouches for this browser', async () => {
+    const server = new FakeServer();
+    server.methods = ['proxy'];
+    server.proxyVouches = true;
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    assert.equal(signInShown(h), false);
+    assert.equal(h.transports.length, 1);
+    const session = server.to('/api/session');
+    assert.equal(session.length, 1);
+    assert.equal(session[0]!.authorization, '', 'sent credentials nobody typed');
+  });
+
+  it('signs out, and is asked again next time', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const store = makeStore();
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    await create(h);
+    input(h, '접속 키').value = KEY;
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    h.app.api.leave();
+    h.visibleButton('로그아웃')!.click();
+    await h.tick(50);
+    assert.equal(h.visibleButton('로그아웃'), undefined);
+    assert.equal(await server.tokens.get(new URL(SERVER).origin), '');
+    await create(h);
+    assert.ok(signInShown(h), 'signed out and still let in');
   });
 });

@@ -28,8 +28,8 @@ npm install && npm run build     # -> dist/
 
 ## How it is put together
 
-The worker is 1.7 kB and holds no session state: it is a frame relay and
-nothing else. The engine, the detector, the clock and the adapter all live in
+The worker is ~7 kB and holds no session state: it is a frame relay and an HTTP
+relay (see Permissions), and nothing else. The engine, the detector, the clock and the adapter all live in
 the content script beside the `<video>`, sharing
 `client/core/src/app/bootstrap.ts` verbatim with the userscript.
 
@@ -62,6 +62,13 @@ socket both work with the permission removed.
 The one thing that depends on: if you put the server behind a proxy that strips
 CORS headers, the extension will need `host_permissions` for that origin. The
 server itself always sends them.
+
+The worker also makes every HTTP call to the server — room creation and, if the
+server asks for it, signing in. It takes a path from the content script, never
+a URL, builds the address from the server in the settings, and keeps the
+sign-in token in its own IndexedDB, where the content script (and so a page
+that compromises it) cannot read it. Login tabs are opened with `tabs.create`,
+which needs no permission.
 
 ## Firefox
 

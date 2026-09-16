@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qwreey/videosync/server/internal/auth"
 	"github.com/qwreey/videosync/server/internal/room"
 	"github.com/qwreey/videosync/server/internal/ws"
 )
@@ -25,6 +26,9 @@ type HTTPConfig struct {
 	PingInterval     time.Duration
 	ReadTimeout      time.Duration
 	MaxFrameBytes    int64
+	// Auth is server access control (D6). Nil, the default, is today's server
+	// exactly: nothing gated, nothing extra advertised, no extra endpoints.
+	Auth *auth.Server
 }
 
 func DefaultHTTPConfig() HTTPConfig {
@@ -50,6 +54,9 @@ func DefaultHTTPConfig() HTTPConfig {
 //
 // No credentials are involved -- the room secret travels in the `hello` frame,
 // never in a cookie -- so a wildcard is safe when no allowlist is configured.
+// That stays true with access control on: a bearer header is not a CORS
+// credential, and nothing under /api reads a cookie. Authorization does have to
+// be named in Allow-Headers; a wildcard there would not cover it.
 func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -64,7 +71,7 @@ func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
 		}
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.Header().Set("Access-Control-Max-Age", "600")
 			// Private Network Access. A page on a public origin -- every OTT
 			// site -- reaching a server on localhost or a LAN address is a
@@ -86,16 +93,30 @@ func cors(allowed []string, next http.HandlerFunc) http.HandlerFunc {
 // Handler returns the server's whole HTTP surface.
 func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", cors(cfg.AllowedOrigins, func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"ok": true, "rooms": h.Rooms(), "serverMs": h.clock.NowMs()})
+	api := func(next http.HandlerFunc) http.HandlerFunc { return cors(cfg.AllowedOrigins, next) }
+	mux.HandleFunc("GET /healthz", api(func(w http.ResponseWriter, r *http.Request) {
+		out := map[string]any{"ok": true, "rooms": h.Rooms(), "serverMs": h.clock.NowMs()}
+		if cfg.Auth != nil {
+			// Unauthenticated on purpose: the panel reads it to learn what to
+			// ask for before it has anything to ask with.
+			out["auth"] = cfg.Auth.Info()
+		}
+		writeJSON(w, 200, out)
 	}))
-	mux.HandleFunc("POST /api/rooms", cors(cfg.AllowedOrigins, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /api/rooms", api(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			MediaKey string `json:"mediaKey"`
 			MediaURL string `json:"mediaUrl"`
+			Ticket   string `json:"ticket"`
 		}
 		// An empty body is fine: the first member's `hello` names the media.
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body)
+		// Gated in every scope (F39): anyone who can reach the port could
+		// otherwise fill MaxRooms.
+		if cfg.Auth != nil && !cfg.Auth.ConsumeTicket(body.Ticket) {
+			cfg.Auth.Refuse(w)
+			return
+		}
 		id, secret, err := h.Create(body.MediaKey, body.MediaURL)
 		if err != nil {
 			writeJSON(w, 503, map[string]any{"error": err.Error()})
@@ -106,8 +127,11 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	// Preflight. A userscript that sets Content-Type: application/json turns
 	// the room-create POST into a preflighted request; one that does not, does
 	// not. Answer either way rather than depend on the client's habits.
-	mux.HandleFunc("OPTIONS /api/rooms", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
-	mux.HandleFunc("OPTIONS /healthz", cors(cfg.AllowedOrigins, func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("OPTIONS /api/rooms", api(func(http.ResponseWriter, *http.Request) {}))
+	mux.HandleFunc("OPTIONS /healthz", api(func(http.ResponseWriter, *http.Request) {}))
+	if cfg.Auth != nil {
+		cfg.Auth.Register(mux, api)
+	}
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		h.serveWS(w, r, cfg)
 	})
@@ -172,6 +196,16 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 	m, err := wireDecodeHello(data)
 	if err != nil {
 		sock.Close(ws.CloseProtocolError, "expected hello")
+		return
+	}
+
+	// Before the room is looked up, so a peer without a ticket learns nothing
+	// about which rooms exist. Its own code, not join_refused: the panel has to
+	// tell "sign in" apart from "check the room ID".
+	if cfg.Auth != nil && cfg.Auth.TicketToJoin() && !cfg.Auth.ConsumeTicket(m.Ticket) {
+		c := &conn{sock: sock}
+		c.sendNow(room.Error{Code: "auth_required", Msg: "this server requires sign-in to join"})
+		sock.Close(ws.ClosePolicyViolation, "auth required")
 		return
 	}
 
