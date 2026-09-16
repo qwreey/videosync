@@ -83,3 +83,59 @@ func TestSeeksToOneClientAreAtLeastTheCooldownApart(t *testing.T) {
 		}
 	}
 }
+
+// --- pause inside another command's lead ------------------------------------
+
+// A seek during playback is not applied until `when`, CMD_DELAY later. A
+// member who pauses inside that window is still on the pre-seek timeline, so
+// the position it reports belongs to the media the room is about to leave.
+// Anchoring the pause there undid a seek the room had already acked, for
+// everyone, although the seek came first in seq order.
+func TestAPauseInsideASeeksLeadDoesNotUndoTheSeek(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 100_000, AtServerMs: 0})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "s", Kind: "seek", PositionMs: 600_000})
+	seek := r.Anchor()
+	if seek.AtServerMs <= 1000 {
+		t.Fatalf("the seek carries no lead (%+v); the test measures nothing", seek)
+	}
+	// a has not reached `when`, so it is still ~100 s in.
+	r.OnCmd(1100, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 101_100})
+	got := r.Anchor()
+	if !got.Paused {
+		t.Fatalf("the pause did not pause: %+v", got)
+	}
+	if got.PositionMs < seek.PositionMs {
+		t.Fatalf("the pause rewound the room to %d ms, before the seek to %d it came after",
+			got.PositionMs, seek.PositionMs)
+	}
+}
+
+// The same window before a `play`: the room is paused at P until `when`, and
+// the pause must stay at P rather than at a position projected backwards
+// from a start time that has not happened yet.
+func TestAPauseInsideAPlaysLeadStaysWhereTheRoomIs(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 50_000, AtServerMs: 0, Paused: true})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "go", Kind: "play"})
+	r.OnCmd(1100, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 50_000})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 50_000 {
+		t.Fatalf("anchor %+v, want paused at 50000", got)
+	}
+}
+
+// Outside any lead the pauser's own position is still the one that counts --
+// that is the whole point of anchoring a pause where the person stopped.
+func TestAPauseOutsideAnyLeadStopsWhereThePauserStopped(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 100_000, AtServerMs: 0})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "s", Kind: "seek", PositionMs: 600_000})
+	due := r.Anchor().AtServerMs
+	r.OnCmd(due+3000, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 602_900})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 602_900 {
+		t.Fatalf("anchor %+v, want paused at the pauser's 602900", got)
+	}
+}

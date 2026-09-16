@@ -381,6 +381,9 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 	//
 	// A command that leaves the room PLAYING keeps the full lead, because from
 	// then on everybody's clock is running and the instant is the whole point.
+	// Read before `when` replaces it below: is the previous command still
+	// waiting for its instant?
+	pending := now < r.lastCmdWhen
 	when := now + r.CmdDelay()
 	if leavesRoomStopped(m.Kind, r.anchor) {
 		when = now
@@ -394,7 +397,18 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		// position nobody chose and that the pauser never saw. `positionMs`
 		// has always been on the wire for this command and was being thrown
 		// away.
-		r.anchor = r.anchor.Reanchor(m.PositionMs, when, true)
+		pos := m.PositionMs
+		if pending {
+			// Except inside the previous command's lead. Nobody applies a
+			// transition before its `when`, so the pauser's position is on
+			// the timeline the room is about to leave: taking it undid an
+			// acked seek for everyone, although the seek came first in seq
+			// order. Only `play` and a seek during playback carry a lead, and
+			// both put the position the room is committed to in the anchor
+			// -- where it resumes from, or where it jumps to.
+			pos = r.anchor.PositionMs
+		}
+		r.anchor = r.anchor.Reanchor(pos, when, true)
 	case "play":
 		r.anchor = r.anchor.Advance(when)
 		r.anchor.Paused = false

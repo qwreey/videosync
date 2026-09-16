@@ -251,8 +251,12 @@ func TestPauseStopsWhereThePauserStopped(t *testing.T) {
 	a.await("members")
 
 	a.send(room.Cmd{ReqID: "r1", Kind: "play", PositionMs: 0})
-	a.await("ack")
+	played := a.await("ack")
 	b.await("state")
+	// Pause once the play is due. Inside its lead nobody has started yet, so
+	// the room pauses where the play would have resumed from, whatever the
+	// pauser reports -- see TestAPauseInsideASeeksLeadDoesNotUndoTheSeek.
+	time.Sleep(time.Duration(num(played, "when")-num(played, "emittedAt")+100) * time.Millisecond)
 
 	a.send(room.Cmd{ReqID: "r2", Kind: "pause", PositionMs: 90_000})
 	ack := a.await("ack")

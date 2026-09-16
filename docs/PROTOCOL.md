@@ -152,6 +152,15 @@ It uses the member's own measured RTT as the grace period instead (§40a).
 A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two members, because the
 delay buys simultaneity with people who are not there.
 
+**Except inside another command's lead.** A `pause` that arrives before the previous command's
+`when` anchors at that command's `anchor.positionMs` — where a pending `play` resumes from, or
+where a pending seek jumps to — not at the sender's `positionMs`. Nobody applies a transition
+before its `when`, so the sender's position is on the timeline the room is about to leave; taking
+it let a pause from a member who had not reached a seek's `when` undo that acked seek for the whole
+room, although the seek came first in `seq` order. (`Cmd` carries no base `seq`, so "is a
+command still pending" is the only thing the server can know about which timeline the position
+came from.)
+
 ### Amendment: the member who presses `play` waits for `when` too
 
 `play` keeps its full lead, so somebody has to give while it runs out, and until now it was the
