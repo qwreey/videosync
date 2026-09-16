@@ -1,0 +1,678 @@
+{
+  "when": "2026-09-16T08:16:09.441Z",
+  "server": "http://127.0.0.1:8787",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 536,
+            "jumpMs": -461
+          }
+        ],
+        "otherStartsAfterMs": 539,
+        "presserNetMs": -680,
+        "gapAtEndMs": -63
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -64
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 13,
+            "jumpMs": 85
+          },
+          {
+            "atMs": 527,
+            "jumpMs": -593
+          }
+        ],
+        "otherStartsAfterMs": 530,
+        "presserNetMs": -809,
+        "gapAtEndMs": -415
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 109,
+        "gapAtEndMs": 0
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 528,
+            "jumpMs": -432
+          }
+        ],
+        "otherStartsAfterMs": 530,
+        "presserNetMs": -575,
+        "gapAtEndMs": -167
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 23,
+        "gapAtEndMs": -181
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 10,
+            "jumpMs": 85
+          },
+          {
+            "atMs": 527,
+            "jumpMs": -691
+          }
+        ],
+        "otherStartsAfterMs": 526,
+        "presserNetMs": -749,
+        "gapAtEndMs": -159
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 21,
+        "gapAtEndMs": -134
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 8,
+            "jumpMs": 89
+          },
+          {
+            "atMs": 517,
+            "jumpMs": -645
+          }
+        ],
+        "otherStartsAfterMs": 524,
+        "presserNetMs": -702,
+        "gapAtEndMs": -148
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 14,
+        "gapAtEndMs": -165
+      },
+      "presserStats": {
+        "cmdsSent": 7,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 527,
+            "jumpMs": -656
+          }
+        ],
+        "otherStartsAfterMs": 530,
+        "presserNetMs": -908,
+        "gapAtEndMs": -282
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 86,
+        "gapAtEndMs": 0
+      },
+      "presserStats": {
+        "cmdsSent": 6,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 38,
+            "jumpMs": 91
+          },
+          {
+            "atMs": 768,
+            "jumpMs": -649
+          }
+        ],
+        "otherStartsAfterMs": 774,
+        "presserNetMs": -881,
+        "gapAtEndMs": -130
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 22,
+        "gapAtEndMs": -142
+      },
+      "presserStats": {
+        "cmdsSent": 9,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 17,
+            "jumpMs": 89
+          },
+          {
+            "atMs": 527,
+            "jumpMs": -656
+          }
+        ],
+        "otherStartsAfterMs": 528,
+        "presserNetMs": -631,
+        "gapAtEndMs": -93
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 26,
+        "gapAtEndMs": -85
+      },
+      "presserStats": {
+        "cmdsSent": 8,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 12,
+            "jumpMs": 110
+          },
+          {
+            "atMs": 527,
+            "jumpMs": -634
+          }
+        ],
+        "otherStartsAfterMs": 529,
+        "presserNetMs": -686,
+        "gapAtEndMs": -190
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 23,
+        "gapAtEndMs": -219
+      },
+      "presserStats": {
+        "cmdsSent": 11,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 9,
+            "jumpMs": 96
+          },
+          {
+            "atMs": 517,
+            "jumpMs": -731
+          }
+        ],
+        "otherStartsAfterMs": 528,
+        "presserNetMs": -881,
+        "gapAtEndMs": -217
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 26,
+        "gapAtEndMs": -232
+      },
+      "presserStats": {
+        "cmdsSent": 10,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      -461,
+      -593,
+      -432,
+      -691,
+      -645,
+      -656,
+      -649,
+      -656,
+      -634,
+      -731
+    ],
+    "playGapAtEndMs": [
+      -63,
+      -415,
+      -167,
+      -159,
+      -148,
+      -282,
+      -130,
+      -93,
+      -190,
+      -217
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      -64,
+      0,
+      -181,
+      -134,
+      -165,
+      0,
+      -142,
+      -85,
+      -219,
+      -232
+    ]
+  },
+  "notes": [],
+  "roomId": "0G_AjL3ApSlERLKx9cK8eg",
+  "clock": {
+    "a": {
+      "rttMs": 1,
+      "uncertaintyMs": 0.5
+    },
+    "b": {
+      "rttMs": 0.5,
+      "uncertaintyMs": 0.25
+    }
+  },
+  "traceA": [
+    {
+      "at": 406873,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 289562,
+        "reqId": "L5FnkJzOKBY-2"
+      }
+    },
+    {
+      "at": 406875,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789546575056,
+        "kind": "play",
+        "reqId": "L5FnkJzOKBY-2",
+        "anchor": "289542-@1789546575056"
+      }
+    },
+    {
+      "at": 411803,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 293819,
+        "reqId": "L5FnkJzOKBY-3"
+      }
+    },
+    {
+      "at": 411804,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789546579486,
+        "kind": "pause",
+        "reqId": "L5FnkJzOKBY-3",
+        "anchor": "293819P@1789546579486"
+      }
+    },
+    {
+      "at": 417721,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789546585902,
+        "kind": "play",
+        "anchor": "293819-@1789546585902"
+      }
+    },
+    {
+      "at": 422645,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789546590327,
+        "kind": "pause",
+        "anchor": "298006P@1789546590327"
+      }
+    },
+    {
+      "at": 428558,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 298014,
+        "reqId": "L5FnkJzOKBY-4"
+      }
+    },
+    {
+      "at": 428562,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789546596742,
+        "kind": "play",
+        "reqId": "L5FnkJzOKBY-4",
+        "anchor": "298006-@1789546596742"
+      }
+    },
+    {
+      "at": 433486,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 302368,
+        "reqId": "L5FnkJzOKBY-5"
+      }
+    },
+    {
+      "at": 433489,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789546601169,
+        "kind": "pause",
+        "reqId": "L5FnkJzOKBY-5",
+        "anchor": "302368P@1789546601169"
+      }
+    },
+    {
+      "at": 439399,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789546607580,
+        "kind": "play",
+        "anchor": "302368-@1789546607580"
+      }
+    },
+    {
+      "at": 444321,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789546612003,
+        "kind": "pause",
+        "anchor": "306762P@1789546612003"
+      }
+    },
+    {
+      "at": 450234,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 306985,
+        "reqId": "L5FnkJzOKBY-6"
+      }
+    },
+    {
+      "at": 450235,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 10,
+        "when": 1789546618417,
+        "kind": "play",
+        "reqId": "L5FnkJzOKBY-6",
+        "anchor": "306762-@1789546618417"
+      }
+    },
+    {
+      "at": 455156,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 311114,
+        "reqId": "L5FnkJzOKBY-7"
+      }
+    },
+    {
+      "at": 455157,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 11,
+        "when": 1789546622839,
+        "kind": "pause",
+        "reqId": "L5FnkJzOKBY-7",
+        "anchor": "311114P@1789546622839"
+      }
+    },
+    {
+      "at": 461076,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 12,
+        "when": 1789546629257,
+        "kind": "play",
+        "anchor": "311114-@1789546629257"
+      }
+    },
+    {
+      "at": 465997,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 13,
+        "when": 1789546633678,
+        "kind": "pause",
+        "anchor": "315305P@1789546633678"
+      }
+    },
+    {
+      "at": 472165,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 315454,
+        "reqId": "L5FnkJzOKBY-8"
+      }
+    },
+    {
+      "at": 472166,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 14,
+        "when": 1789546640347,
+        "kind": "play",
+        "reqId": "L5FnkJzOKBY-8",
+        "anchor": "315305-@1789546640347"
+      }
+    },
+    {
+      "at": 476837,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 319352,
+        "reqId": "L5FnkJzOKBY-9"
+      }
+    },
+    {
+      "at": 476838,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 15,
+        "when": 1789546644520,
+        "kind": "pause",
+        "reqId": "L5FnkJzOKBY-9",
+        "anchor": "319352P@1789546644520"
+      }
+    },
+    {
+      "at": 482762,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 16,
+        "when": 1789546650943,
+        "kind": "play",
+        "anchor": "319352-@1789546650943"
+      }
+    },
+    {
+      "at": 487688,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 17,
+        "when": 1789546655370,
+        "kind": "pause",
+        "anchor": "323824P@1789546655370"
+      }
+    },
+    {
+      "at": 493606,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 324019,
+        "reqId": "L5FnkJzOKBY-10"
+      }
+    },
+    {
+      "at": 493611,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 18,
+        "when": 1789546661789,
+        "kind": "play",
+        "reqId": "L5FnkJzOKBY-10",
+        "anchor": "323824-@1789546661789"
+      }
+    },
+    {
+      "at": 498530,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 328149,
+        "reqId": "L5FnkJzOKBY-11"
+      }
+    },
+    {
+      "at": 498531,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 19,
+        "when": 1789546666213,
+        "kind": "pause",
+        "reqId": "L5FnkJzOKBY-11",
+        "anchor": "328149P@1789546666213"
+      }
+    },
+    {
+      "at": 504445,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 20,
+        "when": 1789546672627,
+        "kind": "play",
+        "anchor": "328149-@1789546672627"
+      }
+    },
+    {
+      "at": 509368,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 21,
+        "when": 1789546677050,
+        "kind": "pause",
+        "anchor": "332412P@1789546677050"
+      }
+    }
+  ]
+}

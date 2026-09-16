@@ -485,6 +485,9 @@ would put the permission back.
 
 ## 12. Laftel, in the field — NOT a probe measurement
 
+> **Superseded by §14**, which measured all three questions with a probe. Kept for its
+> provenance and for the fresh-room bug below.
+
 The first real session against Laftel, extension shim, server behind a tunnel,
 2026-08-31. **Everything here is an observation from a live session, not a
 number from a probe**, so it is weaker evidence than §7–§11 and must not be
@@ -520,6 +523,126 @@ that had to be switched on first would have missed all of them. It is bounded at
 The server half is `videosyncd -verbose`, tested through the real binary on real
 stderr, because a diagnostic that silently records nothing is worse than none:
 "the server saw no such frame" would look like evidence.
+
+## 14. Laftel, probed (`probe-laftel.mjs`)
+
+The three questions §12 left open, measured on 2026-09-16 through the shipping
+extension's own `VideoSync.adapter`, on a logged-in account, series 45462
+episode 93304. **8/8.** Raw output: `results/laftel.json`.
+
+The browser is Helium 0.17 (Chromium 153) on the user's own desktop, not the
+container: Laftel needs an account and Widevine, and the container has neither.
+The probe attaches over CDP to a dedicated profile
+(`--user-data-dir=.cache/helium-profile --remote-debugging-port=9222`). A fresh
+profile has **no Widevine CDM** — the browser downloads it into the profile as
+a component — so `WidevineCdm/` was copied in from the user's main profile;
+`requestMediaKeySystemAccess('com.widevine.alpha')` then resolved and playback
+worked.
+
+| question | measured | consequence |
+|---|---|---|
+| does a programmatic `pause()` stick? | **yes.** 20 samples over 5 s, all `paused`, position moved 0.000 s | the reconciler and `media`'s paused landing work on Laftel as designed |
+| does Laftel reset `playbackRate`? | **no.** 1.1 held at every one of 20 samples over 10 s; media advanced 10.970 s in 10.004 s of wall clock, **1.096×** | `supportsPlaybackRateNudge` stays true; no seek-only path needed |
+| does `mediaKey` differ per episode? | **yes, including across the SPA's own navigation.** Clicking the episode list changed the route without a document load and `mediaKey()` went `laftel:/player/45462/93304` → `laftel:/player/45462/93295`; the adapter followed onto the new `<video>` (readyState 4). A full reload of the first episode gave back the identical key | the generic `host:pathname` rule is right for Laftel; `mediakey.ts` needs no Laftel case |
+| does a `currentTime` write stick? | **yes** (re-measured). Seeking to 120 s while playing, every sample for 2.8 s stayed within 0.099 s of the line through the target | confirms §12 |
+
+Also observed, and relevant to the numbers in §15:
+
+- **An in-buffer seek on Laftel costs ~100 ms, not ~20 ms.** Five seeks
+  (±0.6 s and +2 s, playing and paused, all well inside 45 s of buffer):
+  `seeked` fired after 90–132 ms, and `readyState` sat at **1** for that whole
+  time before jumping straight to 4. §2's ~20 ms was measured on unencrypted
+  local MSE; a Widevine stream is five times that. "In-buffer seeks are free" is
+  still true in the sense that matters — no fetch, no rebuffer — but not free
+  in time.
+- **Resuming often jumps ~90 ms forward.** Right after `play()` on a paused
+  element, the first 10 ms sample reads 81–110 ms ahead of the paused position
+  in 10 of 16 plays across both runs. It is the player, not the sync: it happens
+  before any command has been sent.
+- A paused Laftel player **keeps its buffer**: readyState 4 and 45 s ahead,
+  unchanged over 8 s of sampling. A paused member is not a buffering one.
+
+**Not covered:** ads (none were served), autoplay refusal (the profile ran with
+`--autoplay-policy=no-user-gesture-required`, so `NotAllowedError` could not
+occur), and a second account.
+
+## 15. Two members on Laftel: the `play` jump, and a gate that never let go (`probe-laftel-room.mjs`)
+
+STATE.md's question 1b, which the harness cannot answer by construction
+(POC-FINDINGS §40c). Two windows of the same profile, same account, same
+episode, both visible; `videosyncd -verbose` on loopback, so the RTT is ~1 ms
+and the command lead is the 500 ms floor on every play (read off the server
+log: `when − emittedAt = 500` for all 20). Each trial: one member presses play
+through the adapter, both players sampled every 10 ms for 4.5 s, the same member
+presses pause, sampled 3 s. Presser alternates. Timestamps are
+`performance.timeOrigin + performance.now()` so they compare across tabs.
+The same account streaming in two windows at once was not refused.
+
+### The first run found a bug
+
+Six trials. **Three of the six plays were held by the readiness gate, and the
+last one was held until a member left the room** — the server log shows
+`gate waiting:true waitingOn:[a]` and the play firing only on `leave a`, 10 s
+later. Meanwhile the presser, already playing locally, was judged against the
+still-paused anchor and drew a `free seek` every second: six backward jumps of
+0.5–1.2 s in 4.5 s. Nobody was buffering; every report in the log says
+`ReadyState:4` with 45–70 s ahead.
+
+The chain:
+
+1. The presser's own play jump is an in-buffer seek, and on Laftel that holds
+   `readyState` at 1 for ~100 ms (§14). A report sampled inside it said
+   `ReadyState:1, BufferedAheadS:46.6`. The gate rule is `readyState < 3 ||
+   bufferedAhead < 1`, so that member became gated. So far only a false alarm.
+2. **Only an `ActionNone` decision ever cleared `gated`.** The servo answers
+   `nudge` for as long as it holds a rate bias, and a paused member reports zero
+   slope, so it never integrates the bias away. Every later report from a fully
+   buffered member came back "nudge", never "none", and the flag stayed set.
+3. `GateTimeoutMs` did not rescue it: the timeout is only checked on a report
+   that is itself unready, and this member never sent another one.
+4. The next `play` anyone pressed found a non-empty gated set and was held —
+   indefinitely.
+
+The fix (`room.go`, `OnReport`): readiness is a fact about the report, so any
+decision other than `ActionGate` clears it. Hub test
+`TestAMemberWhoIsReadyAgainLeavesTheGateEvenWhileBeingNudged` reproduces the
+exact shape (fails before, passes after). The simulation's servo numbers are
+unchanged over 20 seeds (one-slow-client anchorErr 99.1 → 100.1 ms, SkippedMs
+4030 → 4030; long-stalls 56.2 → 56.3, 16 559 → 16 558); the `gates` column in
+`mise run sim` rises because a member can now leave the gate and re-enter it,
+which the old code counted once. The sim could not have shown the Laftel
+trigger: it models an in-buffer seek as instantaneous at readyState 4
+(`sim/client.go`), so the only unready members it ever has are genuinely
+stalled ones, and the stuck flag only matters if a `play` arrives after such a
+member has recovered.
+
+### After the fix: the numbers 1b asked for
+
+Ten trials (`results/laftel-room.json`). **No play was held, no correction
+seek was issued in any trial**; the ~100 ms gate still opens during a presser's
+seek and closes on the next report.
+
+| | measured (10 trials) |
+|---|---|
+| the other member starts moving | 524–539 ms after the press (one at 774) |
+| the presser's picture jumps **back** | once per play, 432–731 ms, median ~650 ms, landing 517–536 ms after the press |
+| presser's net loss vs. an untouched player, 4 s later | 575–908 ms, median ~725 ms |
+| presser behind the other member, 4 s later | 63–415 ms, median ~165 ms, **presser behind in 10/10** |
+| pause: presser's picture jump | **0 in 10/10** (POC-FINDINGS §40c holds live) |
+| pause: the other member stops | 14–109 ms after the press |
+
+What the jump is made of: the 500 ms lead, plus the ~25 ms between the press
+and the command leaving, plus whatever in-tolerance offset the presser already
+had from the anchor (up to the 500 ms band), plus Laftel's own ~90 ms resume
+jump. The **systematic lag** is the seek: the presser seeks back and then pays
+~100 ms (§14) before playback resumes, while the other member only has to call
+`play()` on a paused element that is already in position. It stays inside the
+500 ms tolerance, so nothing corrects it except the servo, slowly.
+
+So on a fast link, pressing play costs the presser roughly three quarters of a
+second of picture they watched twice, and leaves them ~0.16 s behind everyone
+else. Both are the price of starting the presser early and then seeking; see
+STATE.md for what that suggests.
 
 ## Reproducing
 
@@ -557,6 +680,19 @@ SILENT=1 TOTAL_MS=600000 ./run.sh node probe-swlife.mjs # ...even an idle one
 ./run.sh node probe-extension.mjs       # the extension, two browsers (§11)
 ./run.sh node probe-hop.mjs             # what the message port costs (§11)
 ./run.sh node probe-extperm.mjs         # are host_permissions needed? (§11)
+```
+
+The Laftel probes (§14, §15) cannot run in the container — they need a logged-in
+account and Widevine. They attach over CDP to a browser you start yourself:
+
+```
+cp -r ~/.config/<browser>/WidevineCdm .cache/helium-profile/   # a fresh profile has no CDM
+helium --user-data-dir=$PWD/.cache/helium-profile --remote-debugging-port=9222 \
+  --load-extension=$PWD/client/extension/dist https://laftel.net/player/45462/93304
+# log in; for §15 open the same episode in a second, visible window
+node harness/browser/probe-laftel.mjs                        # §14
+./server/videosyncd -addr 127.0.0.1:8787 -verbose &
+TRIALS=10 node harness/browser/probe-laftel-room.mjs          # §15
 ```
 
 The extension probes need `client/extension/npm run build` as well as the two

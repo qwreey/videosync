@@ -15,7 +15,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Readiness gate — *enforcement* | **done and measured** — `docs/POC-FINDINGS.md` §38 |
 | Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
-| Live provider smoke test — Laftel | **partly done in the field** — BROWSER-FINDINGS §12; `playbackRate` still unmeasured |
+| Live provider smoke test — Laftel | **done** — BROWSER-FINDINGS §14 (8/8): pause, rate, seek and per-episode `mediaKey` all hold |
+| Two members, live, on Laftel | **measured** — BROWSER-FINDINGS §15; found and fixed a gate that never released |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
 | Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (12/12) |
 | Observability for a live session | **built and browser-validated** — `VideoSync.dump()`, `videosyncd -verbose` |
@@ -64,6 +65,8 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   | `probe-userscript.mjs` | the whole stack, two real browsers | 17/17 |
   | `probe-extension.mjs` | the same with the extension shim, `dump()` included | 12/12 |
   | `probe-youtube.mjs` | the real YouTube player | 9/9 |
+  | `probe-laftel.mjs` | the real Laftel player, logged in, attached over CDP (not the container) | 8/8 — §14 |
+  | `probe-laftel-room.mjs` | two members on Laftel: the `play` jump, pause, the gate | 10 trials — §15 |
   | `probe-csp.mjs` | can a page reach a private-address server? | no — §8 |
   | `probe-ext.mjs` | what an MV3 content script may do | §9 |
   | `probe-swlife.mjs` | does the worker hold a socket? | 10 min, both arms |
@@ -165,70 +168,51 @@ guessing. Note the heartbeat bucket drops excess *silently* while the command
 bucket answers `rate_limited`, so a missing `hb` in the log is not proof of
 anything; a missing `cmd` is.
 
-### 1. Laftel — the last unmeasured provider
+### 1. Laftel — answered (2026-09-16)
 
-`research/provider-player-control.md` says the player is a plain scriptable
-`<video>` on the strength of one Korean dev blog. The first live session
-narrowed it but did not close it (BROWSER-FINDINGS §12). Three questions
-remain, in order of how much rests on them. Run each in the "VideoSync" console
-context, and **write the number into `docs/BROWSER-FINDINGS.md`** — not an
-inference from a capability flag.
+All three questions were measured with `harness/browser/probe-laftel.mjs`, through the
+extension's own adapter, on a logged-in account: **8/8** (BROWSER-FINDINGS §14).
+`pause()` sticks, `playbackRate` 1.1 is held (1.096× measured), `currentTime` writes stick, and
+`mediaKey` changes per episode including across Laftel's in-app navigation. No Laftel-specific
+adapter or `mediakey.ts` case is needed. Two things it showed that matter elsewhere: an in-buffer
+seek on Laftel costs **~100 ms** with `readyState` at 1 throughout (not §2's ~20 ms), and a resume
+often lands ~90 ms ahead of where it paused.
 
-1. **Does a programmatic `pause()` stick?** The load-bearing one.
+**How the session was set up, so the next one does not re-derive it.** The agent drives a
+dedicated Helium profile over CDP instead of the user's own browser window — a window the agent
+opened in the user's browser came up `document.visibilityState === 'hidden'`, and a hidden tab
+loads no media at all (§5b). See "Environment notes" below.
 
-   ```js
-   VideoSync.adapter.play(); await new Promise(r => setTimeout(r, 2000));
-   VideoSync.adapter.pause(); await new Promise(r => setTimeout(r, 3000));
-   VideoSync.adapter.readState().paused        // must still be true
-   ```
+### 1b. The `play` jump — measured; the policy question is open
 
-   Two mechanisms rest entirely on it: the reconciler (the anchor is truth about
-   pause state, and nothing in the correction table can press pause) and every
-   `media` command, whose anchor deliberately starts paused so the readiness
-   gate decides when the room may start. Both are e2e-tested against a player
-   that honours `pause()`. If Laftel resumes itself, both loop forever, and that
-   is a bigger finding than anything else on this list. The signature during a
-   real session is `VideoSync.engine().stats.reconciles` climbing while the
-   player never actually stops.
+`harness/browser/probe-laftel-room.mjs`, two visible windows, same account (not refused), loopback
+server so the lead is the 500 ms floor on every play (BROWSER-FINDINGS §15). Ten trials:
 
-2. **Does Laftel reset `playbackRate`?**
+- the other member starts **~527 ms** after the press;
+- the presser's picture jumps **back ~650 ms** (432–731) once, at the same instant;
+- net, the presser rewatches **~725 ms** and ends **~165 ms behind** the other member,
+  in 10/10 trials — the seek-back costs ~100 ms on Laftel and the other member does not seek;
+- pause: presser jump **0 in 10/10**, the other stops within 14–109 ms.
 
-   ```js
-   VideoSync.adapter.setRate(1.1); await new Promise(r => setTimeout(r, 10000));
-   VideoSync.adapter.readState().rate          // 1.1, or has the player taken it back?
-   ```
+**The first run of this probe found a real bug**, now fixed: a member gated by one transient
+report (the presser's own seek, `readyState` 1 for ~100 ms) stayed gated for as long as the servo
+kept answering "nudge", which for a paused member is forever — so the *next* play anyone pressed was
+held until that member left. `room.go` now clears the gate on any non-gate decision; hub test
+`TestAMemberWhoIsReadyAgainLeavesTheGateEvenWhileBeingNudged`. Sim numbers unchanged over 20 seeds.
 
-   Still open. The last session saw nudges being *sent* (`correctionsNudge`
-   climbing), which says nothing about whether the rate was held. If Laftel
-   fights it, `supportsPlaybackRateNudge` goes false and the correction law
-   needs a measured seek-only path.
+**What the numbers suggest — needs the user's decision.** Lowering the floor only shrinks the
+jump; the presser still seeks, still pays the seek, and still ends up behind. The alternative is to
+make the presser *wait*: on a local play, re-pause immediately (the element has moved ~25 ms) and
+start at `when` with everyone, from the anchor, with no seek. That turns "~725 ms rewatched and
+~165 ms behind" into "~500 ms before the picture moves" and removes the systematic lag, at the cost
+of pressing play feeling slower. It touches echo suppression (the local re-pause must not be
+reported as intent — rebaseline, never a timeout flag), so it is a change to design, not a tweak.
+Not implemented.
 
-3. **Does `mediaKey` differ per episode?** Open two episodes and compare
-   `VideoSync.mediaKey()`. The one sample so far was
-   `laftel:/player/45462/93304`, so the ids are in the path and the generic
-   `host:pathname` rule looks right — but two episodes have never been compared
-   side by side. If an episode turns out to live in a query parameter,
-   `client/core/src/adapter/mediakey.ts` is the one place that changes.
-
-### 1b. The `play` jump — needs two people, and only two people
-
-The one substantive design question still open, and **the harness cannot answer
-it**: it applies commands at `when`, so it is insensitive by construction to how
-far ahead `when` is (POC-FINDINGS §40c — a floor sweep of 500/300/200/100 ms
-moved nothing, and that is not evidence).
-
-Pause was fixed properly: it carries no lead and anchors where the pauser
-stopped. **`play` still moves whoever pressed it** by `CMD_DELAY` when the
-transition lands, because everybody has to start moving at the same instant from
-the same position and one of them has to give. On a fast link the 500 ms floor
-alone sets the size of that, and the floor is a chosen safety margin, not a
-measured one (SYNTHESIS §2 amendment fixed the ceiling and the percentile, not
-the floor).
-
-What to measure, with two members in a room: press play, and record how far the
-picture moves. `dump()` from both sides captures it — the `cmd`/`ack` pair in
-the trace carries `when` and `emittedAt`, so the lead is in the data. Then
-decide whether to lower the floor. Do not answer it from the simulation.
+Also worth a look while there: the gate still flickers open for ~100 ms during every Laftel seek.
+It is harmless now that it clears, but a play pressed inside that window is held until the next
+report. A report taken while the element is `seeking` inside its buffer is not evidence of
+buffering.
 
 ### 2. Tampermonkey itself
 
@@ -274,6 +258,9 @@ certificate, or a tunnel that gives you one:
 
 ## Open questions that block things
 
+- **Should the `play` presser wait instead of jump?** Measured (BROWSER-FINDINGS §15): on a
+  fast link the presser rewatches ~725 ms and ends ~165 ms behind. See "1b" above for the
+  proposal. The floor question below is subsumed by it.
 - **Is the 500 ms `CMD_DELAY` floor right?** Now only about `play`. Pause stopped being a
   scheduling question at all — a command that leaves the room stopped carries no lead and anchors
   where the pauser stopped (POC-FINDINGS §40c). What remains: whoever presses **play** still has
@@ -283,15 +270,9 @@ certificate, or a tunnel that gives you one:
   500/300/200/100 ms moved nothing, but the harness is insensitive to this by construction, so
   that is not evidence the floor is free to lower. Needs two people and a number.
 
-- ~~**Is `playbackRate` nudging safe?**~~ **Answered for MSE and for YouTube; still open on Laftel.** hls.js held 1.1
-  exactly (§7); the real YouTube player held 1.1 for 10 s and advanced 10.99 s of media in 10 s of
-  wall clock (§8). Writing `currentTime` sticks on YouTube too. **Laftel is still unmeasured** and
-  needs a session.
-- **Laftel** — narrowed by a live session, not closed (BROWSER-FINDINGS §12). `seekTo` sticks and
-  the generic `host:pathname` key picks up the episode ids. **Whether Laftel resets `playbackRate`
-  is still unmeasured**: nudges were observed being *sent*, which says nothing about whether the
-  rate was held. That is the whole `supportsPlaybackRateNudge` question and it needs the
-  10-second hold from §1.
+- ~~**Is `playbackRate` nudging safe?**~~ **Answered everywhere we ship.** hls.js held 1.1
+  exactly (§7), YouTube held 1.1 for 10 s at 1.099× (§8), Laftel held it for 10 s at 1.096× (§14).
+- ~~**Laftel**~~ — **answered**, BROWSER-FINDINGS §14.
 - **Tampermonkey itself is unverified.** Everything measured on YouTube injected the bundle into
   the main world via CDP. That is the pessimistic side of the CSP question (a pass there implies a
   pass in the sandbox), but the `@grant` sandbox, `GM_setValue`, and the panel's behaviour inside a
@@ -368,6 +349,16 @@ started being broadcast. The regression tests threshold rather than pin exact va
 reason.
 
 ## Environment notes
+
+- **Local live sessions (2026-09-16).** Helium (`/opt/helium-browser-bin/helium`, Chromium 153)
+  is the browser; do not open Chrome. The agent runs its own profile:
+  `helium --user-data-dir=$PWD/.cache/helium-profile --remote-debugging-port=9222
+  --load-extension=$PWD/client/extension/dist ...` — the user logged Laftel in there once, and
+  the profile persists in `.cache/`. A fresh profile has **no Widevine**; copy
+  `~/.config/net.imput.helium/WidevineCdm` into it. Helium ships uBlock Origin, which injects its
+  own isolated worlds, so CDP code must pick the world named `VideoSync`
+  (`Session.isolatedName` in `cdp.mjs`). The claude-in-chrome MCP also reaches the user's main
+  Helium window, but a tab it opens there can be `hidden` and then loads no media.
 
 - The host's package manager state is **not persistent**. Anything installed with `pacman`
   disappears on a host update — that is why the browser harness is containerised.

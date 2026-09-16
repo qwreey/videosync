@@ -117,12 +117,23 @@ export class Session {
     this.on('Runtime.executionContextsCleared', () => { this.contexts.clear(); });
   }
 
-  /** The most recently created isolated world, i.e. the content script's. */
+  /**
+   * The content script's isolated world: the most recently created one, or,
+   * when `isolatedName` is set, the most recent one with that name.
+   *
+   * "Most recent" is only right when ours is the sole extension. A real
+   * browser has others -- Helium ships uBlock Origin, which injects two
+   * isolated worlds into every page -- and the unfiltered pick lands in one of
+   * those and reports "VideoSync is not defined". A context's name is the
+   * extension's manifest name.
+   */
   isolatedContextId() {
     if (!this.contexts) return null;
     let best = null;
     for (const [id, c] of this.contexts) {
-      if (c.auxData && c.auxData.isDefault === false) best = id;
+      if (!c.auxData || c.auxData.isDefault !== false) continue;
+      if (this.isolatedName && c.name !== this.isolatedName) continue;
+      best = id;
     }
     return best;
   }

@@ -119,7 +119,13 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   one member the whole delay is spent making that member's own gesture wrong. `CmdDelay()` returns
   0 below two members (§40b).
 - **In-buffer seeks are ~free; out-of-buffer seeks cost a segment fetch and rebuffer.** The choice
-  is about price, not about the size of the error.
+  is about price, not about the size of the error. "Free" means no fetch, not no time: on Laftel
+  (Widevine) an in-buffer seek takes ~100 ms with `readyState` at 1 throughout
+  (`BROWSER-FINDINGS.md` §14), and a report sampled inside it looks exactly like buffering.
+- **Readiness is a fact about the report, not about the decision.** The gate used to be cleared
+  only when the corrector said "nothing to do"; the servo says "nudge" for as long as it holds a
+  rate bias, which a paused member never loses, so one transient unready report held every later
+  `play` until that member left the room. Found live on Laftel (`BROWSER-FINDINGS.md` §15).
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
   The detector reports play-state *transitions* only, so a member who was already playing when the
   room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is

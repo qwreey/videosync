@@ -46,3 +46,6 @@ harness/browser/media/
 
 client/core/node_modules/
 harness/browser/dist/
+
+# Locally built server binary (go build -o videosyncd in server/)
+server/videosyncd
