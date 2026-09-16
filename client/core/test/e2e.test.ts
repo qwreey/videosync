@@ -265,13 +265,24 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       a.engine.seek(1200);
       await waitFor(() => b.engine.appliedSeq >= 1, 4000, 'the seek');
 
+      // The room has to move WHILE b is away. b keeps its anchor across a
+      // drop, so a room that stood still would compare b's pre-drop anchor
+      // with itself and pass even if `welcome` were ignored. The longer
+      // backoff keeps b away long enough for the move to land first.
+      (b.engine.cfg as { reconnectBaseMs: number }).reconnectBaseMs = 3000;
       // Kill b's socket the way a dropped link would.
       (b.engine as unknown as { d: { transport: { close(): void } } }).d.transport.close();
       (b.engine as unknown as { onClose(c: boolean, r: string): void }).onClose(false, 'test drop');
-      await waitFor(() => b.engine.state === 'joined' && b.engine.clock.ready, 8000, 'b to rejoin');
+      await waitFor(() => a.engine.roster.length === 1, 2500, 'the server to drop b');
+      a.engine.seek(1800);
+      await waitFor(() => a.engine.appliedSeq >= 2, 2500, 'the seek made while b was away');
+      assert.notEqual(b.engine.state, 'joined', 'b rejoined before the room moved; nothing is tested');
+      assert.equal(b.engine.currentAnchor.positionMs, 1200000);
 
-      assert.equal(b.engine.currentAnchor.positionMs, a.engine.currentAnchor.positionMs,
-        'the rejoined member is on a different anchor');
+      await waitFor(() => b.engine.state === 'joined' && b.engine.clock.ready, 8000, 'b to rejoin');
+      assert.equal(b.engine.appliedSeq, a.engine.appliedSeq, 'the rejoined member is on an older seq');
+      assert.equal(b.engine.currentAnchor.positionMs, 1800000,
+        'the rejoined member kept its pre-drop anchor instead of the room\'s');
       assert.ok(b.engine.stats.reconnects >= 1);
     } finally {
       a.engine.stop(); b.engine.stop();
