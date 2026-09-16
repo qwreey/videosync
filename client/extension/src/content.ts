@@ -13,13 +13,18 @@
 import { start } from '@videosync/core/app/bootstrap.ts';
 import type { Platform, Store } from '@videosync/core/app/bootstrap.ts';
 
+import { STORE_KEYS } from '@videosync/core/providers/adoption.ts';
+
 import { PortTransport } from './porttransport.ts';
+import { providerHooks } from './providers.ts';
+import { ask } from './relay.ts';
+import type { FetchReply } from './relay.ts';
 
 const PREFIX = 'videosync.';
 // Every key the app reads must be listed: only these are hydrated, and a key
 // that is saved but not listed is written and then never seen again -- which is
 // exactly how following the room to its video first lost the session.
-const KEYS = ['server', 'room', 'secret', 'name', 'rejoin'] as const;
+const KEYS = ['server', 'room', 'secret', 'name', 'rejoin', ...Object.values(STORE_KEYS)] as const;
 
 /**
  * `chrome.storage` is async and the panel is built before anything can await,
@@ -59,18 +64,17 @@ function wsUrl(serverUrl: string): string {
  */
 const OPEN_PANEL = ['videosync-panel:closed'][0] === 'videosync-panel:open';
 
-const platform = async (): Promise<Platform> => ({
-  store: await hydrate(),
+const platform = async (store: Store): Promise<Platform> => ({
+  store,
+  providers: await providerHooks(store),
   openPanel: OPEN_PANEL,
   makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
   async createRoom(serverUrl, mediaKey, mediaUrl) {
     const url = new URL('/api/rooms', serverUrl).toString();
-    const r = await new Promise<{ ok: boolean; status: number; body: string; error?: string }>((res) => {
-      chrome.runtime.sendMessage(
-        { t: 'createRoom', url, body: JSON.stringify({ mediaKey, mediaUrl }) },
-        (out) => res(out ?? { ok: false, status: 0, body: '', error: String(chrome.runtime.lastError?.message) }),
-      );
-    });
+    const r = await ask<FetchReply>(
+      { t: 'createRoom', url, body: JSON.stringify({ mediaKey, mediaUrl }) },
+      (why) => ({ ok: false, status: 0, body: '', error: why }),
+    );
     if (!r.ok) throw new Error(r.error ?? `서버가 ${r.status}로 거절했어요`);
     return JSON.parse(r.body) as { roomId: string; secret: string };
   },
@@ -93,7 +97,19 @@ const platform = async (): Promise<Platform> => ({
   },
 });
 
-void (async () => {
-  const app = start(await platform());
-  window.VideoSync = app.api;
-})();
+declare global {
+  // eslint-disable-next-line no-var
+  var __videosyncLoaded: boolean | undefined;
+}
+
+// A site the user added with a wildcard can overlap a built-in page; the
+// registration excludes those, and this is the backstop -- two copies would
+// mount two panels and join the room twice. The flag lives in this
+// extension's isolated world, which every injection of it shares.
+if (!globalThis.__videosyncLoaded) {
+  globalThis.__videosyncLoaded = true;
+  void (async () => {
+    const app = start(await platform(await hydrate()));
+    window.VideoSync = app.api;
+  })();
+}

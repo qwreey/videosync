@@ -28,10 +28,12 @@ npm install && npm run build     # -> dist/
 
 ## How it is put together
 
-The worker is 1.7 kB and holds no session state: it is a frame relay and
-nothing else. The engine, the detector, the clock and the adapter all live in
-the content script beside the `<video>`, sharing
-`client/core/src/app/bootstrap.ts` verbatim with the userscript.
+The worker holds no session state: it is a frame relay, plus the provider
+bookkeeping that needs its privileges (fetching the server's descriptor index,
+reading granted hosts, registering the content script for added sites). The
+engine, the detector, the clock and the adapter all live in the content script
+beside the `<video>`, sharing `client/core/src/app/bootstrap.ts` verbatim with
+the userscript.
 
 That split is deliberate. Putting the engine in the worker would mean the
 player's position crossing a message port on every evaluation, and this design
@@ -41,8 +43,29 @@ the same path it already uses for a dropped network.
 
 ## Adding a provider
 
-One entry in `manifest.json`'s `content_scripts.matches`. There is no per-site
-code.
+A built-in provider is a descriptor file in the repository's `providers/`
+directory. `npm run build` compiles those into the bundle and generates
+`content_scripts.matches` from their `pageHosts` -- `manifest.json`'s own list
+is empty on purpose, so the host list cannot drift from the descriptors.
+
+Without rebuilding: **Options** (`chrome://extensions` → VideoSync → Extension
+options) lists the descriptors in force, lets you paste, import, edit and delete
+your own, and shows what the configured server offers
+(`videosyncd -providers DIR`). Adopting a server descriptor pins its sha256;
+a later change is shown as a difference and never applied silently, and a
+change that widens hosts, identity rules, the canonical host or `pathFallback`
+always asks, even with "auto-adopt from this server" on. Replacing a built-in
+needs its own confirmation.
+
+A site that is not built in needs **"사이트 권한 허용"** on that page: the
+extension asks for the host at run time (`optional_host_permissions`) and
+registers the same bundled `content.js` for it
+(`scripting.registerContentScripts`). No code is ever downloaded -- a
+descriptor is data the bundled code reads.
+
+The in-page panel only *mentions* that the server has an update for the
+provider you pressed play on; the decision is made on the options page, which a
+page cannot overlay.
 
 ## The room link is the whole security model
 
@@ -53,7 +76,10 @@ you re-share with the people you meant.
 
 ## Permissions
 
-`storage`, and the content-script matches. **No `host_permissions`** — the
+`storage`, `scripting`, and the content-script matches. `scripting` and
+`optional_host_permissions: ["https://*/*"]` are for sites added from the
+options page; optional hosts are not shown at install and each is asked for
+when you add a site. **No `host_permissions`** — the
 worker reaches your server with an ordinary CORS request, and `videosyncd` sends
 `Access-Control-Allow-Origin: *`. Measured both ways
 (`harness/browser/results/ext-permissions.json`): room creation and the relayed
@@ -66,7 +92,8 @@ server itself always sends them.
 ## Firefox
 
 `npm run build` also writes `dist-firefox/`: the same two scripts under a
-**Manifest V2** manifest. Load it from `about:debugging` → This Firefox →
+**Manifest V2** manifest (`optional_permissions` in place of
+`optional_host_permissions`). Load it from `about:debugging` → This Firefox →
 Load Temporary Add-on → `dist-firefox/manifest.json`.
 
 Why V2, measured (`docs/BROWSER-FINDINGS.md` §19): every MV3 extension page in
@@ -79,3 +106,9 @@ such rule, runs from `background.scripts` (Firefox never shipped
 Validated against a Chromium member in the same room: join, being taken to the
 room's video and rejoining, play and pause both ways, seeks, 30 s together
 within 81 ms, and the rate handed back on leaving (10/10 on local media).
+
+Adding a site at run time is **not yet run in Firefox**. The worker uses
+`scripting.registerContentScripts` where Firefox exposes it to MV2 and falls
+back to `contentScripts.register`, whose registration lasts only while the
+background page lives -- it is redone every time the background starts, so a
+page loaded while it sleeps may miss the script. Both need a live check.

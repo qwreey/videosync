@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VideoSync 제공자 설명</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1c1d22; --muted: #5d606b; --line: #d7d9e0; --bg: #fff; --card: #f6f7f9;
+    --accent: #2a5cff; --warn: #a65f00; --err: #c0392b; --ok: #1f8a4c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #e9e9ea; --muted: #9a9ca6; --line: #303138; --bg: #17181c; --card: #1f2026;
+      --accent: #7f97ff; --warn: #e0b23a; --err: #e05a4f; --ok: #3ecf6a; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 32px 0 8px; }
+  p.lead, .muted { color: var(--muted); }
+  section { border-top: 1px solid var(--line); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .card h3 { font-size: 14px; margin: 0; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tag { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--muted); }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .tag.ok { color: var(--ok); border-color: var(--ok); }
+  code, textarea { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .hosts { font-size: 12px; color: var(--muted); word-break: break-all; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=url], textarea { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  textarea { min-height: 220px; }
+  .status { min-height: 1.5em; white-space: pre-wrap; }
+  .status.err { color: var(--err); }
+  .status.warn { color: var(--warn); }
+  .status.ok { color: var(--ok); }
+  table.diff { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: 12px; table-layout: fixed; }
+  table.diff th, table.diff td { border: 1px solid var(--line); padding: 4px 6px; vertical-align: top; text-align: left; }
+  table.diff td { word-break: break-all; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+  table.diff tr.widens th { color: var(--warn); }
+  label.inline { display: inline-flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>VideoSync 제공자 설명</h1>
+  <p class="lead">어느 주소가 영상인지, 어떤 &lt;video&gt;가 플레이어인지를 적은 JSON 파일이에요. 코드는 아니고, 확장 프로그램에 들어 있는 코드가 읽기만 해요.</p>
+  <div id="app"></div>
+</main>
+<script type="module" src="options.js"></script>
+</body>
+</html>

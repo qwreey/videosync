@@ -11,8 +11,9 @@
  * reconnect and nothing else -- the content script's engine already knows how
  * to do that.
  */
-import { PORT_NAME } from './relay.ts';
-import type { FromWorker, ToWorker } from './relay.ts';
+import { grantedOrigins, syncContentScripts } from './dynamic.ts';
+import { PORT_NAME, providersPath } from './relay.ts';
+import type { FetchReply, FromWorker, SyncReply, ToWorker, WorkerRequest } from './relay.ts';
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== PORT_NAME) return;
@@ -83,12 +84,59 @@ chrome.runtime.onConnect.addListener((port) => {
 
 /**
  * Room creation is HTTP, and a content script on a public-origin page cannot
- * make that call to a private address either -- so it is relayed too.
+ * make that call to a private address either -- so it is relayed too. So is
+ * the provider index, for the same reason, and only that: this worker can
+ * reach addresses the page cannot, so it fetches nothing a caller names
+ * beyond the two provider paths.
  */
-chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
-  if (msg?.t !== 'createRoom') return false;
-  fetch(msg.url, { method: 'POST', body: msg.body })
-    .then(async (r) => respond({ ok: r.ok, status: r.status, body: await r.text() }))
-    .catch((e) => respond({ ok: false, status: 0, body: '', error: String(e) }));
-  return true; // async response
+chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
+  // Only our own pages and content scripts can reach this listener at all
+  // (no `externally_connectable`); the check is for a future manifest edit.
+  if (sender.id !== chrome.runtime.id) return false;
+  const reply = (p: Promise<unknown>) => {
+    p.then(respond, (e) => respond({ ok: false, status: 0, body: '', error: String(e) } satisfies FetchReply));
+  };
+  switch (msg?.t) {
+    case 'createRoom':
+      reply(fetch(msg.url, { method: 'POST', body: msg.body })
+        .then(async (r): Promise<FetchReply> => ({ ok: r.ok, status: r.status, body: await r.text() })));
+      return true; // async response
+    case 'providers.fetch': {
+      let url: URL;
+      try {
+        url = new URL(msg.path, msg.server);
+      } catch {
+        respond({ ok: false, status: 0, body: '', error: 'bad server URL' } satisfies FetchReply);
+        return false;
+      }
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !providersPath(url.pathname) || url.search) {
+        respond({ ok: false, status: 0, body: '', error: 'not a provider path' } satisfies FetchReply);
+        return false;
+      }
+      reply(fetch(url, { cache: 'no-cache' })
+        .then(async (r): Promise<FetchReply> => ({ ok: r.ok, status: r.status, body: await r.text() })));
+      return true;
+    }
+    case 'providers.granted':
+      reply(grantedOrigins().then((origins) => ({ origins })));
+      return true;
+    case 'providers.sync':
+      reply(syncContentScripts().then(
+        (patterns): SyncReply => ({ patterns }),
+        (e): SyncReply => ({ patterns: [], error: String(e) })));
+      return true;
+    default:
+      return false;
+  }
 });
+
+// The registration follows the stored descriptors and the granted hosts,
+// whichever changed and from wherever. Firefox's MV2 registration also has to
+// be redone every time this background starts.
+const resync = () => { syncContentScripts().catch(() => { /* the options page reports its own sync */ }); };
+chrome.permissions?.onAdded?.addListener(resync);
+chrome.permissions?.onRemoved?.addListener(resync);
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && Object.keys(changes).some((k) => k.startsWith('videosync.providers.'))) resync();
+});
+resync();
