@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { Html5Adapter } from '../src/adapter/html5.ts';
 import { followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
 import {
   buildRegistry, diffDescriptors, mayAutoAdopt, openOffers, parseIndex, pendingUpdates, readState,
@@ -396,5 +397,54 @@ describe('a registry with nothing in it', () => {
     const reg = new ProviderRegistry([]);
     assert.equal(normalizeMediaKey('https://www.youtube.com/watch?v=abc', reg), 'youtube.com:/watch');
     assert.equal(watchUrl('https://laftel.net/logout?x=1', reg), 'https://laftel.net/logout');
+  });
+});
+
+describe("a descriptor's capability mask on the HTML5 adapter", () => {
+  class El extends EventTarget {
+    currentTime = 0;
+    paused = true;
+    playbackRate = 1;
+    readyState = 4;
+    muted = false;
+    volume = 1;
+    duration = 100;
+    buffered = { length: 0, start: () => 0, end: () => 0 };
+  }
+  const el = () => new El() as unknown as HTMLVideoElement;
+
+  it('can only take capabilities away', () => {
+    const plain = new Html5Adapter(el());
+    assert.equal(plain.capabilities.supportsPlaybackRateNudge, true);
+    assert.equal(plain.capabilities.supportsDirectSeek, true);
+    const masked = new Html5Adapter(el(), 'html5', { capabilities: { playbackRateNudge: false } });
+    assert.equal(masked.capabilities.supportsPlaybackRateNudge, false);
+    assert.equal(masked.capabilities.supportsDirectSeek, true);
+    const noSeek = new Html5Adapter(el(), 'html5', { capabilities: { directSeek: false } });
+    assert.equal(noSeek.capabilities.supportsDirectSeek, false);
+    // `true` in a mask grants nothing the adapter does not have.
+    const asked = new Html5Adapter(el(), 'html5', { capabilities: { playbackRateNudge: true, directSeek: true } });
+    assert.deepEqual(asked.capabilities, plain.capabilities);
+    for (const a of [plain, masked, noSeek, asked]) a.destroy();
+  });
+
+  it('takes the seek timeout and landing tolerance from the descriptor', async () => {
+    const e = el();
+    const a = new Html5Adapter(e, 'html5', { seek: { timeoutMs: 1000, landingToleranceS: 2 } });
+    const p = a.seekTo(10);
+    // The element lands 1.5 s short: inside this provider's 2 s tolerance,
+    // outside the default 0.5 s.
+    e.currentTime = 8.5;
+    e.dispatchEvent(new Event('seeked'));
+    await p;
+    const b = new Html5Adapter(e, 'html5', { seek: { timeoutMs: 1000 } });
+    const t0 = Date.now();
+    const q = b.seekTo(10);
+    e.currentTime = 8.5;
+    e.dispatchEvent(new Event('seeked'));
+    await assert.rejects(q, /within 1000ms/);
+    assert.ok(Date.now() - t0 < 3000, 'the descriptor timeout, not the 10 s default');
+    a.destroy();
+    b.destroy();
   });
 });

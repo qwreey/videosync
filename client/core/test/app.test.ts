@@ -11,7 +11,10 @@ import { start } from '../src/app/bootstrap.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
-import { FakeTransport, flush } from './fakes.ts';
+import { FakePlayer, FakeTransport, flush, realTime } from './fakes.ts';
+import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
+import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
+import type { Descriptor } from '../src/providers/descriptor.ts';
 import { installDom } from './fakedom.ts';
 import type { FakeElement, Installed } from './fakedom.ts';
 
@@ -582,5 +585,133 @@ describe('the panel', () => {
       assert.doesNotMatch(text, /복사했어요/);
       assert.match(text, /#videosync=R\.S/, 'with no clipboard, the link has to be somewhere the user can take it');
     }
+  });
+});
+
+describe('provider descriptors on the page', () => {
+  const lines = (h: H) => [...h.root().shadow!.walk()]
+    .filter((e) => e.className.split(' ').includes('line')).map((e) => e.textContent);
+
+  const DESC: Descriptor = {
+    schema: 1, id: 'example', name: 'Example', version: '1.2.3', adapter: 'html5',
+    hosts: ['video.example'], canonicalHost: 'video.example',
+    identity: [{ path: '/watch/{id}', key: '/watch/{id}', watch: 'https://video.example/watch/{id}' }],
+    pathFallback: false,
+    capabilities: { playbackRateNudge: false },
+    video: { exclude: ['aside'] },
+    examples: [{ url: 'https://video.example/watch/a', key: 'example:/watch/a' }],
+  };
+
+  async function userRegistry(...ds: Descriptor[]) {
+    const user = [];
+    for (const d of ds) {
+      const source = JSON.stringify(d);
+      user.push({ source, sha256: await sha256Hex(source) });
+    }
+    return buildRegistry({ user, adopted: [], servers: {} }, () => false);
+  }
+
+  /** Put one `<video>` on the fake page and let the watcher find it. */
+  async function addVideo(h: H, parentTag = 'div') {
+    const parent = h.dom.doc.createElement(parentTag);
+    const v = h.dom.doc.createElement('video');
+    parent.append(v);
+    Object.assign(v, { videoWidth: 1920, videoHeight: 1080, duration: 60, paused: true, readyState: 4, muted: false,
+      volume: 1, currentTime: 0, playbackRate: 1, buffered: { length: 0 } });
+    h.dom.doc.querySelectorAll = (sel: string) => (sel === 'video' ? [v] : []);
+    await h.tick(1000);
+    return v;
+  }
+
+  it('reports the built-in in force through dump()', () => {
+    const h = harness(ROOM_URL);
+    const d = JSON.parse(h.app.api.dump());
+    const yt = BUILTIN_SOURCES.find((b) => b.file === 'youtube.json')!;
+    assert.deepEqual(d.provider, { id: 'yt', name: 'YouTube', version: '1.0.0', sha256: yt.sha256, tier: 'built-in' });
+    assert.deepEqual(d.providerConflict, []);
+  });
+
+  it('reports the generic rule on a site nobody describes', () => {
+    const h = harness('https://video.example/watch/a');
+    const d = JSON.parse(h.app.api.dump());
+    assert.deepEqual(d.provider, { id: null, tier: 'generic' });
+    assert.equal(d.mediaKey, 'video.example:/watch/a');
+  });
+
+  it('keys the page, picks the element and masks the player by the user\'s descriptor', async () => {
+    const reg = await userRegistry(DESC);
+    const h = harness('https://video.example/watch/a', makeStore(), new Map(), { providers: { registry: reg } });
+    assert.equal(h.app.api.mediaKey(), 'example:/watch/a');
+    const d = JSON.parse(h.app.api.dump());
+    assert.equal(d.provider.tier, 'user');
+    assert.equal(d.provider.version, '1.2.3');
+
+    await addVideo(h);
+    assert.ok(h.app.api.adapter.current, 'the video was found');
+    assert.equal(h.app.api.adapter.capabilities.supportsPlaybackRateNudge, false, 'the mask reached the adapter');
+    assert.equal(h.app.api.adapter.capabilities.supportsDirectSeek, true);
+  });
+
+  it('drops an element the descriptor excludes', async () => {
+    const reg = await userRegistry(DESC);
+    const h = harness('https://video.example/watch/a', makeStore(), new Map(), { providers: { registry: reg } });
+    await addVideo(h, 'aside');
+    assert.equal(h.app.api.adapter.current, null);
+    // Control: the same page without the descriptor takes it.
+    h.app.destroy();
+    h.dom.uninstall();
+    mock.timers.reset();
+    const plain = harness('https://video.example/watch/a');
+    await addVideo(plain, 'aside');
+    assert.ok(plain.app.api.adapter.current);
+  });
+
+  it('says so, and applies neither, when two descriptors tie for the site', async () => {
+    const other = { ...DESC, id: 'other', name: 'Other', examples: [{ url: 'https://video.example/watch/a', key: 'other:/watch/a' }] };
+    const reg = await userRegistry(DESC, other);
+    const h = harness('https://video.example/watch/a', makeStore(), new Map(), { providers: { registry: reg } });
+    assert.equal(h.app.api.mediaKey(), 'video.example:/watch/a');
+    assert.ok(lines(h).some((l) => l.includes('Example') && l.includes('Other')), lines(h).join('|'));
+    assert.deepEqual(JSON.parse(h.app.api.dump()).providerConflict.map((c: { id: string }) => c.id).sort(), ['example', 'other']);
+  });
+
+  it('mentions a server update when play is pressed on that provider, once', async () => {
+    const asked: string[] = [];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {
+      providers: {
+        registry: (await userRegistry()),
+        updatesFrom: (server) => { asked.push(server); return Promise.resolve([{ id: 'yt', name: 'YouTube' }]); },
+        decideWhere: '확장 프로그램 설정',
+      },
+    });
+    h.join();
+    await flush();
+    assert.deepEqual(asked, [SERVER]);
+    const player = new FakePlayer(realTime);
+    h.app.api.adapter.setTarget(player);
+    assert.equal(lines(h).filter((l) => l.includes('새 버전')).length, 0, 'nothing before play');
+    player.emit('play');
+    player.emit('play');
+    const said = lines(h).filter((l) => l.includes('새 버전'));
+    assert.equal(said.length, 1, said.join('|'));
+    assert.match(said[0]!, /YouTube/);
+    assert.match(said[0]!, /확장 프로그램 설정/);
+    assert.equal(h.visibleButton('적용'), undefined, 'the decision is never offered in the page');
+  });
+
+  it('does not mention an update for another provider', async () => {
+    const h = harness(ROOM_URL, makeStore(), new Map(), {
+      providers: {
+        registry: (await userRegistry()),
+        updatesFrom: () => Promise.resolve([{ id: 'laftel', name: 'Laftel' }]),
+      },
+    });
+    h.join();
+    await flush();
+    const player = new FakePlayer(realTime);
+    h.app.api.adapter.setTarget(player);
+    player.emit('play');
+    assert.equal(lines(h).filter((l) => l.includes('새 버전')).length, 0);
+    assert.deepEqual(JSON.parse(h.app.api.dump()).providerUpdates, ['laftel']);
   });
 });

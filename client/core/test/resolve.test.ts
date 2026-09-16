@@ -1,17 +1,31 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { PageWatcher } from '../src/adapter/resolve.ts';
+import { OUTCLASSED, PageWatcher, pickVideo } from '../src/adapter/resolve.ts';
 import type { VideoLike } from '../src/adapter/resolve.ts';
+import type { VideoHints } from '../src/providers/descriptor.ts';
 
-type FakeVideo = { -readonly [K in keyof VideoLike]: VideoLike[K] };
+type FakeVideo = { -readonly [K in keyof VideoLike]: VideoLike[K] } & {
+  /** CSS classes of this element and its ancestors, for `closest`. */
+  classes?: string[];
+  closest?(sel: string): unknown;
+};
 
-const video = (o: Partial<FakeVideo>): FakeVideo => ({
-  videoWidth: 1920, videoHeight: 1080, duration: 600, paused: true, readyState: 4, muted: false, volume: 1, ...o,
-});
+const video = (o: Partial<FakeVideo>): FakeVideo => {
+  const v: FakeVideo = {
+    videoWidth: 1920, videoHeight: 1080, duration: 600, paused: true, readyState: 4, muted: false, volume: 1, ...o,
+  };
+  // Class selectors only (`.name`); anything else is a syntax error, as an
+  // unsupported selector is in a browser.
+  v.closest = (sel: string) => {
+    if (!/^\.[a-z-]+$/.test(sel)) throw new SyntaxError(sel);
+    return (v.classes ?? []).includes(sel.slice(1)) ? v : null;
+  };
+  return v;
+};
 
 /** Just enough document and window for PageWatcher, driven by hand. */
-function page(videos: FakeVideo[]) {
+function page(videos: FakeVideo[], hints?: VideoHints) {
   const changes: Array<[unknown, string]> = [];
   const timers: Array<() => void> = [];
   const doc = {
@@ -28,6 +42,7 @@ function page(videos: FakeVideo[]) {
     onChange: (el, href) => { changes.push([el, href]); },
     setTimer: (fn) => { timers.push(fn); return timers.length; },
     clearTimer: () => {},
+    ...(hints ? { hints: () => hints } : {}),
   });
   return { w, changes };
 }
@@ -57,5 +72,95 @@ describe('PageWatcher', () => {
     assert.equal(fresh.w.current, other);
     w.stop();
     fresh.w.stop();
+  });
+});
+
+describe('how much larger a picture must be to take over', () => {
+  // The bound was a bare constant with no test: 4x. A comparable player
+  // stepping from 720p to 1080p is 2.25x and must not trade places; a banner
+  // against a feature is 16x and must.
+  const quiet = (w: number, h: number) => video({ videoWidth: w, videoHeight: h, paused: true });
+
+  it('is 4x by default, exclusive', () => {
+    assert.equal(OUTCLASSED, 4);
+    const current = quiet(960, 540);
+    assert.equal(pickVideo([current, quiet(1920, 1080)], current), current, 'exactly 4x keeps the current element');
+    const bigger = quiet(1921, 1080);
+    assert.equal(pickVideo([current, bigger], current), bigger, 'just over 4x takes over');
+    const hd = quiet(1280, 720);
+    assert.equal(pickVideo([hd, quiet(1920, 1080)], hd), hd, '720p -> 1080p is 2.25x');
+  });
+
+  it('can be tuned per provider', () => {
+    const current = quiet(1280, 720);
+    const other = quiet(1920, 1080);
+    assert.equal(pickVideo([current, other], current, 2), other, '2.25x outclasses at factor 2');
+    assert.equal(pickVideo([current, other], current, 3), current, 'but not at 3');
+  });
+});
+
+describe('provider video hints', () => {
+  it('drops excluded elements, whatever their size', () => {
+    const preview = video({ videoWidth: 3840, videoHeight: 2160, classes: ['preview'] });
+    const feature = video({});
+    const { w } = page([preview, feature], { exclude: ['.preview'] });
+    w.start();
+    assert.equal(w.current, feature);
+    const control = page([preview, feature]);
+    control.w.start();
+    assert.equal(control.w.current, preview, 'control: without the hint the bigger one wins');
+    w.stop();
+    control.w.stop();
+  });
+
+  it('considers only included elements, and all of them if the selector finds none', () => {
+    const big = video({ videoWidth: 3840, videoHeight: 2160 });
+    const player = video({ videoWidth: 640, videoHeight: 360, classes: ['player'] });
+    const a = page([big, player], { include: ['.player'] });
+    a.w.start();
+    assert.equal(a.w.current, player);
+    assert.equal(a.w.staleInclude, false);
+    // A site redesign that renames the class must degrade to today's
+    // behaviour, not to "no video on this page".
+    const b = page([big, video({ classes: ['other'] })], { include: ['.player'] });
+    b.w.start();
+    assert.equal(b.w.current, big);
+    assert.equal(b.w.staleInclude, true, 'surfaced for dump()');
+    a.w.stop();
+    b.w.stop();
+  });
+
+  it('ignores a picture below the floor, but not one with no size yet', () => {
+    const tiny = video({ videoWidth: 100, videoHeight: 100, paused: false });
+    const unsized = video({ videoWidth: 0, videoHeight: 0, readyState: 0 });
+    const { w } = page([tiny, unsized], { minIntrinsicArea: 10_800 });
+    w.start();
+    assert.equal(w.current, unsized, 'the feature before its metadata is not an ad');
+    const control = page([tiny, unsized]);
+    control.w.start();
+    assert.equal(control.w.current, tiny, 'control: the audible tiny element wins without the floor');
+    w.stop();
+    control.w.stop();
+  });
+
+  it('treats a selector the browser rejects as matching nothing', () => {
+    const feature = video({});
+    const { w } = page([feature], { exclude: ['div >>> video'], include: ['::bogus'] });
+    w.start();
+    assert.equal(w.current, feature);
+    w.stop();
+  });
+
+  it('uses the provider\'s factor when keeping the current element', () => {
+    const hd = video({ videoWidth: 1280, videoHeight: 720, readyState: 4 });
+    const fhd = video({ videoWidth: 1920, videoHeight: 1080, readyState: 1 });
+    const all = [hd];
+    const { w } = page(all, { outclassedFactor: 2 });
+    w.start();
+    assert.equal(w.current, hd);
+    all.push(fhd);
+    w.check();
+    assert.equal(w.current, fhd, '2.25x is enough at factor 2');
+    w.stop();
   });
 });

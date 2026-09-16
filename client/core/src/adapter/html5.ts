@@ -2,10 +2,30 @@ import type {
   AdapterCapabilities, AdapterEvent, BufferedRange, PlayerState, ProviderAdapter,
 } from './types.ts';
 import { AutoplayBlockedError } from './types.ts';
+import type { CapabilityMask, SeekHints } from '../providers/descriptor.ts';
 
 const DOM_EVENTS: readonly AdapterEvent[] = [
   'play', 'pause', 'seeked', 'seeking', 'ratechange', 'waiting', 'playing', 'stalled', 'timeupdate',
 ];
+
+/** What a provider descriptor may tune on this adapter. */
+export interface Html5Options {
+  /**
+   * Restrict-only: `false` turns a capability off, `true` changes nothing.
+   * A descriptor someone else wrote must never promise a player more than
+   * this code can do (a direct seek crashes some players outright).
+   */
+  capabilities?: CapabilityMask;
+  seek?: Pick<SeekHints, 'landingToleranceS' | 'timeoutMs'>;
+}
+
+const BASE_CAPABILITIES: AdapterCapabilities = {
+  supportsDirectSeek: true,
+  supportsDirectPlayPause: true,
+  supportsPlaybackRateNudge: true,
+  supportsAdDetection: false,
+  volatileVideoElement: false,
+};
 
 /**
  * The generic adapter: a plain HTML5 `<video>`.
@@ -15,13 +35,7 @@ const DOM_EVENTS: readonly AdapterEvent[] = [
  */
 export class Html5Adapter implements ProviderAdapter {
   readonly id: string;
-  readonly capabilities: AdapterCapabilities = {
-    supportsDirectSeek: true,
-    supportsDirectPlayPause: true,
-    supportsPlaybackRateNudge: true,
-    supportsAdDetection: false,
-    volatileVideoElement: false,
-  };
+  readonly capabilities: AdapterCapabilities;
 
   private readonly listeners = new Map<AdapterEvent, Set<() => void>>();
   private readonly domHandlers: Array<[string, EventListener]> = [];
@@ -30,10 +44,21 @@ export class Html5Adapter implements ProviderAdapter {
   private destroyed = false;
 
   private readonly el: HTMLVideoElement;
+  private readonly seekTimeoutMs: number;
+  /** How far from the target a `seeked` may land and still be ours. */
+  private readonly landingToleranceS: number;
 
-  constructor(el: HTMLVideoElement, id = 'html5') {
+  constructor(el: HTMLVideoElement, id = 'html5', opts: Html5Options = {}) {
     this.el = el;
     this.id = id;
+    const m = opts.capabilities ?? {};
+    this.capabilities = {
+      ...BASE_CAPABILITIES,
+      supportsDirectSeek: BASE_CAPABILITIES.supportsDirectSeek && m.directSeek !== false,
+      supportsPlaybackRateNudge: BASE_CAPABILITIES.supportsPlaybackRateNudge && m.playbackRateNudge !== false,
+    };
+    this.seekTimeoutMs = opts.seek?.timeoutMs ?? 10_000;
+    this.landingToleranceS = opts.seek?.landingToleranceS ?? 0.5;
     for (const type of DOM_EVENTS) {
       const h: EventListener = () => this.emit(type);
       this.el.addEventListener(type, h);
@@ -120,7 +145,7 @@ export class Html5Adapter implements ProviderAdapter {
    * does not throw -- it stalls into `waiting` until data arrives -- so a
    * caller that assumes completion is wrong exactly when it matters most.
    */
-  seekTo(positionS: number, timeoutMs = 10_000): Promise<void> {
+  seekTo(positionS: number, timeoutMs = this.seekTimeoutMs): Promise<void> {
     if (this.destroyed) return Promise.reject(new Error('seek on a destroyed adapter'));
     return new Promise<void>((resolve, reject) => {
       let timer = 0;
@@ -144,7 +169,7 @@ export class Html5Adapter implements ProviderAdapter {
         const lands = Number.isFinite(d) && d > 0
           ? Math.min(Math.max(positionS, 0), d)
           : Math.max(positionS, 0);
-        if (Math.abs(this.el.currentTime - lands) > 0.5) return;
+        if (Math.abs(this.el.currentTime - lands) > this.landingToleranceS) return;
         settle(null);
       };
       // The adapter is being let go of -- the page replaced the element, and
