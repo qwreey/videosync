@@ -141,6 +141,26 @@ describe('picking the element the user is watching', () => {
     assert.equal(pickVideo([loaded], gone), loaded, 'the current element left the document');
   });
 
+  it('gives up a wrong first pick for a far larger picture', () => {
+    // A banner that was on the page first gets picked first. Holding on to it
+    // leaves the feature unwatched until the user presses play with sound --
+    // and swapping elements at that moment undoes the play.
+    const banner = v({ videoWidth: 320, videoHeight: 180, paused: true, readyState: 4 });
+    const paused = v({ videoWidth: 1920, videoHeight: 1080, paused: true, readyState: 4 });
+    const mutedPlaying = v({ videoWidth: 1920, videoHeight: 1080, paused: false, readyState: 4, muted: true });
+    assert.equal(pickVideo([banner, paused], banner), paused, 'paused feature');
+    assert.equal(pickVideo([banner, mutedPlaying], banner), mutedPlaying, 'muted feature');
+    const sized0 = v({ paused: true, readyState: 1 });
+    assert.equal(pickVideo([sized0, paused], sized0), paused, 'current has no picture at all');
+    // Controls: stickiness still holds between comparable pictures, and
+    // nothing takes over from an element the user is listening to.
+    const hd = v({ videoWidth: 1280, videoHeight: 720, paused: true, readyState: 4 });
+    assert.equal(pickVideo([hd, paused], hd), hd, '720p current, 1080p other: not outclassed');
+    const listening = v({ videoWidth: 320, videoHeight: 180, paused: false, readyState: 4 });
+    assert.equal(pickVideo([listening, paused], listening), listening, 'audible current');
+    assert.equal(pickVideo([listening, mutedPlaying], listening), listening, 'audible current, muted feature');
+  });
+
   it('prefers the largest picture among elements that are all paused', () => {
     // A hover-preview must never win over the feature presentation.
     const preview = v({ videoWidth: 320, videoHeight: 180, readyState: 4 });
