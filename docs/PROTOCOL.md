@@ -122,6 +122,25 @@ It uses the member's own measured RTT as the grace period instead (§40a).
 A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two members, because the
 delay buys simultaneity with people who are not there.
 
+### Amendment: the member who presses `play` waits for `when` too
+
+`play` keeps its full lead, so somebody has to give while it runs out, and until now it was the
+presser: their element was already playing, and when their own `ack` landed the transition sought
+them back to the anchor. Measured live on Laftel with two members on the 500 ms floor
+(`BROWSER-FINDINGS.md` §15): a ~650 ms backward jump on every play, ~725 ms rewatched, and the
+presser ending ~165 ms behind because the seek-back itself costs ~100 ms there.
+
+A client that detects a local `play` in a room of two or more therefore sends the command and
+**immediately re-pauses its own element at the anchor** (client-side only; `holdLocalPlay` in the
+engine). Everyone then starts from the same paused position at `when`, and the presser's landing
+needs no seek. The server is unchanged and does not know. What it costs is the lead itself, spent
+as a wait before the picture moves instead of as a rewind after it (§16: backward jump gone, both
+members starting within ~15 ms of each other).
+
+The re-pause is an applied transition like any other — it runs under the same echo suppression and
+ends in `rebaseline(pos, paused)` — and nothing waits for the ack: if the play is held by the gate,
+superseded or refused, the member is simply paused in a paused room, which is correct.
+
 Clients discard any `state` with `seq <= lastAppliedSeq`.
 
 A `kind` the server does not implement, or a `media` command with no `mediaKey`, is refused with

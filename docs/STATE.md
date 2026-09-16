@@ -16,7 +16,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | Userscript shim | **built and validated end to end** — `client/userscript/`, BROWSER-FINDINGS §7 |
 | Live provider smoke test — YouTube | **done** — BROWSER-FINDINGS §8 |
 | Live provider smoke test — Laftel | **done** — BROWSER-FINDINGS §14 (8/8): pause, rate, seek and per-episode `mediaKey` all hold |
-| Two members, live, on Laftel | **measured** — BROWSER-FINDINGS §15; found and fixed a gate that never released |
+| Two members, live, on Laftel | **measured and fixed** — BROWSER-FINDINGS §15–16: a gate that never released, and the presser now waits instead of jumping back |
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
 | Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (12/12) |
 | Observability for a live session | **built and browser-validated** — `VideoSync.dump()`, `videosyncd -verbose` |
@@ -47,7 +47,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 63 unit tests, plus 13 end-to-end tests that drive real engines over real WebSockets
+  build step. 70 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -123,7 +123,7 @@ exists because of that.
 
 ```bash
 mise run test          # Go + TS + both shims' typecheck
-mise run test-e2e      # 13 tests, real engines over real sockets against a real videosyncd
+mise run test-e2e      # 14 tests, real engines over real sockets against a real videosyncd
 
 cd server && go build -o videosyncd ./cmd/videosyncd
 ./videosyncd -addr 127.0.0.1:8787 -verbose -idle-ttl 30m
@@ -183,36 +183,31 @@ dedicated Helium profile over CDP instead of the user's own browser window — a
 opened in the user's browser came up `document.visibilityState === 'hidden'`, and a hidden tab
 loads no media at all (§5b). See "Environment notes" below.
 
-### 1b. The `play` jump — measured; the policy question is open
+### 1b. The `play` jump — measured, and fixed by making the presser wait
 
 `harness/browser/probe-laftel-room.mjs`, two visible windows, same account (not refused), loopback
-server so the lead is the 500 ms floor on every play (BROWSER-FINDINGS §15). Ten trials:
+server so the lead is the 500 ms floor on every play (BROWSER-FINDINGS §15, §16).
 
-- the other member starts **~527 ms** after the press;
-- the presser's picture jumps **back ~650 ms** (432–731) once, at the same instant;
-- net, the presser rewatches **~725 ms** and ends **~165 ms behind** the other member,
-  in 10/10 trials — the seek-back costs ~100 ms on Laftel and the other member does not seek;
-- pause: presser jump **0 in 10/10**, the other stops within 14–109 ms.
+Before: the presser's picture jumped **back ~650 ms** when their own play landed, they rewatched
+~725 ms, and ended ~165 ms behind. The first run of the probe also found a **gate that never
+released** — fixed in `room.go`, see §15.
 
-**The first run of this probe found a real bug**, now fixed: a member gated by one transient
-report (the presser's own seek, `readyState` 1 for ~100 ms) stayed gated for as long as the servo
-kept answering "nudge", which for a paused member is forever — so the *next* play anyone pressed was
-held until that member left. `room.go` now clears the gate on any non-gate decision; hub test
-`TestAMemberWhoIsReadyAgainLeavesTheGateEvenWhileBeingNudged`. Sim numbers unchanged over 20 seeds.
+The user chose (2026-09-16) to make the presser wait. **Built:** `holdLocalPlay` in the engine
+re-pauses a locally started player at the anchor in a room of two or more, and it starts at `when`
+with everyone (PROTOCOL §3 amendment). Live: no backward jump at landing in 20 trials, presser and
+other member start within ~15 ms of each other, no correction seeks, pause unchanged. The presser
+still ends ~100 ms behind — Laftel starts a just-seeked or briefly-played element 16–79 ms late
+(§16) — which is inside the 500 ms band and deliberately not compensated.
 
-**What the numbers suggest — needs the user's decision.** Lowering the floor only shrinks the
-jump; the presser still seeks, still pays the seek, and still ends up behind. The alternative is to
-make the presser *wait*: on a local play, re-pause immediately (the element has moved ~25 ms) and
-start at `when` with everyone, from the anchor, with no seek. That turns "~725 ms rewatched and
-~165 ms behind" into "~500 ms before the picture moves" and removes the systematic lag, at the cost
-of pressing play feeling slower. It touches echo suppression (the local re-pause must not be
-reported as intent — rebaseline, never a timeout flag), so it is a change to design, not a tweak.
-Not implemented.
+Small things left from this, none blocking:
 
-Also worth a look while there: the gate still flickers open for ~100 ms during every Laftel seek.
-It is harmless now that it clears, but a play pressed inside that window is held until the next
-report. A report taken while the element is `seeking` inside its buffer is not evidence of
-buffering.
+- The gate still flickers open for ~100 ms during every Laftel seek (`readyState` 1). Harmless
+  since the §15 fix, but a play pressed inside that window waits for the next report. A report
+  taken while the element is `seeking` inside its buffer is not evidence of buffering.
+- A pause leaves any member within `seekToleranceMs` where they are, so the next play starts with
+  that offset (the presser is re-aimed; the others are not). Measured 35–200 ms.
+- The 500 ms floor itself is now only the length of the wait after pressing play. Whether it can
+  come down is a question for a real two-person session over a real network, not for loopback.
 
 ### 2. Tampermonkey itself
 
@@ -258,17 +253,14 @@ certificate, or a tunnel that gives you one:
 
 ## Open questions that block things
 
-- **Should the `play` presser wait instead of jump?** Measured (BROWSER-FINDINGS §15): on a
-  fast link the presser rewatches ~725 ms and ends ~165 ms behind. See "1b" above for the
-  proposal. The floor question below is subsumed by it.
-- **Is the 500 ms `CMD_DELAY` floor right?** Now only about `play`. Pause stopped being a
-  scheduling question at all — a command that leaves the room stopped carries no lead and anchors
-  where the pauser stopped (POC-FINDINGS §40c). What remains: whoever presses **play** still has
-  their picture pulled back by the delay when the transition lands, because everyone has to start
-  moving at the same instant from the same position. On a fast link the floor alone sets the size
-  of that, and it is a chosen safety margin rather than a measured one. A harness sweep of
-  500/300/200/100 ms moved nothing, but the harness is insensitive to this by construction, so
-  that is not evidence the floor is free to lower. Needs two people and a number.
+- ~~**Should the `play` presser wait instead of jump?**~~ **Done** — `holdLocalPlay`,
+  BROWSER-FINDINGS §16.
+- **Is the 500 ms `CMD_DELAY` floor right?** Now only the length of the wait after pressing
+  play: pause carries no lead (POC-FINDINGS §40c), and since `holdLocalPlay` nobody's picture is
+  pulled back by it either (BROWSER-FINDINGS §16). It is still a chosen safety margin, not a
+  measured one, and the harness is insensitive to it by construction. Lowering it trades
+  responsiveness against members on slow links starting late; that needs a real two-person
+  session over a real network.
 
 - ~~**Is `playbackRate` nudging safe?**~~ **Answered everywhere we ship.** hls.js held 1.1
   exactly (§7), YouTube held 1.1 for 10 s at 1.099× (§8), Laftel held it for 10 s at 1.096× (§14).

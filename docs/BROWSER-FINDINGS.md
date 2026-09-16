@@ -618,7 +618,7 @@ member has recovered.
 
 ### After the fix: the numbers 1b asked for
 
-Ten trials (`results/laftel-room.json`). **No play was held, no correction
+Ten trials (`results/laftel-room-nohold.json`). **No play was held, no correction
 seek was issued in any trial**; the ~100 ms gate still opens during a presser's
 seek and closes on the next report.
 
@@ -643,6 +643,51 @@ So on a fast link, pressing play costs the presser roughly three quarters of a
 second of picture they watched twice, and leaves them ~0.16 s behind everyone
 else. Both are the price of starting the presser early and then seeking; see
 STATE.md for what that suggests.
+
+## 16. The presser waits (`holdLocalPlay`), measured on the same rig
+
+§15 made the case; this is the change, measured with the same probe after
+rebuilding the extension. The client now re-pauses a locally started player at
+the anchor and starts it at `when` (PROTOCOL §3 amendment). Ten trials each,
+`results/laftel-room.json` for the final one:
+
+| | §15 (presser left playing) | hold, re-aim > 20 ms | hold, re-aim > 80 ms |
+|---|---|---|---|
+| presser's backward jump **at landing** | 432–731 ms, every play | **none** | **none** |
+| presser starts moving | at once, then rewound at ~527 ms | 507–527 ms (one 677) | 517–518 ms |
+| other member starts | 524–539 ms | 529–538 ms (one 692) | 529–539 ms |
+| presser behind other, 4 s later (median) | ~165 ms | ~102 ms | ~96 ms |
+| correction seeks / reconciles | 0 / 0 | 0 / 0 | 0 / 0 |
+| pause: presser's jump | 0 | 0 | 0 |
+
+The only backward movement left happens **while paused, at the press**: 81–203 ms
+in 6–8 of 10 trials, which is the hold re-aiming a presser who was already that
+far off the anchor. That offset comes from the pause before it — a member within
+`seekToleranceMs` of a paused landing is left where it is — and the member
+pressing next is exactly that member, because the probe alternates.
+
+**Why the presser is still ~100 ms behind.** Not the schedule: the presser
+starts ~13 ms *earlier*. It is how long each element takes to get going, which
+depends on its history. Measured on one Laftel tab, as the intercept of the
+position line after `play()` (three runs each):
+
+| element was… | effective start |
+|---|---|
+| playing for 3 s, then paused | **+9 to +22 ms** (immediate) |
+| played for 60 ms, then paused | −16 to −60 ms |
+| paused, then seeked 50 ms | **−61 to −79 ms** |
+
+The presser's element is always one of the last two; the other member's is the
+first. That is also why the re-aim threshold is 80 ms rather than 20: a seek to
+fix less than ~70 ms makes the start later, not better. The two settings are
+indistinguishable at ten trials (~102 vs ~96 ms); 80 is kept because it is the
+one the measurement argues for. The remaining ~100 ms is well inside the 500 ms
+band, so nothing corrects it; compensating for a provider's start latency would
+be a per-provider constant and is not worth it at this size.
+
+`e2e.test.ts` pins the behaviour against a real `videosyncd` (and fails with the
+hold switched off): the presser is held, never steps back, and starts within
+100 ms of the other member.
 
 ## Reproducing
 

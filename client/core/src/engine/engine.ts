@@ -74,6 +74,22 @@ export interface EngineConfig {
    * a joiner must conform to it.
    */
   adoptLocalStateOnJoin: boolean;
+  /**
+   * When this member starts playback locally in a room of two or more, stop
+   * again at once and start at `when` with everybody else.
+   *
+   * `play` carries the full command lead, and everyone must start moving at
+   * the same instant from the same position. Left playing, the presser was
+   * the one who gave: measured live on Laftel, their picture jumped back
+   * ~650 ms when the transition landed, they rewatched ~725 ms, and the
+   * seek-back left them ~165 ms behind the member who merely pressed play on
+   * a paused element (BROWSER-FINDINGS §15). Holding costs the lead as a
+   * short wait before the picture moves, and nothing else.
+   *
+   * Not in a room of one: that room schedules nothing (`CmdDelay()` is 0),
+   * so there is nothing to wait for and the hold would only flicker.
+   */
+  holdLocalPlay: boolean;
   detector: Partial<DetectorConfig>;
 }
 
@@ -92,6 +108,7 @@ export const DEFAULT_ENGINE_CONFIG: Omit<EngineConfig, 'room' | 'secret' | 'name
   rateMin: 0.95,
   rateMax: 1.1,
   adoptLocalStateOnJoin: false,
+  holdLocalPlay: true,
   detector: {},
 };
 
@@ -164,6 +181,8 @@ export interface EngineStats {
   connectFailures: number;
   /** play() failed for a reason that is not an autoplay refusal. */
   playFailures: number;
+  /** Local plays re-paused to wait for the room's `when` (`holdLocalPlay`). */
+  playsHeld: number;
   /** Times the player disagreed with the anchor long enough to be re-applied. */
   reconciles: number;
 }
@@ -187,6 +206,17 @@ export interface TraceEntry {
 
 const TRACE_MAX = 250;
 
+/**
+ * How far off the anchor a held player may be left before it is re-aimed.
+ *
+ * Not zero, and not a rounding allowance either: a seek is not free even in
+ * the buffer. Measured on Laftel, an element seeked while paused starts ~70 ms
+ * late when it resumes (61-79 ms, against +9-22 ms for one that was merely
+ * paused), so re-aiming anything smaller than that makes the start worse
+ * rather than better (BROWSER-FINDINGS §16).
+ */
+const HOLD_SEEK_TOLERANCE_MS = 80;
+
 export class SyncEngine {
   readonly cfg: EngineConfig;
   readonly clock = new ServerClock();
@@ -196,7 +226,7 @@ export class SyncEngine {
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
     skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0,
-    playFailures: 0, reconciles: 0,
+    playFailures: 0, playsHeld: 0, reconciles: 0,
   };
 
   private readonly d: EngineDeps;
@@ -664,12 +694,14 @@ export class SyncEngine {
     });
   }
 
-  private async applyTransition(targetMs: number, paused: boolean): Promise<void> {
+  private async applyTransition(
+    targetMs: number, paused: boolean, toleranceMs = this.cfg.seekToleranceMs,
+  ): Promise<void> {
     const a = this.d.adapter;
     this.applyingRemote = true;
     try {
       const cur = a.readState().positionS * 1000;
-      if (Math.abs(cur - targetMs) > this.cfg.seekToleranceMs && a.capabilities.supportsDirectSeek) {
+      if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
         await a.seekTo(targetMs / 1000).catch(() => { /* a stalled seek is reported, not thrown */ });
       }
       if (paused) {
@@ -806,6 +838,7 @@ export class SyncEngine {
       } else if (observation.kind === 'playstate') {
         if (observation.paused !== this.anchor.paused) {
           this.send(observation.paused ? 'pause' : 'play', observation.positionS * 1000);
+          if (!observation.paused) this.holdForRoom();
         } else {
           // Agrees with the anchor: this is our own applied transition coming
           // back around, not user intent. The pause/play counterpart of the
@@ -879,6 +912,38 @@ export class SyncEngine {
     this.stats.reportsSent++;
     this.lastReportAt = now;
     if (dueHeartbeat) this.lastHbAt = now;
+  }
+
+  /**
+   * Put a player the user just started back where the room still is, paused,
+   * until the `play` it just sent comes back and starts everybody together.
+   * See `holdLocalPlay`.
+   *
+   * Echo suppression is the same as for any applied transition: it runs under
+   * `applyingRemote` and ends in `rebaseline(…, paused)`, so the pause it makes
+   * is the detector's new baseline rather than an observation. No timeout flag
+   * is involved, and nothing waits for the ack: whatever the room does next
+   * -- our play, someone else's command, a play the gate holds or drops -- is
+   * an ordinary scheduled transition, and until then the player agrees with
+   * the anchor, so the reconciler has nothing to fight.
+   *
+   * The position is re-aimed more tightly than `seekToleranceMs` allows: the
+   * user's gesture has already disturbed the picture, the player is paused,
+   * and the whole lead is available to pay for an in-buffer seek (~100 ms on
+   * Laftel). Starting from the anchor is what lets the transition land with no
+   * seek. See HOLD_SEEK_TOLERANCE_MS for why not exactly.
+   */
+  private holdForRoom(): void {
+    if (!this.cfg.holdLocalPlay || this.members.length < 2) return;
+    this.stats.playsHeld++;
+    const epoch = this.epoch;
+    const seq = this.lastAppliedSeq;
+    void this.serialise(async () => {
+      // The room has moved since -- normally our own play landing already.
+      // The player is doing what the room says; leave it.
+      if (epoch !== this.epoch || this.lastAppliedSeq !== seq || !this.anchor.paused) return;
+      await this.applyTransition(expectedAt(this.anchor, this.serverNow()), true, HOLD_SEEK_TOLERANCE_MS);
+    });
   }
 
   // --- outbound user intent -------------------------------------------------

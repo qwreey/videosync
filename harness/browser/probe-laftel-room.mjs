@@ -139,8 +139,13 @@ async function main() {
     let sp = await iso(p, TAKE), so = await iso(o, TAKE);
     const p0 = posAt(sp, tPlay);
     const tEnd = sp.at(-1)[0];
+    // With holdLocalPlay the presser is paused again in between: when did it
+    // finally start moving for good?
+    const lastPausedP = sp.filter((q) => q[0] >= tPlay && q[2] === 1).at(-1);
     trial.play = {
       presserJumps: jumps(sp, tPlay),
+      presserHeld: !!lastPausedP,
+      presserStartsAfterMs: lastPausedP ? Math.round(lastPausedP[0] - tPlay) : 0,
       otherStartsAfterMs: firstMoving(so, tPlay),
       // Where the presser ended vs. where an untouched player would be.
       presserNetMs: Math.round((posAt(sp, tEnd) - (p0 + (tEnd - tPlay) / 1000)) * 1000),
@@ -160,7 +165,7 @@ async function main() {
       gapAtEndMs: Math.round((posAt(sp, e2) - posAt(so, e2)) * 1000),
     };
     const st = await iso(p, 'return VideoSync.engine().stats');
-    trial.presserStats = { cmdsSent: st.cmdsSent, correctionsSeek: st.correctionsSeek, lateApplies: st.lateApplies, reconciles: st.reconciles };
+    trial.presserStats = { cmdsSent: st.cmdsSent, playsHeld: st.playsHeld, correctionsSeek: st.correctionsSeek, lateApplies: st.lateApplies, reconciles: st.reconciles };
     results.trials.push(trial);
     flush();
     console.log(JSON.stringify(trial));
@@ -174,6 +179,9 @@ async function main() {
   results.summary = {
     playPresserBackJumpMs: back,
     playGapAtEndMs: results.trials.map((t) => t.play.gapAtEndMs),
+    playPresserStartsAfterMs: results.trials.map((t) => t.play.presserStartsAfterMs),
+    playOtherStartsAfterMs: results.trials.map((t) => t.play.otherStartsAfterMs),
+    playPresserNetMs: results.trials.map((t) => t.play.presserNetMs),
     pausePresserLargestJumpMs: pauseJ,
     pauseGapAtEndMs: results.trials.map((t) => t.pause.gapAtEndMs),
   };

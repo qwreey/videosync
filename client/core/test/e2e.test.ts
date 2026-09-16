@@ -448,6 +448,52 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     }
   });
 
+  // The play counterpart, measured live on Laftel (BROWSER-FINDINGS §15-16).
+  // Left playing, the presser's picture jumped back by the command lead when
+  // their own play landed. The room of two is what turns the hold on, so this
+  // also proves the roster the real server sends counts both members.
+  it('the member who presses play waits for the room instead of jumping back', async function () {
+    if (skip) { console.log(`SKIP: ${skip}`); return; }
+    const { roomId, secret } = await createRoom('e2e:media');
+    const a = peer(roomId, secret, 'a', { paused: true, positionS: 0 });
+    const b = peer(roomId, secret, 'b', { paused: true, positionS: 0 });
+    try {
+      await joined(a, b);
+      await waitFor(() => a.engine.roster.length === 2, 4000, 'a to see both members');
+      a.engine.seek(300);
+      await waitFor(() => a.engine.appliedSeq >= 1 && b.engine.appliedSeq >= 1, 4000, 'the seek');
+      await sleep(500);
+
+      // `a` presses play on their own player.
+      await a.player.play();
+      const t0 = performance.now();
+      const samples: Array<[number, number, boolean, boolean]> = [];
+      while (performance.now() - t0 < 2500) {
+        const sa = a.player.readState(), sb = b.player.readState();
+        samples.push([performance.now() - t0, sa.positionS, sa.paused, sb.paused]);
+        await sleep(10);
+      }
+
+      assert.equal(a.engine.stats.playsHeld, 1, 'the press was not held');
+      let worst = 0;
+      for (let i = 1; i < samples.length; i++) worst = Math.min(worst, samples[i]![1] - samples[i - 1]![1]);
+      assert.ok(worst > -0.1, `the presser's picture jumped back ${(-worst).toFixed(2)}s`);
+
+      // Both start together: the presser is not moving while the other waits.
+      const startA = samples.findLast((q) => q[2])?.[0] ?? 0;
+      const startB = samples.findLast((q) => q[3])?.[0] ?? 0;
+      assert.ok(startA > 100, `the presser was never held (moving from ${startA.toFixed(0)} ms)`);
+      assert.ok(Math.abs(startA - startB) < 100,
+        `presser started at ${startA.toFixed(0)} ms, the other at ${startB.toFixed(0)} ms`);
+      const pa = a.player.readState().positionS, pb = b.player.readState().positionS;
+      assert.ok(Math.abs(pa - pb) < 0.1, `presser at ${pa.toFixed(3)}s, other at ${pb.toFixed(3)}s`);
+      assert.equal(a.engine.stats.correctionsSeek, 0);
+      assert.equal(a.engine.stats.cmdsSent, 2, 'the hold leaked a command (seek + play expected)');
+    } finally {
+      a.engine.stop(); b.engine.stop();
+    }
+  });
+
   // The trace is what a live session hands back instead of retyping `status()`
   // by hand, and it is always on because every field bug so far was one-shot.
   // A trace that silently recorded nothing would be worse than none: "the

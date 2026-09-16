@@ -25,7 +25,7 @@ interface Harness {
     statuses: string[];
   };
   /** Complete the handshake: open, welcome, and let the clock settle. */
-  join(anchor?: Partial<Anchor>, seq?: number): Promise<void>;
+  join(anchor?: Partial<Anchor>, seq?: number, members?: number): Promise<void>;
 }
 
 function harness(opts: FakePlayerOptions = {}, cfg: Partial<EngineConfig> = {}): Harness {
@@ -51,14 +51,16 @@ function harness(opts: FakePlayerOptions = {}, cfg: Partial<EngineConfig> = {}):
   );
   const h: Harness = {
     vt, player, tr, engine, events,
-    async join(anchor = {}, seq = 0) {
+    async join(anchor = {}, seq = 0, members = 0) {
       tr.autoAnswerTime(OFFSET);
       engine.start();
       tr.open();
       tr.deliver({
         t: 'welcome', you: 'me-1', seq,
         anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: 'yt:abc', ...anchor },
-        members: [], serverMs: vt.now, mediaKey: 'yt:abc',
+        members: Array.from({ length: members }, (_, i) => (
+          { id: i === 0 ? 'me-1' : `other-${i}`, name: `m${i}`, suspended: false, ready: true })),
+        serverMs: vt.now, mediaKey: 'yt:abc',
       });
       // The transport answers each probe in the same instant, so the samples
       // have a true zero RTT and `serverMs = vt.now + OFFSET` exactly.
@@ -737,6 +739,133 @@ describe('the anchor is truth about being paused, too', () => {
     await h.vt.advance(5000);
     assert.equal(h.player.paused, true);
     assert.equal(h.engine.stats.reconciles, 0);
+  });
+});
+
+describe('a local play waits for the room (holdLocalPlay)', () => {
+  // BROWSER-FINDINGS §15: left playing, the presser's picture jumped back
+  // ~650 ms when their own play landed, and the seek-back left them behind.
+
+  async function pressPlay(members: number, cfg: Partial<EngineConfig> = {}, positionS = 10) {
+    const h = harness({ paused: true, positionS }, cfg);
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, members);
+    await h.vt.advance(500);
+    h.tr.sent.length = 0;
+    await h.player.play();            // the user pressed play
+    h.player.emit('play');
+    await h.vt.advance(60);           // the element runs a little before anyone reacts
+    await flush();
+    return h;
+  }
+
+  it('re-pauses at the anchor and sends exactly one play', async () => {
+    const h = await pressPlay(2);
+    await h.vt.advance(100);
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['play']);
+    assert.equal(h.player.paused, true, 'kept playing ahead of the room');
+    assert.ok(Math.abs(h.player.positionS - 10) <= 0.08, `held at ${h.player.positionS}, not at the anchor`);
+    assert.equal(h.engine.stats.playsHeld, 1);
+
+    // The ack lands at `when`: everybody starts together, and nobody seeks.
+    const seeksBefore = h.player.seeks;
+    const when = h.vt.now + OFFSET + 400;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[0]!.reqId, seq: 1, when, emittedAt: when - 500,
+      anchor: { positionMs: 10_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      kind: 'play',
+    });
+    await h.vt.advance(300);
+    assert.equal(h.player.paused, true, 'started before `when`');
+    await h.vt.advance(200);
+    assert.equal(h.player.paused, false, 'never started');
+    assert.equal(h.player.seeks, seeksBefore, 'the landing seeked -- the hold should have made it unnecessary');
+
+    // The pause the hold made never became a command.
+    await h.vt.advance(3000);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play']);
+    assert.equal(h.engine.stats.reconciles, 0);
+  });
+
+  it('re-aims a player that was off the anchor, and leaves a near miss alone', async () => {
+    // The previous pause lands every member who is within seekToleranceMs
+    // where they are, so a presser can start up to 250 ms off.
+    const far = await pressPlay(2, {}, 10.2);
+    await far.vt.advance(100);
+    assert.equal(far.player.seeks, 1);
+    assert.ok(Math.abs(far.player.positionS - 10) < 0.001, `held at ${far.player.positionS}`);
+
+    // A paused seek makes the next start ~70 ms late on Laftel: not worth it
+    // for less than that.
+    const near = await pressPlay(2, {}, 9.98);   // ~40 ms off by the time the hold runs
+    await near.vt.advance(100);
+    assert.equal(near.player.paused, true);
+    assert.equal(near.player.seeks, 0, "seeked to fix 40 ms");
+  });
+
+  it('stays paused, without fighting, if the room never answers', async () => {
+    // A play the gate holds, or one a later command supersedes, gets no ack.
+    // Paused is what the room says, so that is where the player belongs.
+    const h = await pressPlay(2);
+    await h.vt.advance(6000);
+    assert.equal(h.player.paused, true);
+    assert.equal(h.engine.stats.reconciles, 0);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play']);
+  });
+
+  it('ends up playing when the press races somebody else\'s play', async () => {
+    // Both pressed at once: ours goes out and is held, theirs lands. The room
+    // is playing, so the player must be too -- the hold must not outlive it.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 10_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'play',
+    });
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(200);
+    assert.equal(h.player.paused, false, 'the hold outlived the room starting');
+    await h.vt.advance(4000);
+    assert.equal(h.player.paused, false);
+  });
+
+  it('an echo of the room\'s own play is not held', async () => {
+    // The room is already playing: the play the detector sees is our applied
+    // transition coming back around, not a local press.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 10_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'play',
+    });
+    await h.vt.advance(10);           // applied: the room is playing now
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(200);
+    assert.equal(h.player.paused, false);
+    assert.equal(h.engine.stats.playsHeld, 0, 'an echo of the room is not a local play');
+  });
+
+  it('control: alone in a room there is nothing to wait for', async () => {
+    const h = await pressPlay(1);
+    await h.vt.advance(100);
+    assert.equal(h.player.paused, false);
+    assert.equal(h.engine.stats.playsHeld, 0);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play']);
+  });
+
+  it('control: switched off, the presser keeps playing', async () => {
+    const h = await pressPlay(2, { holdLocalPlay: false });
+    await h.vt.advance(100);
+    assert.equal(h.player.paused, false);
+    assert.equal(h.engine.stats.playsHeld, 0);
   });
 });
 

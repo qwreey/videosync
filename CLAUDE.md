@@ -126,6 +126,11 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   only when the corrector said "nothing to do"; the servo says "nudge" for as long as it holds a
   rate bias, which a paused member never loses, so one transient unready report held every later
   `play` until that member left the room. Found live on Laftel (`BROWSER-FINDINGS.md` §15).
+- **The `play` presser holds; nobody else does.** A local play in a room of two or more is sent and
+  the element re-paused at the anchor until `when` (`holdLocalPlay`). Left playing, the presser was
+  rewound by the whole lead when their own ack landed (~650 ms on Laftel). The re-pause is an
+  applied transition — `applyingRemote` + `rebaseline(pos, paused)` — never a flag waiting for the
+  ack, so a play the gate holds or drops just leaves a paused member in a paused room.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
   The detector reports play-state *transitions* only, so a member who was already playing when the
   room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is
