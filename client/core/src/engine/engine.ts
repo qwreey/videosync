@@ -427,6 +427,12 @@ interface Acquisition {
   guardedAt: number;
   /** When the element was first seen with metadata in this epoch, or 0. */
   metadataAt: number;
+  /**
+   * The element is loaded and the room is more than PAST_DURATION_SLACK_MS
+   * past its end: not the room's media (an ad, a preview), so not on the
+   * room's timeline. Left alone, and absent rather than acquiring.
+   */
+  pastEnd: boolean;
 }
 
 /** What an in-flight applied transition is making the player do. */
@@ -555,7 +561,7 @@ export class SyncEngine {
    * calls `play()` 1 ms after `emptied` (BROWSER-FINDINGS §20).
    */
   private acq: Acquisition = {
-    id: 0, startedAt: 0, state: 'detached', policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0,
+    id: 0, startedAt: 0, state: 'detached', policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0, pastEnd: false,
   };
   /** A conform of the current epoch is queued or running. */
   private conformInFlight = false;
@@ -769,7 +775,7 @@ export class SyncEngine {
     const now = this.d.now();
     this.acq = {
       id: this.acq.id + 1, startedAt: now, state: this.gating() ? 'detached' : 'steady',
-      policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0,
+      policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0, pastEnd: false,
     };
     this.conformInFlight = false;
     this.detector.reset();
@@ -1524,7 +1530,8 @@ export class SyncEngine {
     // correction can change that. Absent, not behind. So is a member whose
     // video has ended, and one whose site took the player over.
     const absent = !acquiring && (
-      report.suspended || this.autoplayBlocked || !onRoomMedia || finished || this.acq.state === 'fought');
+      report.suspended || this.autoplayBlocked || !onRoomMedia || finished || this.acq.state === 'fought' ||
+      (this.acq.state === 'detached' && this.acq.pastEnd));
 
     // An absent member is no longer judged, so any rate the servo left behind
     // would stick forever -- including onto whatever they navigate to next,
@@ -1580,7 +1587,7 @@ export class SyncEngine {
     if (!this.gating() || this.autoplayBlocked || this.d.isHidden()) return false;
     const a = this.acq;
     if (this.onRoomMedia()) {
-      return a.state === 'detached' || a.state === 'conforming' ||
+      return (a.state === 'detached' && !a.pastEnd) || a.state === 'conforming' ||
         (a.state === 'guarded' && a.policy === 'adopt');
     }
     return this.inTransit && this.anchor.mediaKey !== '' && this.d.now() <= this.inTransitUntil;
@@ -1799,7 +1806,8 @@ export class SyncEngine {
     if (a.metadataAt === 0) a.metadataAt = now;
     if (state.readyState < 3 && now - a.metadataAt < METADATA_ONLY_MS) return false;
     const expected = expectedAt(this.anchor, this.serverNow());
-    return expected <= state.durationS * 1000 + PAST_DURATION_SLACK_MS;
+    a.pastEnd = expected > state.durationS * 1000 + PAST_DURATION_SLACK_MS;
+    return !a.pastEnd;
   }
 
   /**

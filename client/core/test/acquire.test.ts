@@ -975,3 +975,33 @@ describe('a continuation that never reached the room', () => {
     assert.deepEqual(h.kinds(), ['media', 'play']);
   });
 });
+
+describe('an element the room is far past the end of', () => {
+  it('is not on the room\'s timeline, so the room does not wait for it', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 15 } }); // an ad, a preview
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(60_000);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.lastHb().acquiring, undefined, 'held every play of the room for an ad');
+    assert.equal(h.lastHb().suspended, true);
+  });
+
+  it('control: an element still loading is waited for', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 15 } });
+    h.player.readyState = 1;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(1000);
+    assert.equal(h.lastHb().acquiring, true);
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  it('is conformed once the room is back within it', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 15 } });
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    await h.state({ positionMs: 10_000, paused: true }, 'seek');
+    await h.vt.advance(500);
+    assert.notEqual(h.engine.acquisition, 'detached');
+    assert.ok(Math.abs(h.player.positionS - 10) < 0.3, `left at ${h.player.positionS}`);
+  });
+});
