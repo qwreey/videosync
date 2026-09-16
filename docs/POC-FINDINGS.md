@@ -1309,3 +1309,118 @@ longer inherit state from an earlier scenario: `latency-asymmetry` and
 `clock-skew` (§41a). `one-slow-client` got worse for the same reason: the shared
 state had been helping it. The readiness-gate control (§38) is unchanged: gate
 on 11 ms / 0 skipped, gate off 77 ms / 14 470 ms skipped.
+
+## 42. Round 13 — review of round 12: one sim regression, one servo defect in the fix itself, and forgotten state
+
+Independent review of §41 mutated each fix. It found three pieces no test pinned,
+one regression, and two gaps in the servo change. All numbers below are
+`mise run sim` (seed per scenario) or `-seeds 20` means, against the tree §41
+left behind.
+
+### 42a. Every transition was charged as a seek
+
+§41d routed scheduled transitions through the buffer model. It did so for *every*
+transition, including a `play`. The engine seeks only when the target is more than
+`seekToleranceMs` (250 ms) from the playhead (`applyTransition`). While a member
+buffers, its buffer end sits on the playhead, so a `play` landing 20 ms ahead
+counted as an out-of-buffer seek and added a segment fetch to the stall. The sim
+now skips the seek inside the tolerance, as the engine does
+(`TestTransitionWithinSeekToleranceDoesNotSeek`).
+
+The rows that move are the ones with transitions (servo, mean over 20 seeds):
+
+| scenario | before | after |
+|---|---|---|
+| slow-to-buffer | 10/16 | **8/14** |
+| asymmetry+cmds | 298/599 | **324/647** |
+| command-storm | 78/325 | **104/327** |
+
+Every law moves the same way on those three rows (e.g. threshold-500
+command-storm 103 → 132). The readiness-gate control loses a phantom seek:
+gate off 77 ms / 14 470 ms skipped / **2** out-of-buffer seeks → 76 ms / 14 475 ms /
+**1**. Gate on 11 → 8 ms.
+
+The two worse rows are **not** a regression. They show a cost the snap hid. A
+member within 250 ms of a new anchor is no longer moved onto it, and inside
+`ToleranceMs` no corrector moves it either. That is what the engine does. It is
+the same sub-tolerance question §41d left open, now reached by every
+transition and not only by out-of-buffer seeks.
+
+### 42b. The seek hand-over carried the step it was removing
+
+§41g's `dropBias` handed `phaseRate + rateBias` to the phase term on a seek, to
+stand for the rate the client keeps running. But the report that triggers a seek
+has usually integrated the step's own slope into `rateBias` first: a 1500 ms kick
+on the last sample of the 3 s window fits at 47 ms/s, under `RampMaxSlope`. A
+0.99x decoder that had learned 1.0101 therefore handed over −0.0066. It was then
+told to run ~1.0 and had to learn the mismatch again from the drift that caused.
+The hand-over now uses the last *commanded* rate, captured before this report
+integrates. `TestServoKeepsTheLearnedRateAcrossAFreeSeek` covers 0.99x, 0.995x and
+1.008x, with the kick both on a report and between two reports. It fails with the
+hand-over removed (the round-12 reviewer's mutation) and with the round-12 version
+of it.
+
+### 42c. An absence left the servo's model of the client stale
+
+The engine resets an absent member's rate to 1.0 (`releaseRate`: suspended,
+autoplay-blocked or off-media). The servo's suspended branch returned early and
+left `phaseRate` at the last nudge and `lastAt` at the last report before the
+absence. On the first report back, the missing nudge read as a frequency error,
+integrated over the whole absence. A member nudged at 1.10 and suspended for 8 s
+wound the bias from 0 to the +0.06 clamp. The suspended branch now records the
+reset (`phaseRate = -rateBias`, the same as the settled branch) and restarts `dt`
+(`TestServoAbsenceDoesNotWindUpTheBias`, which fails if either line is removed).
+
+The other case that breaks the "client runs what it was told" assumption is a
+provider without `supportsPlaybackRateNudge`. It is now written down beside
+`phaseRate` and not guarded, because the report carries no rate to check against.
+There the bias winds to its clamp, which only suppresses the "settled" reset. That
+member is corrected by seeks, and seek decisions do not read the bias.
+
+42b and 42c together, servo over 60 seeds: anchorErr and `SkippedMs` identical in
+every row, rateTime −1 ms in three rows. As in §41g, the sim does not reach
+either case, so the unit tests are the evidence.
+
+### 42d. Only the servo forgot a member who left
+
+§41f said a disconnect makes "the corrector forget" the member. Only
+`ServoCorrector` had `Forget`, and `ConfidenceGated` did not pass it on. pi, pll,
+fll, kalman, step-ramp+lead, hybrid and every `+conf` strategy resumed a departed
+member's loop state on reconnect. All of them now forget, wrapped or not
+(`TestEveryStatefulCorrectorForgetsALeaver` finds each law's per-client map by
+reflection, so a new stateful law cannot skip it). The hub ships the servo, so
+only the harness changes:
+
+| reconnect, mean over 20 seeds | before | after |
+|---|---|---|
+| hybrid | 286/151 | **6934/1046** |
+| hybrid+conf | 2094/185 | **7164/1045** |
+| every other law | — | unchanged |
+
+The earlier hybrid numbers came from state carried over from before the
+disconnect. With fresh state, hybrid does on reconnect what `late-join` already
+showed (611/1048). Its 2.5 s warm-up holds, and does not seek, while the member
+is 570 s off. It then clamps that intercept to `MaxBias` and adopts 1.5 s of a
+*real* gap as clock bias, so the member stays ~1 s out for the rest of the run.
+That is a limit of hybrid's baseline learner: it cannot tell a real gap at join
+from clock bias.
+
+`step-ramp+conf` (979 ms on reconnect) has no per-client state, so carried state
+never explained it. Its slow recovery is still uninvestigated.
+
+### 42e. Pieces now pinned
+
+- The `when`-order sort in `RunScheduled` (§41c). With the seq guard in place, the
+  sort only decides which *intermediate* commands touch the player.
+  `TestSupersededSeekIsNeverApplied` fails without it: an out-of-buffer seek
+  overtaken by a pause is applied anyway, costing two segment fetches.
+- The 250 ms spacing of anomaly reports (§41e).
+  `TestAnomalyReportsAreSpacedButHeartbeatsAreNot` fails without it: one report
+  every 50 ms.
+
+### The table now
+
+Servo against §41's "now" columns: `slow-to-buffer` 11/15 → **8/10** (mean
+10/16 → 8/14), `asymmetry+cmds` 293/600 → **320/657** (mean 298/599 → 324/647),
+`command-storm` 68/295 → **97/295** (mean 78/325 → 104/327). Every other servo
+row is unchanged.
