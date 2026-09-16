@@ -520,6 +520,25 @@ describe('a room that names nothing yet (C3)', () => {
     assert.equal(h.kinds().filter((k) => k === 'media').length, 1, 'named again');
   });
 
+  it('a resync of its own naming, applied before the ack, does not stop the namer seeding', async () => {
+    const h = harness({ player: { paused: false, positionS: 42 } });
+    await h.join({ mediaKey: '' }, 2);
+    const naming = h.cmds()[0]!;
+    // The ack is due a little later; the server's resync of the same seq
+    // (the namer's report lagged) arrives in between and is applied first.
+    const t = h.serverNow();
+    h.tr.deliver({
+      t: 'ack', reqId: naming.reqId, seq: 1, when: t + 200, emittedAt: t, kind: 'media',
+      anchor: { positionMs: naming.positionMs, atServerMs: t + 200, paused: true, mediaKey: KEY },
+    });
+    h.tr.deliver({
+      t: 'state', seq: 1, when: t, emittedAt: t, by: 'server', kind: 'resync',
+      anchor: { positionMs: naming.positionMs, atServerMs: t + 200, paused: true, mediaKey: KEY },
+    });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 1000);
+    assert.deepEqual(h.kinds(), ['media', 'seek', 'play'], 'the namer took its own resync for somebody else\'s move');
+  });
+
   it('a member who lost the race to somebody on the same video does not seed over them', async () => {
     const h = harness({ player: { paused: false, positionS: 42 } });
     await h.join({ mediaKey: '' }, 2);

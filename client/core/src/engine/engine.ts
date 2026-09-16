@@ -565,6 +565,12 @@ export class SyncEngine {
    * and must still know it happened.
    */
   private foreignMove = false;
+  /**
+   * Seqs the server acked as ours. A `resync` of our own command can be
+   * applied before the ack that carries the same seq (the ack waits for its
+   * `when`), and must not count as somebody else's move.
+   */
+  private ownSeqs = new Set<number>();
   /** Until when an in-transit member reports itself acquiring. */
   private inTransitUntil = 0;
   /**
@@ -1027,6 +1033,8 @@ export class SyncEngine {
         // The originator's copy takes the SAME path. Excluding the sender from
         // the broadcast for echo suppression must not exclude it from the
         // simultaneity the timebase exists to provide.
+        this.ownSeqs.add(f.seq);
+        if (this.ownSeqs.size > 64) this.ownSeqs.delete(this.ownSeqs.values().next().value!);
         this.schedule({
           seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
           anchor: f.anchor, kind: f.kind, beforeOwnPlay: this.ownAck(f.reqId), own: true,
@@ -1151,7 +1159,7 @@ export class SyncEngine {
     // command that arrives while an earlier one is still touching the player
     // knows it has been superseded.
     this.lastAppliedSeq = p.seq;
-    if (!p.own && this.adoptFor !== null) this.foreignMove = true;
+    if (!p.own && !this.ownSeqs.has(p.seq) && this.adoptFor !== null) this.foreignMove = true;
     const roomMoved = p.anchor.mediaKey !== this.anchor.mediaKey;
     const left = this.anchor.mediaKey;
     this.anchor = p.anchor;
