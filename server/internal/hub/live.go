@@ -95,10 +95,11 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 		// Only the FIRST member names the media, and only by joining. Letting
 		// any joiner set it while the key is still empty mutates the anchor
 		// with no seq and no broadcast: the members already in the room were
-		// told "" in their welcome and would never hear otherwise. A member
-		// who arrives before its adapter has resolved the page joins with an
-		// empty key and changes it afterwards with a `media` command, which
-		// takes a seq and reaches everyone.
+		// told "" in their welcome and would never hear otherwise. A room
+		// that still names nothing is renamed with a `media` command, which
+		// takes a seq and reaches everyone. (Clients take the key from the
+		// URL, so an empty one means a page with no media; the client refuses
+		// to create a room there and follows no keyless room.)
 		l.room.SetMedia(h.MediaKey, h.MediaURL)
 	case a.MediaKey == "":
 		// The room has no media yet and this is not the first member: nothing

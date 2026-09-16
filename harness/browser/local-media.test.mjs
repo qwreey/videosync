@@ -28,7 +28,7 @@ function listening(child) {
     let out = '';
     child.stdout.on('data', (b) => { out += b; if (out.includes('local media on')) resolve(true); });
     child.on('exit', () => resolve(false));
-    setTimeout(() => resolve(false), 5000);
+    setTimeout(() => resolve(false), 5000).unref();
   });
 }
 

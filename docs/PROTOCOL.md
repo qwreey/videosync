@@ -53,9 +53,10 @@ Sample every 5 s, plus 5 rapid samples on connect. `serverNow = clientNow + offs
 > `performance.now()` stands still through a system suspend while the server clock runs on, so a
 > laptop that slept 30 s stayed 30 s wrong until it reconnected. Every sample's offset is within
 > `rtt/2` of the truth whatever the asymmetry, so two samples of one offset differ by at most the
-> sum of their half-RTTs. A sample further than that from the estimate (plus 1 ms for the integer
-> `t0`) proves the offset moved: accept it, and restart the minimum from it. The test is exact, so
-> jitter cannot trip it (`ServerClock.addSample`).
+> sum of their half-RTTs. A sample further than that from the estimate, plus up to 3 ms for the
+> wire's whole-millisecond stamps (`t0` rounded, the server's `tRecv`/`tSend` truncated), proves
+> the offset moved: accept it, and restart the minimum from it. The bound holds whatever the
+> jitter, so jitter cannot trip it (`ServerClock.addSample`).
 
 ## 2. Join
 
@@ -172,8 +173,10 @@ A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two me
 delay buys simultaneity with people who are not there.
 
 **Except inside another command's lead.** A `pause` that arrives before the previous command's
-`when` anchors at that command's `anchor.positionMs` — where a pending `play` resumes from, or
-where a pending seek jumps to — not at the sender's `positionMs`. Nobody applies a transition
+`when` anchors where the room stands under the commands already scheduled — the target of a
+pending seek, the paused position before a pending `play`, the running position before a `play`
+on a room that was already playing, and the running position after a `play` that has come due
+while a later one is still pending — not at the sender's `positionMs`. Nobody applies a transition
 before its `when`, so the sender's position is on the timeline the room is about to leave; taking
 it let a pause from a member who had not reached a seek's `when` undo that acked seek for the whole
 room, although the seek came first in `seq` order. (`Cmd` carries no base `seq`, so "is a
