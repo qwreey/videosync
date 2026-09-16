@@ -151,3 +151,84 @@ func TestScheduledCommandsDueTogetherApplyInSeqOrder(t *testing.T) {
 		t.Errorf("after both were due: seq %d paused=%v, want seq 2 paused", c.lastAppliedSeq, c.Paused())
 	}
 }
+
+// A transition that lands within seekToleranceMs of the playhead does not seek,
+// exactly as the engine's applyTransition skips it. While a member buffers its
+// buffer end sits on the playhead, so a `play` landing a few ms ahead looked
+// out of buffer: the member was charged a segment fetch it would never make,
+// and its stall was stretched by one.
+func TestTransitionWithinSeekToleranceDoesNotSeek(t *testing.T) {
+	c := readyClient(ClientProfile{ID: "b", Link: Link{UpMs: 80, DownMs: 80},
+		Stalls: [][2]int64{{0, 20000}}}, 5000, false)
+	for now := int64(0); now < 1000; now += stepMs {
+		c.Advance(now, stepMs) // drains the buffer to the playhead
+	}
+	c.Deliver(MsgState{Seq: 1, When: 1000,
+		Anchor: vsync.Anchor{PositionMs: 5020, AtServerMs: 1000}, Kind: "play"}, 1000)
+	c.RunScheduled(1000)
+	if c.OutOfBufferSeeks != 0 || c.seekStallUntil != 0 || c.Pos() != 5000 {
+		t.Errorf("a play 20 ms ahead: %d out-of-buffer seeks, seek stall until %d, pos %.0f; want none, 0, 5000",
+			c.OutOfBufferSeeks, c.seekStallUntil, c.Pos())
+	}
+	if c.lastAppliedSeq != 1 || c.Paused() {
+		t.Errorf("the transition itself must still apply: seq %d paused=%v", c.lastAppliedSeq, c.Paused())
+	}
+	// Control: past the tolerance the same member does pay.
+	c.Deliver(MsgState{Seq: 2, When: 1000,
+		Anchor: vsync.Anchor{PositionMs: 6000, AtServerMs: 1000}, Kind: "seek"}, 1000)
+	c.RunScheduled(1000)
+	if c.OutOfBufferSeeks != 1 || c.Pos() != 6000 {
+		t.Errorf("a seek 1000 ms ahead: %d out-of-buffer seeks, pos %.0f; want 1, 6000", c.OutOfBufferSeeks, c.Pos())
+	}
+}
+
+// Walking pending commands in `when` order is not only about which one wins:
+// the seq guard already decides that. It is about never touching the player
+// for a command that was superseded before it was due. Here a seek far out of
+// the buffer is overtaken by a pause in place; in arrival order the seek was
+// applied first, and the member paid a segment fetch (and a second one to come
+// back) for a position the room never meant it to show.
+func TestSupersededSeekIsNeverApplied(t *testing.T) {
+	c := readyClient(ClientProfile{ID: "b", Link: Link{UpMs: 80, DownMs: 80}}, 30000, false)
+	c.Deliver(MsgState{Seq: 1, When: 5500,
+		Anchor: vsync.Anchor{PositionMs: 300000, AtServerMs: 5500}, Kind: "seek"}, 5030)
+	c.Deliver(MsgState{Seq: 2, When: 5200,
+		Anchor: vsync.Anchor{PositionMs: 30000, AtServerMs: 5200, Paused: true}, Kind: "pause"}, 5230)
+	c.RunScheduled(6000)
+	if c.OutOfBufferSeeks != 0 || c.seekStallUntil != 0 {
+		t.Errorf("%d out-of-buffer seeks, seek stall until %d; the superseded seek was applied",
+			c.OutOfBufferSeeks, c.seekStallUntil)
+	}
+	if c.lastAppliedSeq != 2 || !c.Paused() || c.Pos() != 30000 {
+		t.Errorf("seq %d paused=%v pos %.0f, want seq 2 paused at 30000", c.lastAppliedSeq, c.Paused(), c.Pos())
+	}
+}
+
+// An anomaly is reported at once but no more often than every
+// minReportIntervalMs, as the engine does; a heartbeat goes regardless. A
+// report per 10 Hz look multiplied every per-report counter the room keeps
+// (resends, suppressed seeks) by the loop rate.
+func TestAnomalyReportsAreSpacedButHeartbeatsAreNot(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	c := readyClient(ClientProfile{ID: "a"}, 0, false)
+	c.anchor = vsync.Anchor{PositionMs: 2000, AtServerMs: 0} // 2 s behind, all along
+	var at []int64
+	for now := int64(0); now <= 2000; now += 50 {
+		c.Advance(now, 50)
+		if _, ok := c.Evaluate(now, tun, false); ok {
+			at = append(at, now)
+		}
+	}
+	if len(at) < 2 {
+		t.Fatalf("reports at %v: an anomaly this size must be reported", at)
+	}
+	for i := 1; i < len(at); i++ {
+		if at[i]-at[i-1] < minReportIntervalMs {
+			t.Fatalf("reports at %v: %d ms apart, under %d", at, at[i]-at[i-1], minReportIntervalMs)
+		}
+	}
+	last := at[len(at)-1]
+	if _, ok := c.Evaluate(last+10, tun, true); !ok {
+		t.Error("a heartbeat was held back by the anomaly spacing")
+	}
+}

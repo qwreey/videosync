@@ -581,9 +581,16 @@ func (c *Client) RunScheduled(serverMs int64) {
 			c.anchor = p.Anchor
 			c.lastAppliedSeq = p.Seq
 			c.paused = p.Anchor.Paused
+			// Like the engine's applyTransition, only a target further than
+			// seekToleranceMs away moves the playhead. Seeking on every
+			// transition charged a buffering member an out-of-buffer seek for
+			// a `play` landing a few ms ahead of a playhead whose buffer had
+			// drained to it, stretching the very stall it was waiting out.
 			target := float64(p.Anchor.Expected(est))
-			c.payForSeek(target, serverMs)
-			c.posMs = target
+			if math.Abs(target-c.posMs) > seekToleranceMs {
+				c.payForSeek(target, serverMs)
+				c.posMs = target
+			}
 			c.lastKnownPos = c.posMs
 			c.residualHist = nil
 			continue
