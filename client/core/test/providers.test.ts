@@ -434,6 +434,38 @@ describe('the effective registry', () => {
     assert.equal(continuesMedia('series:/w/a/1', 'series:/w/a/2', both), false);
   });
 
+  it('checks every watch URL at run time, not only the examples', async () => {
+    // Rule 2 sends its media to a page no rule names; the examples never
+    // exercise it, so only the run-time round trip can refuse it.
+    const leaky = variant({
+      identity: [
+        { path: '/watch/{id}', key: '/k/{id}', watch: 'https://video.example/watch/{id}' },
+        { path: '/watch/{id:any}', key: '/k/{id}', watch: 'https://video.example/other/{id}' },
+      ],
+      examples: [{ url: 'https://video.example/watch/abc', key: 'example:/k/abc', watch: 'https://video.example/watch/abc' }],
+    });
+    const reg = buildRegistry({ ...EMPTY, user: [await stored(leaky)] }, () => true);
+    assert.equal(watchUrl('https://video.example/watch/abc', reg), 'https://video.example/watch/abc', 'control');
+    assert.equal(normalizeMediaKey('https://video.example/watch/a%20b', reg), 'example:/k/a b');
+    assert.equal(watchUrl('https://video.example/watch/a%20b', reg), null, 'a watch URL that names nothing');
+    assert.equal(followableUrl('https://video.example/watch/a%20b', 'example:/k/a b', 'https://video.example/', reg), null);
+
+    // The watch URL must also land on the descriptor that produced it: here a
+    // more specific one owns the canonical host, so the watch URL is refused.
+    const wide = variant({ id: 'wide', hosts: ['*.video.example'], canonicalHost: 'cdn.video.example',
+      identity: [{ path: '/watch/{id}', key: '/watch/{id}', watch: 'https://cdn.video.example/watch/{id}' }],
+      examples: [{ url: 'https://www.video.example/watch/abc', key: 'wide:/watch/abc' }] });
+    const exact = variant({ id: 'exact', hosts: ['cdn.video.example'], canonicalHost: 'cdn.video.example',
+      identity: [{ path: '/watch/{id}', key: '/watch/{id}', watch: 'https://cdn.video.example/watch/{id}' }],
+      examples: [{ url: 'https://cdn.video.example/watch/abc', key: 'exact:/watch/abc' }] });
+    const alone = buildRegistry({ ...EMPTY, user: [await stored(wide)] }, () => true);
+    assert.equal(watchUrl('https://www.video.example/watch/abc', alone), 'https://cdn.video.example/watch/abc', 'control');
+    const shadowed = buildRegistry({ ...EMPTY, user: [await stored(wide), await stored(exact)] }, () => true);
+    assert.equal(shadowed.lookup('cdn.video.example').entry?.provider.id, 'exact');
+    assert.equal(shadowed.lookup('www.video.example').entry?.provider.id, 'wide');
+    assert.equal(watchUrl('https://www.video.example/watch/abc', shadowed), null);
+  });
+
   it('skips an adopted copy whose id changed under it, with a note', async () => {
     const renamed = await stored(variant({ id: 'renamed', examples: [{ url: 'https://video.example/watch/a', key: 'renamed:/watch/a' }] }));
     const reg = buildRegistry({ ...EMPTY, adopted: [{ ...renamed, id: 'example', server: 'https://s.example', replaceBuiltin: false }] }, () => true);

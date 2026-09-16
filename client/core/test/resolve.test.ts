@@ -24,13 +24,22 @@ const video = (o: Partial<FakeVideo>): FakeVideo => {
   return v;
 };
 
+/** A node whose open shadow root holds `videos` (and maybe more shadow hosts). */
+function shadowHost(videos: FakeVideo[], hosts: unknown[] = []) {
+  return {
+    shadowRoot: {
+      querySelectorAll: (sel: string) => (sel === 'video' ? videos : sel === '*' ? hosts : []),
+    },
+  };
+}
+
 /** Just enough document and window for PageWatcher, driven by hand. */
-function page(videos: FakeVideo[], hints?: VideoHints) {
+function page(videos: FakeVideo[], hints?: VideoHints, hosts: unknown[] = []) {
   const changes: Array<[unknown, string]> = [];
   const timers: Array<() => void> = [];
   const doc = {
     documentElement: {},
-    querySelectorAll: (sel: string) => (sel === 'video' ? videos : []),
+    querySelectorAll: (sel: string) => (sel === 'video' ? videos : sel === '*' ? hosts : []),
   } as unknown as Document;
   const win = {
     location: { href: 'https://example.test/watch/1' },
@@ -149,6 +158,24 @@ describe('provider video hints', () => {
     w.start();
     assert.equal(w.current, feature);
     w.stop();
+  });
+
+  it('looks inside open shadow roots only when told to, and not without end', () => {
+    const inside = video({});
+    const host = shadowHost([], [shadowHost([inside])]);
+    const pierced = page([], { pierceShadow: true }, [host]);
+    pierced.w.start();
+    assert.equal(pierced.w.current, inside, 'a player in a nested shadow root was not found');
+    const plain = page([], {}, [host]);
+    plain.w.start();
+    assert.equal(plain.w.current, null, 'control: without the hint the shadow root is not searched');
+    // Nine levels down is past the depth bound.
+    let deep: unknown = shadowHost([video({})]);
+    for (let i = 0; i < 9; i++) deep = shadowHost([], [deep]);
+    const bounded = page([], { pierceShadow: true }, [deep]);
+    bounded.w.start();
+    assert.equal(bounded.w.current, null);
+    for (const x of [pierced, plain, bounded]) x.w.stop();
   });
 
   it('uses the provider\'s factor when keeping the current element', () => {
