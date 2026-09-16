@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/qwreey/videosync/server/internal/auth"
 	"github.com/qwreey/videosync/server/internal/provider"
 )
 
@@ -163,5 +165,61 @@ func TestProvidersReloadIsVisible(t *testing.T) {
 	store.Reload() // what SIGHUP does
 	if resp, b := get(t, f.srv.URL+"/api/providers/yt.json", nil); resp.StatusCode != 200 || string(b) != string(yt) {
 		t.Fatalf("after reload: %d", resp.StatusCode)
+	}
+}
+
+// With access control on, the listing is gated like room creation, in every
+// scope, and a device token is what admits. Off, it stays open (the test
+// above).
+func TestProvidersAreGatedWithAccessControl(t *testing.T) {
+	dir, body := providersDir(t)
+	for _, scope := range []auth.Scope{auth.ScopeCreate, auth.ScopeAll} {
+		f := startAuth(t, scope, func(c *Config) { c.Providers = provider.Open(dir, t.Logf) })
+		for _, p := range []string{"/api/providers", "/api/providers/laftel.json"} {
+			resp, b := get(t, f.srv.URL+p, map[string]string{"Origin": "https://laftel.net"})
+			if resp.StatusCode != 401 || !strings.Contains(string(b), "auth_required") {
+				t.Fatalf("%s %s without a token: %d %s", scope, p, resp.StatusCode, b)
+			}
+			if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
+				t.Fatalf("%s: the refusal is unreadable from a page", p)
+			}
+			// A key is a credential for /api/session, not a pass here; nor is
+			// a ticket, and neither is spent by trying.
+			tk := f.ticket()
+			for _, bad := range []string{"Bearer " + accessKey, "Bearer " + tk, "Bearer junk"} {
+				resp, _ = get(t, f.srv.URL+p, map[string]string{"Authorization": bad})
+				if resp.StatusCode != 401 {
+					t.Fatalf("%s admitted %q: %d", p, bad, resp.StatusCode)
+				}
+			}
+			if code, out := f.createWith(tk); code != 201 {
+				t.Fatalf("the refused listing spent the ticket: %d %v", code, out)
+			}
+			// The preflight stays open: a gated preflight is a bare "Failed to fetch".
+			req, _ := http.NewRequest("OPTIONS", f.srv.URL+p, nil)
+			req.Header.Set("Origin", "https://laftel.net")
+			req.Header.Set("Access-Control-Request-Headers", "authorization")
+			pre, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pre.Body.Close()
+			if pre.StatusCode != 204 {
+				t.Fatalf("preflight %s: %d", p, pre.StatusCode)
+			}
+		}
+		code, s := f.post("/api/session", "Bearer "+accessKey, "")
+		if code != 200 {
+			t.Fatalf("session: %d", code)
+		}
+		device := map[string]string{"Authorization": "Bearer " + s["token"].(string)}
+		resp, b := get(t, f.srv.URL+"/api/providers", device)
+		if resp.StatusCode != 200 || !strings.Contains(string(b), `"laftel"`) {
+			t.Fatalf("%s index with a device token: %d %s", scope, resp.StatusCode, b)
+		}
+		resp, b = get(t, f.srv.URL+"/api/providers/laftel.json", device)
+		if resp.StatusCode != 200 || string(b) != string(body) {
+			t.Fatalf("%s file with a device token: %d", scope, resp.StatusCode)
+		}
 	}
 }

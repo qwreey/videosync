@@ -264,6 +264,17 @@ func (s *Server) TicketToJoin() bool { return s.cfg.Scope == ScopeAll }
 // once per request, before it looks at anything else the request says.
 func (s *Server) ConsumeTicket(t string) bool { return s.tickets.consume(t, s.cfg.Now()) }
 
+// Admits reports whether the request carries a device token this server
+// would issue a ticket for. For read-only endpoints that are gated like room
+// creation but fetched several at a time (the provider index and its files):
+// a ticket is single-use, so one per file would be N+1 round trips for the
+// same answer. The proxy's word does not count here, for the reason it does
+// not count on /api/ticket -- a gateway leaves these paths open.
+func (s *Server) Admits(r *http.Request) bool {
+	_, ok := s.device(r)
+	return ok
+}
+
 // Refuse is the answer to a gated call without a valid ticket. It names the
 // methods so a client that skipped /healthz can still prompt for the right
 // thing -- the lesson from code-docker: an unconfigured state explains itself.

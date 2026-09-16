@@ -18,7 +18,7 @@ import (
 
 const accessKey = "friends-only-access-key"
 
-func startAuth(t *testing.T, scope auth.Scope) *fixture {
+func startAuth(t *testing.T, scope auth.Scope, tune ...func(*Config)) *fixture {
 	t.Helper()
 	keys, _, err := auth.ParseKeys(strings.NewReader(accessKey))
 	if err != nil {
@@ -33,7 +33,11 @@ func startAuth(t *testing.T, scope auth.Scope) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := New(DefaultConfig(), NewClock())
+	hc := DefaultConfig()
+	for _, f := range tune {
+		f(&hc)
+	}
+	h := New(hc, NewClock())
 	hcfg := DefaultHTTPConfig()
 	hcfg.PingInterval = time.Hour
 	hcfg.Auth = a
