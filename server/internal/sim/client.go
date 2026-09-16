@@ -2,6 +2,7 @@ package sim
 
 import (
 	"math"
+	"sort"
 
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
@@ -474,8 +475,18 @@ func (c *Client) RunScheduled(serverMs int64) {
 		return
 	}
 	est := c.serverNowEst(serverMs)
+	// Due order is not seq order: `play` carries CMD_DELAY and `pause` carries
+	// none, so a pause pressed inside a play's lead is newer AND due sooner.
+	// Same two rules as the engine (engine.ts schedule/applyScheduled): walk
+	// in `when` order, and never let an older seq overwrite a newer one --
+	// applied in arrival order, the stale play landed last and the member
+	// played against a paused room with its lastAppliedSeq going backwards.
+	sort.SliceStable(c.pending, func(i, j int) bool { return c.pending[i].When < c.pending[j].When })
 	keep := c.pending[:0]
 	for _, p := range c.pending {
+		if p.Seq <= c.lastAppliedSeq {
+			continue // superseded while it waited
+		}
 		if est >= p.When {
 			c.anchor = p.Anchor
 			c.lastAppliedSeq = p.Seq
