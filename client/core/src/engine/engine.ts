@@ -397,6 +397,14 @@ const CONTINUATION_WINDOW_MS = 20_000;
  * and conforming would only seek it to its end.
  */
 const PAST_DURATION_SLACK_MS = 2000;
+/**
+ * How long a continuation of ours may take to reach the room and be conformed
+ * before it no longer starts the room. The conform waits for the ack and for
+ * the new element's data (at most `METADATA_ONLY_MS` past its metadata); a
+ * minute is far more than that, and far less than the time after which
+ * somebody moving the room onto the next episode by hand is a new decision.
+ */
+const CONTINUATION_START_MS = 60_000;
 
 /**
  * Conform a paused element that has metadata but will not buffer on its own
@@ -554,7 +562,9 @@ export class SyncEngine {
   /** The last time this member's element reached (or nearly reached) the room's media's end. */
   private lastFinish: { key: string; epoch: number; at: number } | null = null;
   /** Our next-episode continuation, until it is conformed and the room is started. */
-  private continuing: { key: string; play: boolean } | null = null;
+  private continuing: { key: string; play: boolean; at: number } | null = null;
+  /** A `welcome` has been applied in this engine's life: the next one is a reconnect. */
+  private welcomed = false;
   /** The local media this member already tried to name an unnamed room with. */
   private namedFor = '';
   /**
@@ -740,7 +750,7 @@ export class SyncEngine {
     // It lands paused at 0 -- the sender's own site may be seconds into the
     // new episode -- and the room is started once this member is conformed,
     // by a `play` the readiness gate holds for everyone still on the way.
-    this.continuing = { key, play: !this.anchor.paused };
+    this.continuing = { key, play: !this.anchor.paused, at: this.d.now() };
     this.stats.continuations++;
     this.send('media', 0, { key, url: this.localMediaUrl }, prev);
   }
@@ -996,11 +1006,30 @@ export class SyncEngine {
   private onFrame(f: ServerFrame): void {
     this.record('rx', f.t, f as unknown as Record<string, unknown>);
     switch (f.t) {
-      case 'welcome':
+      case 'welcome': {
+        // A welcome replaces the anchor without passing through
+        // `applyScheduled`, so what that step learns from a command has to be
+        // learned here from the commands missed while away: that somebody
+        // else moved the room (a seeder must not seed over it), and that the
+        // room's media changed. A seq of ours that the server applied just
+        // before the socket went is indistinguishable from somebody else's
+        // unless its ack made it; conforming to our own seed is harmless.
+        if (f.seq > this.lastAppliedSeq && !this.ownSeqs.has(f.seq) && this.adoptFor !== null) {
+          this.foreignMove = true;
+        }
+        const left = this.anchor.mediaKey;
         this.selfId = f.you;
         this.members = f.members;
         this.anchor = f.anchor;
         this.lastAppliedSeq = f.seq;
+        // The first welcome is not a change: the anchor before it is a
+        // placeholder, and a new epoch would disown a press made before it.
+        if (this.welcomed && f.anchor.mediaKey !== left) this.roomMediaChanged(left);
+        this.welcomed = true;
+        // A continuation is either on the room now, or lost with the socket
+        // (or refused), and then it must not start the room whenever somebody
+        // later moves it onto that media.
+        if (this.continuing && this.continuing.key !== f.anchor.mediaKey) this.continuing = null;
         // A naming lost with the old connection (dropped before the server
         // applied it) is tried again against the room as it is now; the
         // compare-and-set makes a repeat harmless.
@@ -1012,6 +1041,7 @@ export class SyncEngine {
         // expected() is not yet meaningful. The first heartbeat's residual
         // brings us in, judged by a server that knows our uncertainty.
         break;
+      }
 
       case 'time.reply':
         // A pending transition's timer was converted through the old offset.
@@ -1153,6 +1183,23 @@ export class SyncEngine {
     this.rearm();
   }
 
+  /**
+   * The room's media changed from `left` to what the anchor names now.
+   * Whatever the element shows is acquired afresh against the new media: the
+   * room moving onto our page is a new media epoch as much as our page moving
+   * is.
+   */
+  private roomMediaChanged(left: string): void {
+    const f = this.lastFinish;
+    // Only a finish that just happened: a member idle on an end screen for
+    // minutes is not on its way to whatever the room moved to, and would
+    // hold its next play for GATE_TIMEOUT.
+    const now = this.d.now();
+    this.inTransit = !!f && f.key === left && !this.onRoomMedia() && now - f.at <= CONTINUATION_WINDOW_MS;
+    this.inTransitUntil = now + CONTINUATION_WINDOW_MS;
+    this.newMediaEpoch();
+  }
+
   private applyScheduled(p: Scheduled): Promise<void> {
     if (p.seq <= this.lastAppliedSeq) return Promise.resolve();
     // Bookkeeping is synchronous even though the player work is queued, so a
@@ -1163,19 +1210,7 @@ export class SyncEngine {
     const roomMoved = p.anchor.mediaKey !== this.anchor.mediaKey;
     const left = this.anchor.mediaKey;
     this.anchor = p.anchor;
-    if (roomMoved) {
-      // Whatever the element shows now is acquired afresh against the new
-      // media: the room moving onto our page is a new media epoch as much as
-      // our page moving is.
-      const f = this.lastFinish;
-      // Only a finish that just happened: a member idle on an end screen for
-      // minutes is not on its way to whatever the room moved to, and would
-      // hold its next play for GATE_TIMEOUT.
-      const now = this.d.now();
-      this.inTransit = !!f && f.key === left && !this.onRoomMedia() && now - f.at <= CONTINUATION_WINDOW_MS;
-      this.inTransitUntil = now + CONTINUATION_WINDOW_MS;
-      this.newMediaEpoch();
-    }
+    if (roomMoved) this.roomMediaChanged(left);
     this.ev.onAnchor?.(p.anchor);
 
     // Track the room's state, but do not move a player that is showing
@@ -1804,7 +1839,15 @@ export class SyncEngine {
   /** Our continuation is on the room and conformed: start everybody. */
   private startContinuation(): void {
     const c = this.continuing;
-    if (!c || c.key !== this.anchor.mediaKey || !this.onRoomMedia()) return;
+    if (!c) return;
+    if (this.d.now() - c.at > CONTINUATION_START_MS) {
+      // Never conformed in time: the command was refused (`rate_limited`
+      // names no command) or lost. Starting the room now would be a play
+      // nobody pressed, on a move somebody else made.
+      this.continuing = null;
+      return;
+    }
+    if (c.key !== this.anchor.mediaKey || !this.onRoomMedia()) return;
     this.continuing = null;
     if (c.play) this.send('play', this.d.adapter.readState().positionS * 1000);
   }

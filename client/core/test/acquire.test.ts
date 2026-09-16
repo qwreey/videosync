@@ -826,3 +826,152 @@ describe('the edges the design names', () => {
     assert.deepEqual(c.kinds().filter((k) => k === 'media'), ['media'], 'control: the site\'s own countdown');
   });
 });
+
+// --- integration review (D6-D8) ---------------------------------------------
+
+type H = ReturnType<typeof harness>;
+
+/** Drop the socket and come back to a room as `welcome` describes it. */
+async function rejoin(h: H, seq: number, anchor: Partial<Anchor>) {
+  h.tr.drop();
+  await h.vt.advance(1000); // backoff, then a new socket
+  h.tr.open();
+  h.tr.deliver({
+    t: 'welcome', you: 'me-2', seq,
+    anchor: { positionMs: 0, atServerMs: h.serverNow(), paused: true, mediaKey: KEY, ...anchor },
+    members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+    serverMs: h.vt.now, mediaKey: anchor.mediaKey ?? KEY,
+  });
+  await h.vt.advance(400);
+}
+
+describe('a creator that reconnects while it loads', () => {
+  async function loadingCreator() {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    assert.equal(h.engine.acquisition, 'detached');
+    return h;
+  }
+
+  it('does not seed over a move it missed while disconnected', async () => {
+    const h = await loadingCreator();
+    // Somebody else moved the room while the socket was down.
+    await rejoin(h, 5, { positionMs: 50_000, paused: true });
+    h.player.positionS = 813; // the site's resume
+    h.player.readyState = 4;
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), [], 'the creator seeded over a move made while it was away');
+    assert.ok(Math.abs(h.player.positionS - 50) < 0.3, `left at ${h.player.positionS}`);
+  });
+
+  it('control: a room nobody moved meanwhile is still seeded', async () => {
+    const h = await loadingCreator();
+    await rejoin(h, 0, { positionMs: 0, paused: true });
+    h.player.positionS = 813;
+    h.player.readyState = 4;
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), ['seek']);
+  });
+});
+
+describe('the first welcome', () => {
+  it('is not a change of media: a press made just before it still counts', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.tr.autoAnswerTime(OFFSET);
+    h.engine.start();
+    h.tr.open();
+    h.g.press(); // the member presses play as the page joins
+    await h.vt.advance(10);
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: KEY },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    await h.vt.advance(400);
+    await h.siteAutoplay();
+    assert.deepEqual(h.kinds(), ['play'], 'the member\'s press was disowned by joining');
+  });
+});
+
+describe('a member that finished while disconnected', () => {
+  async function finished() {
+    const h = harness({ player: { paused: false, positionS: 1399 } });
+    await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.player.positionS = 1400;
+    h.player.paused = true;
+    h.player.ended = true;
+    h.player.emit('pause');
+    await h.vt.advance(100);
+    return h;
+  }
+
+  it('is on its way to the media the room moved on to, as over a live socket', async () => {
+    const h = await finished();
+    await rejoin(h, 4, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, true, 'a welcome onto new media was not a new media epoch');
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  it('control: a welcome on the same media leaves it finished', async () => {
+    const h = await finished();
+    await rejoin(h, 4, { positionMs: 1_400_000, paused: false, atServerMs: 0 });
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, undefined);
+    assert.equal(h.lastHb().suspended, true);
+  });
+});
+
+describe('a continuation that never reached the room', () => {
+  async function continued() {
+    const h = harness({ continues: (a, b) => a === KEY && b === NEXT, player: { paused: false, positionS: 1399 } });
+    await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.player.positionS = 1400;
+    h.player.paused = true;
+    h.player.ended = true;
+    h.player.emit('pause');
+    await h.vt.advance(5500);
+    h.engine.setLocalMediaKey(NEXT, 'https://laftel.net/player/1/2');
+    h.player.ended = false;
+    h.player.paused = true;
+    h.player.positionS = 0;
+    h.player.emit('emptied');
+    await h.vt.advance(20);
+    assert.deepEqual(h.kinds(), ['media']);
+    return h;
+  }
+  /** Much later, somebody moves the room onto NEXT, paused, with the button. */
+  async function movedLater(h: H, afterMs = 600_000) {
+    await h.vt.advance(afterMs);
+    await h.state({ mediaKey: NEXT, positionMs: 0, paused: true }, 'media');
+    await h.vt.advance(2000);
+  }
+
+  it('does not start the room later when the socket lost it', async () => {
+    const h = await continued();
+    await rejoin(h, 0, { positionMs: 1_400_000, paused: false, atServerMs: 0 }); // still KEY
+    // Soon, too: the welcome says it is lost, whatever the time.
+    await movedLater(h, 10_000);
+    assert.deepEqual(h.kinds(), ['media'], 'a play nobody pressed started the room');
+  });
+
+  it('does not start the room later when the server refused it', async () => {
+    const h = await continued();
+    h.tr.deliver({ t: 'error', code: 'rate_limited', msg: 'too many commands' });
+    await h.vt.advance(10);
+    await movedLater(h);
+    assert.deepEqual(h.kinds(), ['media'], 'a play nobody pressed started the room');
+  });
+
+  it('control: one the room took over a reconnect still starts it', async () => {
+    const h = await continued();
+    // Applied before the socket went; the ack was lost with it.
+    await rejoin(h, 1, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+});
