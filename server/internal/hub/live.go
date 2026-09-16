@@ -106,6 +106,11 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 		// parameter (docs/PROTOCOL.md section 2).
 		extra = append(extra, room.MediaMismatch{RoomMediaKey: a.MediaKey, Yours: h.MediaKey})
 	}
+	if g, ok := l.room.GateState(); ok {
+		// A snapshot, sent right after the welcome. Any change from here on is
+		// broadcast into this member's outbox, which drains after it.
+		extra = append(extra, g)
+	}
 
 	w := room.Welcome{
 		You: c.id, Seq: l.room.Seq(), Anchor: l.room.Anchor(),

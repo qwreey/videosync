@@ -672,6 +672,19 @@ func (r *Room) releaseGate(now int64) {
 	r.apply(now, h.by, h.cmd)
 }
 
+// GateState is the gate as a joiner needs to hear it, and whether there is
+// anything to say. announceGate speaks only when the gated set changes, and a
+// join does not change it, so without this a member who arrives while the
+// room is held is never told -- and a play they press is held again in
+// silence.
+func (r *Room) GateState() (Gate, bool) {
+	ids := r.Gated()
+	if r.held == nil && len(ids) == 0 {
+		return Gate{}, false
+	}
+	return Gate{Waiting: r.held != nil, WaitingOn: ids, Reason: "buffering"}, true
+}
+
 // Held reports whether the gate is currently holding a command.
 func (r *Room) Held() bool { return r.held != nil }
 

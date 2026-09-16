@@ -375,6 +375,12 @@ gate and the room resumes without them.
 
 Sent on **change only**: one frame per report per member would be the room's report rate times its
 size. A suspended member is never in `waitingOn` — they are absent, not buffering (§4).
+A join changes nothing about the gate, so a member who joins while a `play` is held or someone is
+buffering gets the current `gate` frame right after its `welcome` instead; otherwise it would never
+hear why its own `play` is not starting.
+
+When the **last** member leaves, a held `play` is dropped rather than released: there is nobody to
+start playing for, and the anchor of an empty room would run for the whole idle TTL.
 
 `waiting` and `waitingOn` are **different facts**: `waitingOn` is who is not ready (worth showing
 in the UI whenever it is non-empty), `waiting` is whether a command is actually being held.

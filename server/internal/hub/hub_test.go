@@ -456,6 +456,45 @@ func TestPlayIsHeldUntilEveryoneIsReady(t *testing.T) {
 	}
 }
 
+func TestAJoinerIsToldTheGateIsHolding(t *testing.T) {
+	// A gate frame goes out only when the gated set changes, and a join does
+	// not change it. So a member who arrived while a play was held heard
+	// nothing: their own play was held again with no frame, their player
+	// re-paused, and the panel said nothing was wrong.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	if g := a.await("gate"); g["waiting"] != true {
+		t.Fatalf("play was not held: %v", g)
+	}
+
+	c, _, err := f.dial(id, secret, "c", "yt:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := c.await("gate")
+	if g["waiting"] != true {
+		t.Fatalf("joiner's gate frame says nothing is held: %v", g)
+	}
+	if on, _ := g["waitingOn"].([]any); len(on) != 1 || on[0] != b.id {
+		t.Fatalf("joiner is told the room waits on %v, want [%s]", g["waitingOn"], b.id)
+	}
+}
+
+func TestAJoinerIntoAnOpenRoomGetsNoGateFrame(t *testing.T) {
+	// The control: nothing to report, nothing sent.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	f.dial(id, secret, "a", "yt:abc")
+	c, _, _ := f.dial(id, secret, "c", "yt:abc")
+	c.quiet(300*time.Millisecond, "gate")
+}
+
 func TestOnlyPlayIsHeld(t *testing.T) {
 	// pause and seek go through while a member buffers: they are not the
 	// transitions where being unready is fatal, and holding them would make
