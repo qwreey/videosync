@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
 import type { EngineConfig, EngineEvents } from '../src/engine/engine.ts';
+import { ServerClock } from '../src/engine/clock.ts';
 import type { Anchor } from '../src/engine/clock.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, FakeTransport, VirtualTime, flush } from './fakes.ts';
@@ -965,5 +966,61 @@ describe('DOM events are the second input to the same decision', () => {
     }
     await h.vt.advance(3000);
     assert.equal(h.tr.sentOf('cmd').length, before, 'invented a seek out of extra evaluations');
+  });
+});
+
+describe('the clock estimate follows a clock that steps', () => {
+  /** Deterministic noise, so a failure reproduces. */
+  function lcg(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+  }
+
+  /** One exchange against a server `offset` ahead, with separate up/down delays. */
+  function probe(c: ServerClock, clientNow: number, offset: number, up: number, down: number): void {
+    const tRecv = clientNow + up + offset;
+    c.addSample({ t0: clientNow, tRecv, tSend: tRecv + 1, t1: clientNow + up + 1 + down });
+  }
+
+  it('stays inside its own error bound on a stable, asymmetric path', () => {
+    // The control: whatever lets the estimate move on a step must not let it
+    // wander while nothing has changed. min-RTT's guarantee is |error| <= rtt/2.
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const rnd = lcg(seed);
+      const c = new ServerClock();
+      const offset = 1_700_000_000_000;
+      let now = 1000;
+      for (let i = 0; i < 400; i++) {
+        probe(c, now, offset, 5 + rnd() * 80, 5 + rnd() * 20);
+        const err = Math.abs(c.serverNow(now) - (now + offset));
+        assert.ok(err <= c.uncertaintyMs + 0.5,
+          `seed ${seed} probe ${i}: error ${err} ms outside the ${c.uncertaintyMs} ms bound`);
+        now += 5000;
+      }
+      assert.ok(c.rttMs <= 30, `seed ${seed}: settled on a ${c.rttMs} ms sample`);
+    }
+  });
+
+  it('re-converges within a probe after the local clock stops for 30 s', () => {
+    // performance.now() does not run while a laptop is suspended; the server's
+    // clock does. A 30 s sleep is well under the socket's read timeout, so
+    // nothing reconnects -- and a minimum RTT never improves just because the
+    // offset moved, so the stale estimate used to survive the whole session.
+    for (const seed of [11, 12, 13, 14, 15]) {
+      const rnd = lcg(seed);
+      const c = new ServerClock();
+      let offset = 1_700_000_000_000;
+      let now = 1000;
+      for (let i = 0; i < 20; i++) { probe(c, now, offset, 10 + rnd() * 10, 10 + rnd() * 10); now += 5000; }
+      offset += 30_000;                        // suspended: server time ran on, ours did not
+      probe(c, now, offset, 15 + rnd() * 30, 15 + rnd() * 30);
+      const err = Math.abs(c.serverNow(now) - (now + offset));
+      assert.ok(err <= c.uncertaintyMs + 0.5,
+        `seed ${seed}: still ${err} ms off after the first probe past the step`);
+      // And it keeps tightening from there, as min-RTT does.
+      for (let i = 0; i < 20; i++) { now += 5000; probe(c, now, offset, 10 + rnd() * 10, 10 + rnd() * 10); }
+      assert.ok(Math.abs(c.serverNow(now) - (now + offset)) <= c.uncertaintyMs + 0.5);
+      assert.ok(c.rttMs <= 30, `seed ${seed}: never tightened past ${c.rttMs} ms`);
+    }
   });
 });

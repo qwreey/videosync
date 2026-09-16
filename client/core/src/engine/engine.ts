@@ -557,7 +557,10 @@ export class SyncEngine {
         break;
 
       case 'time.reply':
-        this.clock.addSample({ t0: f.t0, tRecv: f.tRecv, tSend: f.tSend, t1: this.d.now() });
+        // A pending transition's timer was converted through the old offset.
+        if (this.clock.addSample({ t0: f.t0, tRecv: f.tRecv, tSend: f.tSend, t1: this.d.now() })) {
+          this.rearm();
+        }
         this.stats.timeSamples++;
         break;
 
