@@ -39,14 +39,7 @@ func DialTLS(rawURL string, hdr http.Header, cfg *tls.Config) (*Conn, error) {
 	default:
 		return nil, fmt.Errorf("ws: unsupported scheme %q", u.Scheme)
 	}
-	host := u.Host
-	if u.Port() == "" {
-		if secure {
-			host = net.JoinHostPort(host, "443")
-		} else {
-			host = net.JoinHostPort(host, "80")
-		}
-	}
+	host := dialAddr(u, secure)
 	var raw net.Conn
 	if secure {
 		c := cfg
@@ -104,6 +97,21 @@ func DialTLS(rawURL string, hdr http.Header, cfg *tls.Config) (*Conn, error) {
 		ReadTimeout:    90 * time.Second,
 		WriteTimeout:   10 * time.Second,
 	}, nil
+}
+
+// dialAddr is the host:port to connect to for u.
+//
+// Built from Hostname, not Host: Host keeps an IPv6 literal's brackets, and
+// JoinHostPort adds its own, so "ws://[::1]/ws" became "[[::1]]:80". Host is
+// still what goes in the Host header.
+func dialAddr(u *url.URL, secure bool) string {
+	if u.Port() != "" {
+		return u.Host
+	}
+	if secure {
+		return net.JoinHostPort(u.Hostname(), "443")
+	}
+	return net.JoinHostPort(u.Hostname(), "80")
 }
 
 // maskKey is a fresh 32-bit key per frame, as RFC 6455 section 5.3 requires.

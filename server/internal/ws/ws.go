@@ -77,9 +77,16 @@ type Conn struct {
 	// MaxMessageSize caps a reassembled message. A peer that ignores it gets
 	// closed with 1009 rather than being allowed to allocate without bound.
 	MaxMessageSize int64
-	// ReadTimeout bounds the wait for the *next* message, WriteTimeout one
-	// write. Both are refreshed per operation.
+	// ReadTimeout bounds the wait for the next *frame*, not the next message:
+	// it is refreshed before every frame, control frames and fragments
+	// included. WriteTimeout bounds one write.
 	ReadTimeout, WriteTimeout time.Duration
+	// ReadBefore, when set, is an absolute bound no read waits past, however
+	// many frames arrive. ReadTimeout alone cannot bound a wait for one
+	// particular message: it is refreshed before every frame, and pings,
+	// pongs and unfinished fragments are frames that ReadMessage consumes
+	// without returning.
+	ReadBefore time.Time
 }
 
 // Upgrade performs the server side of the opening handshake and takes over the
@@ -244,9 +251,14 @@ func (c *Conn) ReadMessage() (opcode byte, payload []byte, err error) {
 		buf   []byte
 	)
 	for {
+		deadline := c.ReadBefore
 		if c.ReadTimeout > 0 {
-			c.raw.SetReadDeadline(time.Now().Add(c.ReadTimeout))
+			if d := time.Now().Add(c.ReadTimeout); deadline.IsZero() || d.Before(deadline) {
+				deadline = d
+			}
 		}
+		// Zero clears it, so dropping ReadBefore really lifts the bound.
+		c.raw.SetReadDeadline(deadline)
 		f, err := c.readFrame(!c.client)
 		if err != nil {
 			if errors.Is(err, ErrMessageSize) {
@@ -368,5 +380,7 @@ func (c *Conn) Close(code int, reason string) error {
 	return c.raw.Close()
 }
 
-// RemoteAddr is used for per-IP limits.
+// RemoteAddr is the peer's address. Nothing limits per address today; behind a
+// reverse proxy this is the proxy, so a per-IP limit needs a trusted-proxy
+// setting before it can use it.
 func (c *Conn) RemoteAddr() net.Addr { return c.raw.RemoteAddr() }

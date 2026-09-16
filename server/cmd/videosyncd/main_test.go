@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,35 +56,108 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-func waitHealthy(t *testing.T, client *http.Client, url string, proc *exec.Cmd) {
+// server is a running videosyncd. Wait is called exactly once, by a goroutine
+// started with the process, so the health poll can notice an early exit:
+// exec.Cmd.ProcessState is only set by Wait, and a poll that read it without
+// anyone having called Wait never saw the process die.
+type server struct {
+	exited chan struct{}
+	err    error // valid once exited is closed
+}
+
+func startServer(t *testing.T, stderr io.Writer, bin string, args ...string) *server {
 	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Stderr = stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{exited: make(chan struct{})}
+	go func() { s.err = cmd.Wait(); close(s.exited) }()
+	t.Cleanup(func() { cmd.Process.Kill(); <-s.exited })
+	return s
+}
+
+// healthy polls url until it answers 200, the process exits, or 15 s pass.
+func (s *server) healthy(client *http.Client, url string) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if proc.ProcessState != nil && proc.ProcessState.Exited() {
-			t.Fatalf("the server exited before it answered: %v", proc.ProcessState)
+		select {
+		case <-s.exited:
+			return fmt.Errorf("the server exited before it answered: %v", s.err)
+		default:
 		}
 		resp, err := client.Get(url)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == 200 {
-				return
+				return nil
 			}
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-s.exited:
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
-	t.Fatalf("no answer from %s -- the process is running but nothing is listening", url)
+	return fmt.Errorf("no answer from %s -- the process is running but nothing is listening", url)
+}
+
+func waitHealthy(t *testing.T, client *http.Client, url string, s *server) {
+	t.Helper()
+	if err := s.healthy(client, url); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// syncBuffer is a bytes.Buffer that can be read while os/exec copies the
+// child's stderr into it from a goroutine of its own. A bare bytes.Buffer
+// there is a data race that -race reports on every run.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+func TestHealthCheckReportsAServerThatDiedAtStartup(t *testing.T) {
+	// A port already taken is the commonest way videosyncd fails to start. The
+	// poll must say the process exited, and promptly -- not wait out its whole
+	// deadline and then claim the opposite.
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	bin := build(t)
+	s := startServer(t, io.Discard, bin, "-addr", busy.Addr().String())
+	began := time.Now()
+	// Not /healthz: the listener holding the port would never answer it, so
+	// only noticing the exit can end this early.
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	err = s.healthy(client, "http://"+busy.Addr().String()+"/healthz")
+	if err == nil || !strings.Contains(err.Error(), "exited") {
+		t.Fatalf("health check on a server that failed to start said: %v", err)
+	}
+	if d := time.Since(began); d > 5*time.Second {
+		t.Fatalf("took %v to notice the process had exited", d)
+	}
 }
 
 func TestBinaryServesPlaintext(t *testing.T) {
 	bin := build(t)
 	port := freePort(t)
-	cmd := exec.Command(bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port))
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-	waitHealthy(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/healthz", port), cmd)
+	s := startServer(t, os.Stderr, bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port))
+	waitHealthy(t, http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/healthz", port), s)
 }
 
 func TestVerboseActuallyLogsAFrame(t *testing.T) {
@@ -91,15 +166,10 @@ func TestVerboseActuallyLogsAFrame(t *testing.T) {
 	// through the real binary, on real stderr.
 	bin := build(t)
 	port := freePort(t)
-	cmd := exec.Command(bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port), "-verbose")
-	var logs bytes.Buffer
-	cmd.Stderr = &logs
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	var logs syncBuffer
+	s := startServer(t, &logs, bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port), "-verbose")
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	waitHealthy(t, http.DefaultClient, base+"/healthz", cmd)
+	waitHealthy(t, http.DefaultClient, base+"/healthz", s)
 
 	resp, err := http.Post(base+"/api/rooms", "application/json",
 		strings.NewReader(`{"mediaKey":"yt:abc"}`))
@@ -123,7 +193,7 @@ func TestVerboseActuallyLogsAFrame(t *testing.T) {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(logs.String(), "join ") && strings.Contains(logs.String(), "-> ") {
+		if got := logs.String(); strings.Contains(got, "join ") && strings.Contains(got, "-> ") {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -132,25 +202,23 @@ func TestVerboseActuallyLogsAFrame(t *testing.T) {
 }
 
 func TestBinaryServesTLS(t *testing.T) {
-	// TLS is not optional in deployment -- an https page can reach neither http
-	// nor ws (docs/BROWSER-FINDINGS.md section 8) -- so the flags that enable it
-	// are as load-bearing as the plaintext path.
+	// A real deployment serves TLS: a userscript on a public https page needs
+	// the server on a PUBLIC address with a real certificate -- TLS is
+	// necessary there, not sufficient, because a public-origin page cannot
+	// reach a loopback or private address by any scheme (docs/BROWSER-FINDINGS.md
+	// section 8; an earlier reading blamed mixed content and was retracted).
+	// So the flags that enable it are as load-bearing as the plaintext path.
 	dir := t.TempDir()
 	certPath, keyPath, pool := writeSelfSigned(t, dir)
 	bin := build(t)
 	port := freePort(t)
-	cmd := exec.Command(bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port),
+	s := startServer(t, os.Stderr, bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port),
 		"-tls-cert", certPath, "-tls-key", keyPath)
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
 
 	client := &http.Client{Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{RootCAs: pool},
 	}}
-	waitHealthy(t, client, fmt.Sprintf("https://127.0.0.1:%d/healthz", port), cmd)
+	waitHealthy(t, client, fmt.Sprintf("https://127.0.0.1:%d/healthz", port), s)
 }
 
 func TestBinaryRefusesHalfConfiguredTLS(t *testing.T) {

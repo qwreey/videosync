@@ -40,3 +40,26 @@ func TestThrottleResetsAfterIdle(t *testing.T) {
 		}
 	}
 }
+
+func TestThrottleWaitIsWhenTheNextEventIsAllowed(t *testing.T) {
+	th := newThrottle(2, 5, 4000)
+	now := int64(1000)
+	th.allow(now)
+	th.allow(now)
+	for _, at := range []int64{now, now + 50, now + 199} {
+		if th.allow(at) {
+			t.Fatalf("allowed at +%d inside the 200 ms window", at-now)
+		}
+		w := th.waitMs(at)
+		if w < 1 {
+			t.Fatalf("wait %d at +%d: a retry would spin", w, at-now)
+		}
+		if th.allow(at + w - 1) {
+			t.Fatalf("allowed before the wait (%d ms from +%d) ran out", w, at-now)
+		}
+		if !(&throttle{burst: th.burst, sustained: th.sustained, cooldownMs: th.cooldownMs,
+			count: th.count, lastMs: th.lastMs, windowMs: th.windowMs}).allow(at + w) {
+			t.Fatalf("refused when the wait (%d ms from +%d) ran out", w, at-now)
+		}
+	}
+}

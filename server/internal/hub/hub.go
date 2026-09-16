@@ -38,6 +38,9 @@ type Config struct {
 	MaxMembersPerRoom int
 	// MaxChatLen truncates rather than refuses, like cytube (320 chars).
 	MaxChatLen int
+	// MaxNameLen truncates a member's display name the same way. The name is
+	// copied into every roster and every chat line, to every member.
+	MaxNameLen int
 
 	// Verbose logs every frame in and out, plus joins and leaves.
 	//
@@ -58,6 +61,7 @@ func DefaultConfig() Config {
 		MaxRooms:          10000,
 		MaxMembersPerRoom: 32,
 		MaxChatLen:        320,
+		MaxNameLen:        64,
 	}
 }
 
@@ -100,8 +104,8 @@ func (h *Hub) Create(mediaKey, mediaURL string) (id, secret string, err error) {
 		conns: map[string]*conn{}, emptySinceMs: now,
 	}
 	l.room = room.New(id, h.cfg.NewCorrector(), h.cfg.Tunables,
-		vsync.Anchor{PositionMs: 0, AtServerMs: now, Paused: true, MediaKey: mediaKey,
-			MediaURL: room.SanitizeMediaURL(mediaURL)}, l)
+		vsync.Anchor{PositionMs: 0, AtServerMs: now, Paused: true}, l)
+	l.room.SetMedia(mediaKey, mediaURL)
 	h.rooms[id] = l
 	return id, secret, nil
 }

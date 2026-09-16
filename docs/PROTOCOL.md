@@ -83,6 +83,12 @@ What a client sends is canonical and carries nothing personal: the provider's wa
 tracking) and never the fragment (where an invite keeps the room secret). The server drops
 anything that is not http(s), has credentials or a fragment, or is over 512 bytes.
 
+`mediaKey` and `name` are bounded too, because both are repeated to every member: the key in every
+`state`, `ack` and `welcome`, the name in every roster and chat line. A `mediaKey` over 512 bytes
+names nothing when it comes from `POST /api/rooms` or a first `hello` (its `mediaUrl` goes with it),
+and a `media` command carrying one is refused with `bad_cmd`. A `name` is truncated to 64 bytes on
+a rune boundary, like chat text.
+
 The URL comes from a member, so a client **checks it before following it**: it must normalise to
 exactly the anchor's `mediaKey`, and it must be on a provider the client knows or on the site the
 member is already on — otherwise anyone in a room could send everyone else to a page of their
@@ -151,6 +157,15 @@ It uses the member's own measured RTT as the grace period instead (§40a).
 
 A room of **one member** schedules nothing at all: `CMD_DELAY` is 0 below two members, because the
 delay buys simultaneity with people who are not there.
+
+**Except inside another command's lead.** A `pause` that arrives before the previous command's
+`when` anchors at that command's `anchor.positionMs` — where a pending `play` resumes from, or
+where a pending seek jumps to — not at the sender's `positionMs`. Nobody applies a transition
+before its `when`, so the sender's position is on the timeline the room is about to leave; taking
+it let a pause from a member who had not reached a seek's `when` undo that acked seek for the whole
+room, although the seek came first in `seq` order. (`Cmd` carries no base `seq`, so "is a
+command still pending" is the only thing the server can know about which timeline the position
+came from.)
 
 ### Amendment: the member who presses `play` waits for `when` too
 
@@ -366,6 +381,12 @@ gate and the room resumes without them.
 
 Sent on **change only**: one frame per report per member would be the room's report rate times its
 size. A suspended member is never in `waitingOn` — they are absent, not buffering (§4).
+A join changes nothing about the gate, so a member who joins while a `play` is held or someone is
+buffering gets the current `gate` frame right after its `welcome` instead; otherwise it would never
+hear why its own `play` is not starting.
+
+When the **last** member leaves, a held `play` is dropped rather than released: there is nobody to
+start playing for, and the anchor of an empty room would run for the whole idle TTL.
 
 `waiting` and `waitingOn` are **different facts**: `waitingOn` is who is not ready (worth showing
 in the UI whenever it is non-empty), `waiting` is whether a command is actually being held.
@@ -436,10 +457,18 @@ natural rates and starving the clock bucket would degrade the timebase itself.
 
 | bucket | burst | sustained | cooldown | on refusal |
 |---|---|---|---|---|
-| `cmd` / `rotate` | 10 | 5/s | 4 s | `error{code:"rate_limited"}` |
+| `cmd` | 10 | 5/s | 4 s | **coalesced**: the newest refused `cmd` replaces any older one and is applied when the bucket allows; its `ack` arrives then. Nothing is sent on deferral |
+| `rotate` | (shares `cmd`'s bucket) | | | `error{code:"rate_limited"}` |
 | `chat` | 4 | 1/s | 4 s | `error{code:"rate_limited"}` |
 | `hb` | 40 | 20/s | 2 s | dropped silently — a report is advisory, and answering would add traffic |
 | `time` | 10 | 2/s | 10 s | dropped silently |
+
+Why `cmd` is coalesced rather than refused: the one burst a person really produces is holding an
+arrow key or scrubbing — seeks ~100 ms apart, of which every other one was refused past the burst.
+When the *last* one was refused the room stayed on an earlier skip, nothing resent the final
+position, and the `ack` for that earlier skip sought the user's own player back to it. Coalescing
+keeps the rate (one command per window whatever the sender does) and lets the newest intent win, as
+the readiness gate does for the command it holds.
 
 ### Errors
 

@@ -64,7 +64,13 @@ type Member struct {
 // deadband turns into thousands of useless seeks. No reference implementation
 // detects this.
 type corrState struct {
+	// lastSeekAt is when the last seek went out, and is what the cooldown is
+	// measured from. It is never cleared: the effectiveness check used to zero
+	// it to mean "evaluated", which silently turned the 2000 ms floor into
+	// seekCooldownMs/2 plus one report interval. seekPending carries that
+	// meaning instead.
 	lastSeekAt     int64
+	seekPending    bool
 	residualAtSeek int64
 	failedSeeks    int
 	biasMs         int64 // learned clock-estimate bias, subtracted from reports
@@ -180,7 +186,12 @@ func (r *Room) SetSink(s Sink)           { r.sink = s }
 // has committed to a media: changing it afterwards is a `media` command, which
 // takes a seq and re-anchors like every other transition.
 func (r *Room) SetMedia(key, url string) {
-	r.anchor.MediaKey, r.anchor.MediaURL = key, SanitizeMediaURL(url)
+	r.anchor.MediaKey, r.anchor.MediaURL = SanitizeMediaKey(key), SanitizeMediaURL(url)
+	if r.anchor.MediaKey == "" {
+		// A URL is only followable to the key it normalises to; without one it
+		// points nowhere a client will go.
+		r.anchor.MediaURL = ""
+	}
 }
 
 // IDs returns the member ids in a stable order.
@@ -216,6 +227,12 @@ func (r *Room) Leave(now int64, id string) {
 	r.reindex()
 	if f, ok := r.corrector.(Forgetter); ok {
 		f.Forget(id)
+	}
+	if len(r.members) == 0 {
+		// Nobody is left to start playing for. Released here, a held play
+		// would run the anchor of an empty room for the whole idle TTL, and
+		// whoever came back would land minutes past where everyone stopped.
+		r.held = nil
 	}
 	// Jellyfin's anti-hang rule: a member who leaves while buffering counts as
 	// ready, so a dropped connection cannot freeze the room.
@@ -308,6 +325,10 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 			r.send(id, Error{Code: "bad_cmd", Msg: "media command needs a mediaKey"})
 			return
 		}
+		if SanitizeMediaKey(m.MediaKey) == "" {
+			r.send(id, Error{Code: "bad_cmd", Msg: "mediaKey too long"})
+			return
+		}
 	default:
 		r.send(id, Error{Code: "bad_kind", Msg: "unknown command kind " + m.Kind})
 		return
@@ -375,6 +396,9 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 	//
 	// A command that leaves the room PLAYING keeps the full lead, because from
 	// then on everybody's clock is running and the instant is the whole point.
+	// Read before `when` replaces it below: is the previous command still
+	// waiting for its instant?
+	pending := now < r.lastCmdWhen
 	when := now + r.CmdDelay()
 	if leavesRoomStopped(m.Kind, r.anchor) {
 		when = now
@@ -388,7 +412,18 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		// position nobody chose and that the pauser never saw. `positionMs`
 		// has always been on the wire for this command and was being thrown
 		// away.
-		r.anchor = r.anchor.Reanchor(m.PositionMs, when, true)
+		pos := m.PositionMs
+		if pending {
+			// Except inside the previous command's lead. Nobody applies a
+			// transition before its `when`, so the pauser's position is on
+			// the timeline the room is about to leave: taking it undid an
+			// acked seek for everyone, although the seek came first in seq
+			// order. Only `play` and a seek during playback carry a lead, and
+			// both put the position the room is committed to in the anchor
+			// -- where it resumes from, or where it jumps to.
+			pos = r.anchor.PositionMs
+		}
+		r.anchor = r.anchor.Reanchor(pos, when, true)
 	case "play":
 		r.anchor = r.anchor.Advance(when)
 		r.anchor.Paused = false
@@ -494,7 +529,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// Did the last seek accomplish anything? If we seeked and the residual is
 	// essentially unchanged, the fault is not the player's position -- it is
 	// our own idea of where the client should be.
-	if cs.lastSeekAt > 0 && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
+	if cs.seekPending && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
 		improved := abs64(eff.ResidualMs) <= int64(float64(abs64(cs.residualAtSeek))*seekImprovementFrac)
 		if improved {
 			cs.failedSeeks = 0
@@ -520,7 +555,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 				eff.ResidualMs = rep.ResidualMs - cs.biasMs
 			}
 		}
-		cs.lastSeekAt = 0
+		cs.seekPending = false
 	}
 
 	d := r.corrector.Decide(eff, r.anchor, now, r.tun)
@@ -544,7 +579,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		if eff.Closing() && abs64(eff.ResidualMs) < r.tun.NudgeMaxResidual {
 			r.UnnecessarySeeks++
 		}
-		cs.lastSeekAt = now
+		cs.lastSeekAt, cs.seekPending = now, true
 		cs.residualAtSeek = eff.ResidualMs
 		r.send(id, Correct{Mode: "seek", When: now, Why: d.Why})
 	case vsync.ActionNudge:
@@ -644,6 +679,19 @@ func (r *Room) releaseGate(now int64) {
 	// The originator is still the originator: they get the ack, everyone else
 	// gets the broadcast, exactly as if the command had arrived now.
 	r.apply(now, h.by, h.cmd)
+}
+
+// GateState is the gate as a joiner needs to hear it, and whether there is
+// anything to say. announceGate speaks only when the gated set changes, and a
+// join does not change it, so without this a member who arrives while the
+// room is held is never told -- and a play they press is held again in
+// silence.
+func (r *Room) GateState() (Gate, bool) {
+	ids := r.Gated()
+	if r.held == nil && len(ids) == 0 {
+		return Gate{}, false
+	}
+	return Gate{Waiting: r.held != nil, WaitingOn: ids, Reason: "buffering"}, true
 }
 
 // Held reports whether the gate is currently holding a command.

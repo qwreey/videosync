@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/qwreey/videosync/server/internal/room"
 	vsync "github.com/qwreey/videosync/server/internal/sync"
@@ -251,8 +252,12 @@ func TestPauseStopsWhereThePauserStopped(t *testing.T) {
 	a.await("members")
 
 	a.send(room.Cmd{ReqID: "r1", Kind: "play", PositionMs: 0})
-	a.await("ack")
+	played := a.await("ack")
 	b.await("state")
+	// Pause once the play is due. Inside its lead nobody has started yet, so
+	// the room pauses where the play would have resumed from, whatever the
+	// pauser reports -- see TestAPauseInsideASeeksLeadDoesNotUndoTheSeek.
+	time.Sleep(time.Duration(num(played, "when")-num(played, "emittedAt")+100) * time.Millisecond)
 
 	a.send(room.Cmd{ReqID: "r2", Kind: "pause", PositionMs: 90_000})
 	ack := a.await("ack")
@@ -449,6 +454,92 @@ func TestPlayIsHeldUntilEveryoneIsReady(t *testing.T) {
 	anchor, _ := st["anchor"].(map[string]any)
 	if anchor["paused"] != false {
 		t.Fatalf("released play left the room paused: %v", anchor)
+	}
+}
+
+func TestAJoinerIsToldTheGateIsHolding(t *testing.T) {
+	// A gate frame goes out only when the gated set changes, and a join does
+	// not change it. So a member who arrived while a play was held heard
+	// nothing: their own play was held again with no frame, their player
+	// re-paused, and the panel said nothing was wrong.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1; r.BufferedAheadS = 0 }))
+	a.await("gate")
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	if g := a.await("gate"); g["waiting"] != true {
+		t.Fatalf("play was not held: %v", g)
+	}
+
+	c, _, err := f.dial(id, secret, "c", "yt:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := c.await("gate")
+	if g["waiting"] != true {
+		t.Fatalf("joiner's gate frame says nothing is held: %v", g)
+	}
+	if on, _ := g["waitingOn"].([]any); len(on) != 1 || on[0] != b.id {
+		t.Fatalf("joiner is told the room waits on %v, want [%s]", g["waitingOn"], b.id)
+	}
+}
+
+func TestAJoinerIntoAnOpenRoomGetsNoGateFrame(t *testing.T) {
+	// The control: nothing to report, nothing sent.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	f.dial(id, secret, "a", "yt:abc")
+	c, _, _ := f.dial(id, secret, "c", "yt:abc")
+	c.quiet(300*time.Millisecond, "gate")
+}
+
+func TestNamesAndMediaKeysAreBounded(t *testing.T) {
+	// Both are repeated to every member -- the name in every roster and chat
+	// line, the key in every state, ack and welcome -- so, like chat text and
+	// mediaUrl, they need a bound of their own. MaxFrameBytes alone let one
+	// member make every later frame to everyone ~64 KiB.
+	huge := strings.Repeat("가", 10_000) // 30 000 bytes; two of them fit a hello
+	f := start(t, nil)
+
+	// A room created with an oversized key is not named by it (under the
+	// 4 KiB body cap, which would otherwise hide the question)...
+	id, secret := f.createRoom(strings.Repeat("k", 2000))
+	a, welcome, err := f.dial(id, secret, huge, huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...and neither is it named by an oversized first hello.
+	if k, _ := welcome["mediaKey"].(string); len(k) > room.MaxMediaKey {
+		t.Fatalf("room took a %d-byte mediaKey", len(k))
+	}
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	for _, mem := range a.await("members")["members"].([]any) {
+		name, _ := mem.(map[string]any)["name"].(string)
+		if len(name) > f.hub.cfg.MaxNameLen {
+			t.Fatalf("roster carries a %d-byte name, cap %d", len(name), f.hub.cfg.MaxNameLen)
+		}
+		if !utf8.ValidString(name) {
+			t.Fatal("the truncated name is not valid UTF-8")
+		}
+	}
+	if f.hub.cfg.MaxNameLen <= 0 {
+		t.Fatal("no name cap configured by default")
+	}
+
+	// A media command naming an oversized key is refused, and takes no seq.
+	a.send(room.Cmd{ReqID: "m", Kind: "media", MediaKey: huge})
+	if e := a.await("error"); e["code"] != "bad_cmd" {
+		t.Fatalf("oversized media command answered %v", e)
+	}
+	b.quiet(200*time.Millisecond, "state")
+
+	// The control: a key of honest size still repoints the room.
+	a.send(room.Cmd{ReqID: "m2", Kind: "media", MediaKey: "yt:" + strings.Repeat("x", 100)})
+	if st := b.await("state"); st["kind"] != "media" {
+		t.Fatalf("media command of normal size did not go through: %v", st)
 	}
 }
 
@@ -843,27 +934,73 @@ func TestCommandsAreRateLimited(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		a.send(room.Cmd{ReqID: fmt.Sprintf("r%d", i), Kind: "play"})
 	}
-	acks, sawLimit := 0, false
+	acks, last := 0, ""
 	a.sock.ReadTimeout = 500 * time.Millisecond
 	for {
 		m, err := a.read()
 		if err != nil {
 			break
 		}
-		switch m["t"] {
-		case "ack":
+		if m["t"] == "ack" {
 			acks++
-		case "error":
-			if m["code"] == "rate_limited" {
-				sawLimit = true
-			}
+			last, _ = m["reqId"].(string)
 		}
 	}
 	if acks > 12 {
 		t.Fatalf("%d commands got through a burst of 10", acks)
 	}
-	if !sawLimit {
-		t.Fatal("no rate_limited error was sent")
+	// What is past the burst is coalesced, not queued: the newest intent is
+	// applied once the bucket allows it and everything in between is dropped.
+	if last != "r29" {
+		t.Fatalf("the last command applied was %q, want the newest, r29", last)
+	}
+}
+
+func TestTheNewestRateLimitedSeekIsAppliedNotDropped(t *testing.T) {
+	// Holding an arrow key is a stream of seeks ~100 ms apart or faster, and
+	// past the burst every other one was refused outright. When the last was
+	// refused the room stayed on an earlier skip -- and the ack for that
+	// earlier skip then sought the user's own player back to it.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	const n = 21
+	for i := 1; i <= n; i++ {
+		a.send(room.Cmd{ReqID: fmt.Sprintf("s%d", i), Kind: "seek", PositionMs: int64(i) * 5000})
+	}
+	final := float64(n * 5000)
+	deadline := time.Now().Add(3 * time.Second)
+	b.sock.ReadTimeout = 3 * time.Second
+	var pos float64
+	for time.Now().Before(deadline) && pos != final {
+		m, err := b.read()
+		if err != nil {
+			break
+		}
+		if m["t"] == "state" {
+			pos = num(m["anchor"].(map[string]any), "positionMs")
+		}
+	}
+	if pos != final {
+		t.Fatalf("the room ended at %v ms; the user stopped at %v ms", pos, final)
+	}
+	// And the sender's own last ack is for that seek, so its player stays put.
+	a.sock.ReadTimeout = time.Second
+	var lastAck map[string]any
+	for {
+		m, err := a.read()
+		if err != nil {
+			break
+		}
+		if m["t"] == "ack" {
+			lastAck = m
+		}
+	}
+	if lastAck == nil || lastAck["reqId"] != fmt.Sprintf("s%d", n) {
+		t.Fatalf("sender's last ack is %v, want s%d", lastAck, n)
 	}
 }
 
@@ -919,18 +1056,53 @@ func TestASecondHelloIsRefusedNotReprocessed(t *testing.T) {
 func TestReportedClientIDIsIgnored(t *testing.T) {
 	// Identity comes from the connection. If a report could name someone else,
 	// one member could steer another member's corrections.
-	f := start(t, nil)
+	//
+	// Replies go back on the reporter's own socket whatever the report says,
+	// so "a gets the correction" cannot tell the cases apart. What can is who
+	// the corrector is asked about: its per-client state is keyed by that id,
+	// and a wrong key is one member steering another's servo.
+	rec := &askLog{}
+	f := start(t, func(c *Config) {
+		c.NewCorrector = func() vsync.Corrector { return rec }
+	})
 	id, secret := f.createRoom("yt:abc")
 	a, _, _ := f.dial(id, secret, "a", "yt:abc")
 	b, _, _ := f.dial(id, secret, "b", "yt:abc")
 	a.await("members")
 
-	r := hb(0, 8000, nil)
-	r.ClientID = b.id
-	a.send(r)
+	// Written by hand: vsync.Report.ClientID is json:"-", so encoding a struct
+	// would never put the field on the wire at all.
+	raw := fmt.Sprintf(`{"t":"hb","clientId":%q,"residualMs":8000,"readyState":4,`+
+		`"bufferedAheadS":30,"bufferedBehindS":30,"lastAppliedSeq":0,"uncertaintyMs":10,`+
+		`"rttMs":40,"clockSamples":10}`, b.id)
+	if err := a.sock.WriteText([]byte(raw)); err != nil {
+		t.Fatal(err)
+	}
 	// The correction lands on the reporter, not on the named victim.
 	a.await("correct")
 	b.quiet(300*time.Millisecond, "correct")
+	if asked := rec.all(); len(asked) == 0 || asked[0] != a.id || len(asked) != 1 {
+		t.Fatalf("corrector was asked about %q; want exactly the reporter %q", asked, a.id)
+	}
+}
+
+// askLog is a corrector that always seeks and records who it was asked about.
+type askLog struct {
+	mu    sync.Mutex
+	asked []string
+}
+
+func (c *askLog) Name() string { return "asklog" }
+func (c *askLog) Decide(r vsync.Report, _ vsync.Anchor, _ int64, _ vsync.Tunables) vsync.Decision {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.asked = append(c.asked, r.ClientID)
+	return vsync.Decision{Action: vsync.ActionSeek, Why: "asklog"}
+}
+func (c *askLog) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.asked...)
 }
 
 func TestOriginAllowlistIsEnforced(t *testing.T) {
@@ -1203,12 +1375,14 @@ func TestCrossOriginIsRestrictedWhenAnAllowlistIsSet(t *testing.T) {
 }
 
 func TestServesOverTLS(t *testing.T) {
-	// Not a nicety: measured in a real browser (BROWSER-FINDINGS §8), a script
-	// on an https page cannot reach an http server AT ALL -- neither `fetch`
-	// nor `ws://` -- and the localhost exemption for secure *contexts* does not
-	// extend to mixed-content blocking. Every provider we target serves https,
-	// so a plaintext server is unreachable from all of them and TLS is the only
-	// deployable configuration.
+	// Not a nicety, though not for the reason this comment once gave. Measured
+	// in a real browser (BROWSER-FINDINGS §8): a page on a public origin -- every
+	// provider we target -- cannot reach a loopback or private address by ANY
+	// scheme, https and wss included; the request never leaves the browser and
+	// hangs. So TLS alone does not help a server on 127.0.0.1 or a LAN; a
+	// userscript needs the server on a PUBLIC address with a real certificate,
+	// and there TLS is necessary. (The earlier reading blamed mixed content;
+	// §8 retracts it.) The extension's background is exempt from all of this.
 	cfg := DefaultConfig()
 	h := New(cfg, NewClock())
 	srv := httptest.NewTLSServer(h.Handler(DefaultHTTPConfig()))

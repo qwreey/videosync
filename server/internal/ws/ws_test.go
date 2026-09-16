@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -325,6 +326,66 @@ func TestReadDeadlineFiresOnASilentPeer(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("read never timed out")
+	}
+}
+
+func TestReadBeforeIsNotExtendedByControlFramesOrFragments(t *testing.T) {
+	// ReadTimeout is per frame, so a peer that pings, or dribbles out an
+	// unfinished message, never lets it fire. ReadBefore is the absolute bound
+	// the pre-hello wait needs.
+	for name, dribble := range map[string]func(*testing.T, *testClient){
+		"pings":     func(t *testing.T, tc *testClient) { tc.write(t, true, OpPing, true, nil) },
+		"fragments": func(t *testing.T, tc *testClient) { tc.write(t, false, OpContinuation, true, []byte("x")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, errc := echoServer(t, func(c *Conn) {
+				c.ReadTimeout = 200 * time.Millisecond
+				c.ReadBefore = time.Now().Add(300 * time.Millisecond)
+			})
+			tc := dial(t, srv)
+			if name == "fragments" {
+				tc.write(t, false, OpText, true, []byte("x"))
+			}
+			began := time.Now()
+			for time.Since(began) < 3*time.Second {
+				select {
+				case err := <-errc:
+					var ne net.Error
+					if !errors.As(err, &ne) || !ne.Timeout() {
+						t.Fatalf("error %v, want a timeout", err)
+					}
+					return
+				case <-time.After(50 * time.Millisecond):
+					dribble(t, tc)
+				}
+			}
+			t.Fatal("a peer that keeps sending frames outlived ReadBefore by seconds")
+		})
+	}
+}
+
+func TestDialAddressKeepsIPv6LiteralsValid(t *testing.T) {
+	// url.URL.Host keeps an IPv6 literal's brackets, so joining it with a
+	// default port bracketed it twice: "[[::1]]:80", which no dialer accepts.
+	for raw, want := range map[string]string{
+		"ws://[::1]/ws":          "[::1]:80",
+		"wss://[2001:db8::1]/ws": "[2001:db8::1]:443",
+		"ws://[::1]:8080/ws":     "[::1]:8080",
+		"ws://example.com/ws":    "example.com:80",
+		"https://example.com/ws": "example.com:443",
+		"ws://127.0.0.1:9/ws":    "127.0.0.1:9",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := dialAddr(u, u.Scheme == "wss" || u.Scheme == "https")
+		if got != want {
+			t.Errorf("%s: dial address %q, want %q", raw, got, want)
+		}
+		if _, _, err := net.SplitHostPort(got); err != nil {
+			t.Errorf("%s: %q is not a dialable address: %v", raw, got, err)
+		}
 	}
 }
 

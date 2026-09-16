@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -17,8 +18,9 @@ type HTTPConfig struct {
 	// `hello` frame, not in a cookie, so this is not CSRF protection -- but a
 	// self-hoster who knows their extension's origin should be able to say so.
 	AllowedOrigins []string
-	// HandshakeTimeout bounds the wait for `hello` after the upgrade. A socket
-	// that never identifies itself holds a goroutine and an fd.
+	// HandshakeTimeout bounds the whole wait for `hello` after the upgrade,
+	// however many frames the peer sends meanwhile. A socket that never
+	// identifies itself holds a goroutine and an fd.
 	HandshakeTimeout time.Duration
 	PingInterval     time.Duration
 	ReadTimeout      time.Duration
@@ -130,6 +132,18 @@ func originAllowed(allowed []string, origin string) bool {
 	return false
 }
 
+// refusal is what a joiner is told when the join itself fails. Only a full
+// room is room_full. Everything else -- a room the sweeper expired after
+// Lookup found it, a secret rotated after Lookup checked it -- gets the same
+// join_refused as a failed Lookup, for the same reason: which room ids exist
+// is not something an unauthenticated peer should learn.
+func refusal(err error) (room.Error, string) {
+	if errors.Is(err, ErrRoomFull) {
+		return room.Error{Code: "room_full"}, "room full"
+	}
+	return room.Error{Code: "join_refused", Msg: "unknown room or secret"}, "join refused"
+}
+
 func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 	if !originAllowed(cfg.AllowedOrigins, r.Header.Get("Origin")) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
@@ -141,7 +155,13 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 		return
 	}
 	sock.MaxMessageSize = cfg.MaxFrameBytes
+	// An absolute bound, not just a per-frame one: ReadTimeout is refreshed by
+	// every ping and every unfinished fragment, so on its own it let a peer
+	// that never says hello keep the socket for as long as it kept talking.
 	sock.ReadTimeout = cfg.HandshakeTimeout
+	if cfg.HandshakeTimeout > 0 {
+		sock.ReadBefore = time.Now().Add(cfg.HandshakeTimeout)
+	}
 
 	// The first frame must be `hello`; nothing else is a valid opening move.
 	op, data, err := sock.ReadMessage()
@@ -165,12 +185,13 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 		return
 	}
 
-	sock.ReadTimeout = cfg.ReadTimeout
+	sock.ReadTimeout, sock.ReadBefore = cfg.ReadTimeout, time.Time{}
 	c := newConn(newClientID(), live, sock)
 	welcome, extra, err := live.join(c, m)
 	if err != nil {
-		c.sendNow(room.Error{Code: "room_full"})
-		sock.Close(ws.ClosePolicyViolation, "room full")
+		e, reason := refusal(err)
+		c.sendNow(e)
+		sock.Close(ws.ClosePolicyViolation, reason)
 		return
 	}
 	// Welcome goes out directly rather than through the outbox: it must be the

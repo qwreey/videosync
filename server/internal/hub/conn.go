@@ -2,6 +2,7 @@ package hub
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/qwreey/videosync/server/internal/room"
@@ -22,6 +23,12 @@ type conn struct {
 	sock *ws.Conn
 	out  chan []byte
 	die  chan struct{}
+	// dieOnce makes kill's check-and-close one step. The reader's deferred
+	// kill and the writer's kill on a failed write fire together on a TCP
+	// reset, and no lock serialises them; a bare select-then-close let both
+	// through, and the second close panicked on the writer's goroutine, which
+	// nothing recovers -- the process, and every room in it, went down.
+	dieOnce sync.Once
 
 	// Per-member rate limiting, cytube's algorithm (SYNTHESIS 13.3). Buckets
 	// are separate because the frames have completely different natural rates
@@ -30,6 +37,12 @@ type conn struct {
 	chat *throttle
 	hb   *throttle
 	time *throttle
+
+	// pending is the newest command the cmd bucket refused, and retry the
+	// timer that applies it once the bucket allows. Both are guarded by the
+	// room mutex. See Live.deferCmd.
+	pending *room.Cmd
+	retry   *time.Timer
 }
 
 func newConn(id string, l *Live, sock *ws.Conn) *conn {
@@ -51,13 +64,10 @@ func newConn(id string, l *Live, sock *ws.Conn) *conn {
 // kill closes the socket. Idempotent, safe from any goroutine, never blocks --
 // it is called from Send, which runs with the room mutex held.
 func (c *conn) kill(code int, reason string) {
-	select {
-	case <-c.die:
-		return
-	default:
-	}
-	close(c.die)
-	go c.sock.Close(code, reason)
+	c.dieOnce.Do(func() {
+		close(c.die)
+		go c.sock.Close(code, reason)
+	})
 }
 
 // sendNow encodes and enqueues outside the room lock, for the handshake frames
