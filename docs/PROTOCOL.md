@@ -666,7 +666,9 @@ The sign-in answers carry `Cache-Control: no-store`; every JSON endpoint above i
 `/api/rooms` and answers its own `OPTIONS`. `429 {"error":"rate_limited","retryMs"}` with
 `Retry-After` comes from a per-client token bucket on `session`, `ticket`, `begin` and `poll`; the
 client is the TCP peer, or — only when that peer is in `-trusted-proxies` — the rightmost
-`X-Forwarded-For` hop that is not itself a trusted proxy.
+`X-Forwarded-For` hop that is not itself a trusted proxy, or `X-Real-IP`. When both are present
+they must name the same address; otherwise one of them is the visitor's own (a proxy passes the
+header it does not write through untouched) and the request is charged to the proxy's address.
 
 The **browser login** is the one path for `oidc`, for a `proxy` gateway that wants a login, and for
 every shim, with no identity permission: begin, open `loginUrl` in a tab, poll every 2 s. The flow

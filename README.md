@@ -133,9 +133,13 @@ whatever the server accepts, and each device signs in once.
   its file, `-auth proxy` without `-trusted-proxies`, OIDC without
   `-public-url`.
 - **Behind a reverse proxy**, list it in `-trusted-proxies` so rate limits apply
-  to your visitors and not to the proxy. With `-auth proxy`, require sign-in at
+  to your visitors and not to the proxy. The proxy must say who the visitor is:
+  append to `X-Forwarded-For` (Caddy, Traefik, nginx's
+  `$proxy_add_x_forwarded_for`) or set `X-Real-IP`, or both. It passes the
+  header it does not write through as the visitor sent it, so when both arrive
+  and disagree the request is charged to the proxy itself. With `-auth proxy`, require sign-in at
   the proxy for **`/api/session` and `/auth/`** only, and leave everything else
-  open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, and every
+  open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, `/api/providers`, and every
   `OPTIONS` request. The server checks those itself; a proxy that gates a
   preflight breaks the extension and the userscript with nothing but "Failed to
   fetch". The proxy must overwrite any `-auth-user-header` a visitor sends, and

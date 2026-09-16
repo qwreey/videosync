@@ -45,7 +45,7 @@ func registerAuthFlags() authFlags {
 			"signs device tokens (>= 32 bytes, e.g. `openssl rand -hex 32`). Without it every device signs in again after a restart; replacing it signs every device out"),
 		tokenTTL: flag.Duration("auth-token-ttl", 30*24*time.Hour, "how long a device stays signed in"),
 		proxies: flag.String("trusted-proxies", "",
-			"comma list of CIDRs/addresses of reverse proxies. Their X-Forwarded-For is believed for rate limits, and with -auth proxy their requests count as signed in"),
+			"comma list of CIDRs/addresses of reverse proxies. Their X-Forwarded-For or X-Real-IP (which must agree when both are sent) is believed for rate limits, and with -auth proxy their requests count as signed in"),
 		userHeader: flag.String("auth-user-header", "",
 			"for -auth proxy: the header the proxy names the user in (e.g. Remote-User); without it the proxy's address alone vouches"),
 		publicURL: flag.String("public-url", "",

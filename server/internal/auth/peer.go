@@ -66,11 +66,22 @@ func (p peers) fromTrustedProxy(r *http.Request) bool {
 	return ok && len(p.trusted) > 0 && p.isTrusted(a)
 }
 
-// client is the address a rate limit should be charged to. Behind a trusted
-// proxy that is the forwarded client: the rightmost X-Forwarded-For entry that
-// is not itself a trusted proxy, since everything left of it was written by
-// whoever connected. Anywhere else the headers are ignored, or a client could
-// pick a fresh bucket per request.
+// client is the address a rate limit should be charged to. Anywhere but
+// behind a trusted proxy the headers are ignored, or a client could pick a
+// fresh bucket per request.
+//
+// Behind one, the proxy may say who the client is in either of two headers,
+// and nothing here knows which one it writes:
+//   - X-Forwarded-For: the rightmost entry that is not itself a trusted proxy,
+//     since everything left of it was written by whoever connected.
+//   - X-Real-IP: nginx's habit when told to set only this one -- in which case
+//     the visitor's own X-Forwarded-For arrives untouched.
+// A proxy that writes one of them passes the other through as the visitor
+// sent it. So when both are present they must agree; when they do not, one
+// of them is the visitor's invention and there is no telling which, and the
+// request is charged to the proxy's own bucket, which a guesser cannot
+// multiply. (A proxy that writes neither makes both the visitor's: the README
+// says the proxy must set one.)
 func (p peers) client(r *http.Request) string {
 	a, ok := remoteAddr(r)
 	if !ok {
@@ -79,14 +90,22 @@ func (p peers) client(r *http.Request) string {
 	if !p.fromTrustedProxy(r) {
 		return a.String()
 	}
+	var real netip.Addr
+	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
+		x, err := netip.ParseAddr(v)
+		if err != nil {
+			return a.String()
+		}
+		real = x.Unmap()
+	}
 	xff := r.Header.Values("X-Forwarded-For")
 	if len(xff) == 0 {
-		// nginx's habit, when it was told to set only this one.
-		if xr, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP"))); err == nil {
-			return xr.Unmap().String()
+		if real.IsValid() {
+			return real.String()
 		}
 		return a.String()
 	}
+	hop := a
 	hops := strings.Split(strings.Join(xff, ","), ",")
 	for i := len(hops) - 1; i >= 0; i-- {
 		h, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
@@ -96,12 +115,15 @@ func (p peers) client(r *http.Request) string {
 			break
 		}
 		h = h.Unmap()
+		hop = h
 		if !p.isTrusted(h) {
-			return h.String()
+			break
 		}
-		a = h
 	}
-	return a.String()
+	if real.IsValid() && real != hop {
+		return a.String()
+	}
+	return hop.String()
 }
 
 // limiter is a token bucket per peer. The hub's cytube throttle is per

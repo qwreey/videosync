@@ -310,6 +310,25 @@ func TestForwardedHeadersAreBelievedOnlyFromATrustedProxy(t *testing.T) {
 	if got := p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": "203.0.113.10"})); got != "203.0.113.10" {
 		t.Fatalf("X-Real-IP behind proxy = %s", got)
 	}
+	// A proxy that sets only X-Real-IP passes the visitor's X-Forwarded-For
+	// through; one that appends to X-Forwarded-For passes the visitor's
+	// X-Real-IP through. Either way a visitor who writes the other header
+	// must not get a bucket per request.
+	seen := map[string]bool{}
+	for _, fake := range []string{"9.9.9.1", "9.9.9.2", "9.9.9.3"} {
+		seen[p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": "203.0.113.7", "X-Forwarded-For": fake}))] = true
+		seen[p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": fake, "X-Forwarded-For": "6.6.6.6, 203.0.113.7"}))] = true
+	}
+	if len(seen) != 1 {
+		t.Fatalf("disagreeing headers bought buckets %v", seen)
+	}
+	// Both set by a proxy that sets both: they agree, and that is the client.
+	if got := p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": "203.0.113.7", "X-Forwarded-For": "6.6.6.6, 203.0.113.7"})); got != "203.0.113.7" {
+		t.Fatalf("agreeing headers = %s", got)
+	}
+	if got := p.client(req("127.0.0.1:1", map[string]string{"X-Real-IP": "not-an-ip", "X-Forwarded-For": "203.0.113.7"})); got != "127.0.0.1" {
+		t.Fatalf("a garbage X-Real-IP was ignored rather than distrusted: %s", got)
+	}
 	if got := p.client(req("[::ffff:127.0.0.1]:1", nil)); got != "127.0.0.1" {
 		t.Fatalf("a v4-mapped proxy address was not recognised: %s", got)
 	}
