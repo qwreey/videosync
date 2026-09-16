@@ -21,6 +21,9 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "hash-password" {
+		os.Exit(hashPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	addr := flag.String("addr", ":8787", "listen address")
 	origins := flag.String("allowed-origins", "", "comma-separated Origin allowlist for the WebSocket upgrade (empty = any)")
 	idle := flag.Duration("idle-ttl", 3*time.Minute, "delete a room this long after its last member leaves")
@@ -32,6 +35,7 @@ func main() {
 			"and a frame the client never sent looks exactly like one the server dropped")
 	tlsCert := flag.String("tls-cert", "", "PEM certificate chain; serving https/wss")
 	tlsKey := flag.String("tls-key", "", "PEM private key for -tls-cert")
+	af := registerAuthFlags()
 	flag.Parse()
 
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -48,6 +52,15 @@ func main() {
 	if *origins != "" {
 		hcfg.AllowedOrigins = strings.Split(*origins, ",")
 	}
+
+	authServer, notes, err := af.build()
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, n := range notes {
+		log.Print(n)
+	}
+	hcfg.Auth = authServer
 
 	h := hub.New(cfg, hub.NewClock())
 	defer h.Close()
