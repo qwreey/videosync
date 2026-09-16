@@ -287,6 +287,25 @@ describe('the end of the media', () => {
     assert.equal(h.engine.stats.reconciles, 0);
   });
 
+  it('is not put back either while the member is still guarded', async () => {
+    // A conform would press play on an ended element, which starts it over.
+    // Guarded in a playing room means not yet running with it -- still
+    // buffering after the conform's seek, say; a negative tolerance stands in.
+    const h = harness({ player: { paused: false, positionS: 1399.5 }, cfg: { seekToleranceMs: -1 } });
+    await h.join({ positionMs: 1_399_500, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(50);
+    assert.notEqual(h.engine.acquisition, 'steady', 'the scenario needs a guarded member');
+    const plays = h.player.plays;
+    h.player.positionS = 1400;
+    h.player.paused = true;
+    h.player.ended = true;
+    h.player.emit('pause');
+    await h.vt.advance(20);
+    assert.equal(h.player.plays, plays, 'the ended element was started again');
+    assert.equal(h.engine.stats.endsNotSent, 1);
+    assert.deepEqual(h.kinds(), []);
+  });
+
   it('holds without gesture evidence too', async () => {
     const h = await playToEnd({ gestures: false });
     assert.deepEqual(h.kinds(), []);
@@ -344,6 +363,29 @@ describe('the media changing under the same element', () => {
     await h.vt.advance(1000);
     assert.deepEqual(h.kinds(), []);
     assert.equal(h.lastHb().acquiring, true, 'a member with no element is present and unready');
+  });
+});
+
+describe('a reconnect', () => {
+  it('into a room that moved onto this member\'s page conforms, like any move of the room', async () => {
+    const h = harness({ player: { paused: false, positionS: 10 } });
+    await h.join({ mediaKey: 'laftel:/player/9/9', positionMs: 0, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.followingRoom, false);
+    h.tr.drop();
+    await h.vt.advance(1000); // backoff, then a new socket
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-2', seq: 3,
+      anchor: { positionMs: 42_000, atServerMs: h.serverNow(), paused: true, mediaKey: KEY },
+      members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    await h.vt.advance(600);
+    assert.equal(h.engine.followingRoom, true);
+    assert.ok(Math.abs(h.player.positionS - 42) < 0.3, `not conformed: at ${h.player.positionS}`);
+    assert.equal(h.player.paused, true);
+    assert.deepEqual(h.kinds(), [], 'the member\'s own playing was sent to a room it had just rejoined');
   });
 });
 

@@ -1469,6 +1469,12 @@ export class SyncEngine {
       this.stats.echoesSuppressed++;
       return;
     }
+    if (o.kind === 'playstate' && o.paused && state.ended) {
+      // Nobody's pause, and not the site's to be undone either: a conform
+      // would press play on an ended element, which starts it over.
+      this.stats.endsNotSent++;
+      return;
+    }
     if (this.intent(now)) {
       this.stats.gesturedIntents++;
       const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
