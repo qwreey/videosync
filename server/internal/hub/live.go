@@ -66,6 +66,13 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	if l.dead {
 		return room.Welcome{}, nil, ErrNoSuchRoom
 	}
+	// Lookup checked the secret, but under a lock it has since released. A
+	// rotation in between -- someone cutting off a leaked link -- would
+	// otherwise admit the old secret as a full member who never hears the new
+	// one. Checked again here, where the check and the join are one step.
+	if !secretEqual(l.secret, h.Secret) {
+		return room.Welcome{}, nil, ErrBadSecret
+	}
 	if len(l.conns) >= l.hub.cfg.MaxMembersPerRoom {
 		return room.Welcome{}, nil, ErrRoomFull
 	}

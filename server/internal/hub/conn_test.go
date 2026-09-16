@@ -7,8 +7,65 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qwreey/videosync/server/internal/room"
 	"github.com/qwreey/videosync/server/internal/ws"
 )
+
+// Lookup checks the secret and lets go of the room lock before join takes it
+// again. A rotation in between -- someone cutting off a leaked link -- used to
+// let the old secret in anyway, as a full member who never hears the new one.
+func TestARotationBetweenLookupAndJoinRefusesTheOldSecret(t *testing.T) {
+	f := start(t, nil)
+	id, old := f.createRoom("yt:abc")
+	live, err := f.hub.Lookup(id, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The rotation lands here, exactly as Live.handle performs it.
+	live.mu.Lock()
+	live.secret = newID()
+	live.mu.Unlock()
+
+	_, _, err = live.join(newConn("late", live, nil), room.Hello{Room: id, Secret: old, Name: "x"})
+	if err == nil {
+		t.Fatal("a hello carrying the rotated-out secret joined the room")
+	}
+	if code, _ := refusal(err); code.Code != "join_refused" {
+		t.Fatalf("refused as %q; a wrong secret must look like an unknown room", code.Code)
+	}
+	if live.room.Size() != 0 {
+		t.Fatalf("the refused joiner is in the room: %d members", live.room.Size())
+	}
+}
+
+// The sweeper can expire a room between Lookup and join. That room has nobody
+// in it, so calling it full sends the client looking for the wrong problem;
+// PROTOCOL.md section 2 says an unknown room is join_refused.
+func TestJoinRefusalsNameTheRightReason(t *testing.T) {
+	for err, want := range map[error]string{
+		ErrNoSuchRoom: "join_refused",
+		ErrBadSecret:  "join_refused",
+		ErrRoomFull:   "room_full",
+	} {
+		if got, _ := refusal(err); got.Code != want {
+			t.Errorf("%v is refused as %q, want %q", err, got.Code, want)
+		}
+	}
+
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	live, err := f.hub.Lookup(id, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live.mu.Lock()
+	live.dead = true // what the sweeper does, under the same lock
+	live.mu.Unlock()
+	_, _, err = live.join(newConn("late", live, nil), room.Hello{Room: id, Secret: secret})
+	if got, _ := refusal(err); got.Code != "join_refused" {
+		t.Fatalf("joining an expired room is refused as %q (%v)", got.Code, err)
+	}
+}
 
 // A peer that resets its TCP connection mid-broadcast fails the reader and the
 // writer at the same moment, and both call kill. kill runs on goroutines no
