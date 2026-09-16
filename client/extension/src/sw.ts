@@ -112,9 +112,16 @@ chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
   switch (msg?.t) {
     case 'auth': {
       storedServer()
-        .then((server) => serverOrigin(server)
-          ? authFetch(server, msg.path, msg.req)
-          : { status: 0, body: '', error: 'no server configured' })
+        .then((stored) => {
+          const origin = serverOrigin(stored);
+          if (!origin) return { status: 0, body: '', error: 'no server configured' };
+          // The store is shared by every tab. Another tab choosing another
+          // server in between must fail this call, not redirect it there.
+          if (serverOrigin(msg.server) !== origin) {
+            return { status: 0, body: '', error: 'the server was changed in another tab; try again' };
+          }
+          return authFetch(stored, msg.path, msg.req);
+        })
         .then(respond, (e: unknown) => respond({ status: 0, body: '', error: String(e) }));
       return true; // async response
     }

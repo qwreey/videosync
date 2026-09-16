@@ -542,9 +542,11 @@ export function start(p: Platform): App {
 
   // --- signing in -------------------------------------------------------------
 
-  function noteSignedIn(server: string, who = ''): void {
+  /** `who` is known only from a sign-in on this page; a ticket names nobody. */
+  function noteSignedIn(server: string, who?: string): void {
+    if (who === undefined && signedInTo === server) return;
     signedInTo = server;
-    panel.setSignedIn(who);
+    panel.setSignedIn(who ?? '');
   }
 
   /** Stop and ask. `retry` is what the sign-in was for. */

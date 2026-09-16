@@ -78,7 +78,7 @@ async function platform(): Promise<Platform> {
       await store.flush?.();
       return new Promise<AuthResponse>((res) => {
         try {
-          chrome.runtime.sendMessage({ t: 'auth', path, req } satisfies WorkerRequest, (out?: AuthResponse) => {
+          chrome.runtime.sendMessage({ t: 'auth', server: serverUrl, path, req } satisfies WorkerRequest, (out?: AuthResponse) => {
             res(out ?? { status: 0, body: '', error: String(chrome.runtime.lastError?.message ?? 'no reply') });
           });
         } catch (e) {

@@ -647,7 +647,8 @@ describe('signing in to a server', () => {
     const rooms = server.to('/api/rooms');
     assert.equal(rooms.length, 2);
     assert.match(String(rooms[1]!.body['ticket']), /^T/, 'the second attempt carried no ticket');
-    assert.ok(h.visibleButton('로그아웃'));
+    const signedRow = h.visibleButton('로그아웃')!.parentNode!;
+    assert.match(signedRow.textContent, new RegExp(USER), 'the ticket that followed forgot who signed in');
     assert.ok(!pageText(h).includes('DEVICE-'), 'the device token reached the page');
     assert.ok(!pageText(h).includes(KEY), 'the access key stayed somewhere readable');
   });

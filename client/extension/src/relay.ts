@@ -30,10 +30,12 @@ export type FromWorker =
  * One-shot messages (`chrome.runtime.sendMessage`).
  *
  * `auth` names a path, never a URL: the worker builds the URL from the server
- * the settings store holds, and answers with an `AuthResponse`.
+ * the settings store holds, and answers with an `AuthResponse`. `server` is
+ * only compared with that, so a call cannot land on a server another tab has
+ * just switched the store to.
  */
 export type WorkerRequest =
-  | { t: 'auth'; path: AuthPath; req: AuthRequest }
+  | { t: 'auth'; server: string; path: AuthPath; req: AuthRequest }
   | { t: 'openTab'; url: string };
 
 export type WorkerAuthReply = AuthResponse;
