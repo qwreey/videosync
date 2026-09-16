@@ -44,6 +44,16 @@ type Report struct {
 	// behind: the readiness gate must not hold the room for them, or the room
 	// waits forever for someone who is not watching.
 	Suspended bool `json:"suspended"`
+	// Acquiring means the member is on its way to the room's media -- it has
+	// just found the element, is conforming it, or is navigating to the next
+	// episode -- and is PRESENT BUT NOT READY: the readiness gate holds a play
+	// for it (bounded by GATE_TIMEOUT), and its position is not judged,
+	// because it is not yet on the room's timeline (docs/design/acquire.md).
+	Acquiring bool `json:"acquiring,omitempty"`
+	// Finished means the member's element reached the end of the media. It is
+	// absent, like Suspended: a room that runs on past the duration must not
+	// seek it back into the credits or hold a play for it.
+	Finished bool `json:"finished,omitempty"`
 }
 
 // Closing reports whether the residual is shrinking on its own, i.e. the slope

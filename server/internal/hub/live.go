@@ -91,19 +91,13 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	var extra []room.Msg
 	a := l.room.Anchor()
 	switch {
-	case a.MediaKey == "" && len(l.conns) == 1:
-		// Only the FIRST member names the media, and only by joining. Letting
-		// any joiner set it while the key is still empty mutates the anchor
-		// with no seq and no broadcast: the members already in the room were
-		// told "" in their welcome and would never hear otherwise. A room
-		// that still names nothing is renamed with a `media` command, which
-		// takes a seq and reaches everyone. (Clients take the key from the
-		// URL, so an empty one means a page with no media; the client refuses
-		// to create a room there and follows no keyless room.)
-		l.room.SetMedia(h.MediaKey, h.MediaURL)
 	case a.MediaKey == "":
-		// The room has no media yet and this is not the first member: nothing
-		// to disagree with, and nothing to announce.
+		// A hello never changes room state, not even the first one's. A room
+		// that names nothing yet is named by a `media` command with
+		// `ifMediaKey: ""`, which takes a seq, reaches everyone, and lets
+		// exactly one of two members naming it at once win. Naming it here
+		// also skipped the namer's adoption of its own position, so it was
+		// conformed to paused@0 like any joiner (docs/design/acquire.md).
 	case h.MediaKey != "" && h.MediaKey != a.MediaKey:
 		// Not a refusal: the joiner is in the room and can see the state, they
 		// just are not looking at the same thing. mediaKey is the NORMALIZED

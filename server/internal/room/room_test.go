@@ -254,3 +254,166 @@ func TestAHeldPlayIsReleasedWhenTheBufferingMemberLeaves(t *testing.T) {
 		t.Fatalf("the held play was dropped although a is still here: %+v", got)
 	}
 }
+
+// --- naming the media, and moving it on, by compare-and-set (D8) ---------------
+
+func ifKey(k string) *string { return &k }
+
+func media(req, key string, cond *string) Cmd {
+	return Cmd{ReqID: req, Kind: "media", MediaKey: key, IfMediaKey: cond}
+}
+
+// A `media` command whose condition no longer holds is refused before it takes
+// a seq: two members whose sites both moved on to the next episode send the
+// same continuation, and only the first may move the room -- the second would
+// otherwise restart it at 0 under members who are already watching.
+func TestAStaleMediaConditionIsRefusedAndTakesNoSeq(t *testing.T) {
+	r, s := newRoom(&scripted{}, vsync.Anchor{MediaKey: "ep1", Paused: false, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+
+	r.OnCmd(100, "a", media("m1", "ep2", ifKey("ep1")))
+	if r.Seq() != 1 || r.Anchor().MediaKey != "ep2" {
+		t.Fatalf("the first continuation did not apply: seq %d anchor %+v", r.Seq(), r.Anchor())
+	}
+	r.OnCmd(110, "b", media("m2", "ep2-other", ifKey("ep1")))
+	if r.Seq() != 1 || r.Anchor().MediaKey != "ep2" {
+		t.Fatalf("a stale continuation moved the room: seq %d anchor %+v", r.Seq(), r.Anchor())
+	}
+	errs := of[Error](s, "b")
+	if len(errs) != 1 || errs[0].Code != "media_stale" {
+		t.Fatalf("b was told %+v, want one media_stale", errs)
+	}
+	if n := len(of[Ack](s, "b")); n != 0 {
+		t.Fatalf("a refused command was acked %d times", n)
+	}
+	if n := len(of[State](s, "a")); n != 0 {
+		t.Fatalf("a refused command was broadcast %d times", n)
+	}
+}
+
+// The control: the same command with no condition applies, as it always has --
+// it is what the "move the room here" button sends.
+func TestAnUnconditionalMediaCommandStillApplies(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{MediaKey: "ep1", AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.OnCmd(100, "a", media("m1", "ep2", nil))
+	r.OnCmd(110, "a", media("m2", "ep3", nil))
+	if r.Seq() != 2 || r.Anchor().MediaKey != "ep3" {
+		t.Fatalf("seq %d anchor %+v", r.Seq(), r.Anchor())
+	}
+}
+
+// A room created with no media is named by the first member on media, with
+// the condition "still nothing". An empty condition is a condition, not an
+// absent one.
+func TestARoomThatNamesNothingIsNamedOnce(t *testing.T) {
+	r, s := newRoom(&scripted{}, vsync.Anchor{Paused: true})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	r.OnCmd(100, "a", Cmd{ReqID: "n1", Kind: "media", MediaKey: "yt:a", PositionMs: 42000, IfMediaKey: ifKey("")})
+	r.OnCmd(101, "b", Cmd{ReqID: "n2", Kind: "media", MediaKey: "yt:b", PositionMs: 7000, IfMediaKey: ifKey("")})
+	a := r.Anchor()
+	if a.MediaKey != "yt:a" || a.PositionMs != 42000 || !a.Paused || r.Seq() != 1 {
+		t.Fatalf("anchor %+v seq %d, want yt:a paused at 42 s, one seq", a, r.Seq())
+	}
+	if e := of[Error](s, "b"); len(e) != 1 || e[0].Code != "media_stale" {
+		t.Fatalf("the second namer was told %+v", e)
+	}
+}
+
+func acquiringReport(seq uint64) Report {
+	rep := report(seq, 0)
+	rep.Acquiring = true
+	return rep
+}
+
+// A member that is still acquiring its video -- navigating to the next episode,
+// or conforming a player it just found -- is present but not ready. A `play`
+// that starts without it makes it join a running room late, which is media it
+// never saw.
+func TestAnAcquiringMemberHoldsAPlay(t *testing.T) {
+	c := &scripted{action: vsync.ActionNone}
+	r, s := newRoom(c, vsync.Anchor{MediaKey: "ep2", Paused: true, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	// ReadyState 4: what makes it unready is only that it says so.
+	r.OnReport(100, "b", acquiringReport(0))
+	r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+	if !r.Held() || !r.Anchor().Paused {
+		t.Fatalf("the play went ahead without the acquiring member: held=%v anchor=%+v", r.Held(), r.Anchor())
+	}
+	for _, id := range c.asked {
+		if id == "b" {
+			t.Fatal("an acquiring member was judged; its position is not on the room's timeline yet")
+		}
+	}
+	for _, m := range r.MemberList() {
+		if m.ID == "b" && m.Ready {
+			t.Fatal("an acquiring member is listed as ready")
+		}
+	}
+	r.OnReport(300, "b", report(0, 0))
+	if r.Held() || r.Anchor().Paused {
+		t.Fatalf("the play was not released once the member arrived: held=%v", r.Held())
+	}
+	if n := len(of[Ack](s, "a")); n != 1 {
+		t.Fatalf("a got %d acks", n)
+	}
+}
+
+// Bounded like any other unready member: GATE_TIMEOUT waives it.
+func TestAnAcquiringMemberIsWaivedAfterTheGateTimeout(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{MediaKey: "ep2", Paused: true, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	r.OnReport(100, "b", acquiringReport(0))
+	r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+	r.OnReport(100+GateTimeoutMs/2, "b", acquiringReport(0))
+	if !r.Held() {
+		t.Fatal("released too early")
+	}
+	r.OnReport(100+GateTimeoutMs+1000, "b", acquiringReport(0))
+	if r.Held() {
+		t.Fatal("a member that never arrives held the room past GATE_TIMEOUT")
+	}
+}
+
+// A member whose video has ended is finished, not behind: the room running on
+// past its duration must not seek it, gate on it, or count it as buffering.
+func TestAFinishedMemberIsAbsent(t *testing.T) {
+	r, s := newRoom(&vsync.ServoCorrector{}, vsync.Anchor{MediaKey: "ep1", Paused: false, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	for now := int64(1000); now < 10_000; now += 500 {
+		rep := report(0, -3000-now) // falling further behind: the room runs past the end
+		rep.ReadyState = 1
+		rep.Finished = true
+		r.OnReport(now, "b", rep)
+	}
+	if n := len(of[Correct](s, "b")); n != 0 {
+		t.Fatalf("a finished member was corrected %d times", n)
+	}
+	if len(r.Gated()) != 0 {
+		t.Fatalf("a finished member is gated: %v", r.Gated())
+	}
+	for _, m := range r.MemberList() {
+		if m.ID == "b" && !m.Suspended {
+			t.Fatal("a finished member is not listed as absent")
+		}
+	}
+}
+
+// The control for the one above: the same reports without `finished` are
+// judged, which is what makes the assertion there mean anything.
+func TestAnUnfinishedMemberThatFallsBehindIsJudged(t *testing.T) {
+	r, s := newRoom(&vsync.ServoCorrector{}, vsync.Anchor{MediaKey: "ep1", Paused: false, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	for now := int64(1000); now < 10_000; now += 500 {
+		r.OnReport(now, "b", report(0, -3000-now))
+	}
+	if n := len(of[Correct](s, "b")) + len(r.Gated()); n == 0 {
+		t.Fatal("the control was never judged; the test above measures nothing")
+	}
+}
