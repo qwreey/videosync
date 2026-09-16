@@ -160,6 +160,41 @@ func TestAPauseInsideAPlayQueuedBehindASeekStaysAtTheSeekTarget(t *testing.T) {
 	}
 }
 
+// Two plays close together on a room that is already playing: the second one
+// arrives inside the first one's lead. Neither has happened yet, so the room is
+// still on the timeline it had -- not on the first play's anchor, which is
+// projected to that play's own `when`.
+func TestAPauseInsideTwoPendingPlaysOnAPlayingRoomDoesNotJumpAhead(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 100_000, AtServerMs: 0})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "go1", Kind: "play"})
+	r.OnCmd(1100, "a", Cmd{ReqID: "go2", Kind: "play"})
+	r.OnCmd(1200, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 101_200})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 101_200 {
+		t.Fatalf("anchor %+v, want paused at 101200, where the room was", got)
+	}
+}
+
+// Two plays on a paused room, and a pause after the first has come due but
+// before the second has: the room has been running since the first play's
+// `when`, so it is that far past the paused position.
+func TestAPauseBetweenTwoPlaysCountsTheTimeTheFirstOneRan(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 50_000, AtServerMs: 0, Paused: true})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "go1", Kind: "play"})
+	first := r.Anchor().AtServerMs
+	r.OnCmd(first-100, "a", Cmd{ReqID: "go2", Kind: "play"})
+	if r.Anchor().AtServerMs <= first+100 {
+		t.Fatalf("the second play is not due after the first (%d vs %d); the test measures nothing", r.Anchor().AtServerMs, first)
+	}
+	r.OnCmd(first+100, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 50_100})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 50_100 {
+		t.Fatalf("anchor %+v, want paused at 50100: the first play had been running for 100 ms", got)
+	}
+}
+
 // Outside any lead the pauser's own position is still the one that counts --
 // that is the whole point of anchoring a pause where the person stopped.
 func TestAPauseOutsideAnyLeadStopsWhereThePauserStopped(t *testing.T) {

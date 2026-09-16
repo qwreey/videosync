@@ -145,12 +145,16 @@ type Room struct {
 	// member that has not applied it is not stale -- it is early.
 	lastCmdWhen int64
 
-	// committed describes the room until lastCmdWhen: where it stands while
-	// the most recent command's lead runs out. It is not r.anchor, because a
-	// `play` projects its anchor forward to its own `when` -- on a room that
-	// was already playing that position is up to CMD_DELAY ahead of anything
-	// anyone has seen. Only read while now < lastCmdWhen.
+	// committed is the anchor the room is on right now, and upcoming the
+	// anchors it has been told to move to later, in `when` order. They differ
+	// from r.anchor while a command's lead runs out: a `play` projects its
+	// anchor forward to its own `when`, which on a room that was already
+	// playing is up to CMD_DELAY ahead of anything anyone has seen. One slot
+	// was not enough -- a second play inside the first one's lead took the
+	// first one's projection for the present. Only read while
+	// now < lastCmdWhen; see committedAt.
 	committed vsync.Anchor
+	upcoming  []timedAnchor
 
 	// held is the one command the readiness gate is holding, if any. At most
 	// one: any later command supersedes it, because holding a queue would let
@@ -173,7 +177,7 @@ type heldCmd struct {
 
 func New(id string, c vsync.Corrector, t vsync.Tunables, start vsync.Anchor, sink Sink) *Room {
 	return &Room{
-		ID: id, anchor: start, corrector: c, tun: t, sink: sink,
+		ID: id, anchor: start, committed: start, corrector: c, tun: t, sink: sink,
 		members: map[string]*Member{},
 		// Seed the signature with "nobody waiting, nothing held" so the first
 		// report in a healthy room does not broadcast a gate frame announcing
@@ -386,6 +390,33 @@ func leavesRoomStopped(kind string, a vsync.Anchor) bool {
 	return false
 }
 
+// timedAnchor is an anchor the room moves onto at `at`.
+type timedAnchor struct {
+	at int64
+	a  vsync.Anchor
+}
+
+// committedAt is the anchor the room is on at `now`: the latest one whose
+// time has come.
+func (r *Room) committedAt(now int64) vsync.Anchor {
+	i := 0
+	for ; i < len(r.upcoming) && r.upcoming[i].at <= now; i++ {
+		r.committed = r.upcoming[i].a
+	}
+	r.upcoming = r.upcoming[i:]
+	return r.committed
+}
+
+// commit records that the room moves onto `a` at `at`. Later commands are
+// never due earlier than earlier ones, except a stopping command, which is due
+// at once and replaces everything still pending.
+func (r *Room) commit(at int64, a vsync.Anchor) {
+	if len(r.upcoming) > 0 && at <= r.upcoming[0].at {
+		r.upcoming = r.upcoming[:0]
+	}
+	r.upcoming = append(r.upcoming, timedAnchor{at, a})
+}
+
 // committedPosition is where the room stands at `now` according to an anchor
 // that may itself not be due yet. An anchor whose start is still in the future
 // -- a seek target, or a play queued behind one -- has not begun to run, so its
@@ -418,6 +449,7 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 	// Read before `when` replaces it below: is the previous command still
 	// waiting for its instant?
 	pending := now < r.lastCmdWhen
+	current := r.committedAt(now)
 	when := now + r.CmdDelay()
 	if leavesRoomStopped(m.Kind, r.anchor) {
 		when = now
@@ -439,20 +471,22 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 			// acked seek for everyone, although the seek came first in seq
 			// order. The room is at `committed` instead -- where a pending
 			// seek jumps to, or where the room stands until a pending play.
-			pos = committedPosition(r.committed, now)
+			pos = committedPosition(current, now)
 		}
 		r.anchor = r.anchor.Reanchor(pos, when, true)
+		r.commit(now, r.anchor)
 	case "play":
 		// Before the play is due the room is still on the anchor it had,
-		// paused or not; the play's own anchor is projected to `when`.
-		r.committed = r.anchor
+		// paused or not; the play's own anchor is projected to `when`, and
+		// the room moves onto it only then.
 		r.anchor = r.anchor.Advance(when)
 		r.anchor.Paused = false
+		r.commit(when, r.anchor)
 	case "seek":
 		r.anchor = r.anchor.Reanchor(m.PositionMs, when, r.anchor.Paused)
 		// The seek target is what the room is committed to, even while the
 		// old timeline is still what members are watching.
-		r.committed = r.anchor
+		r.commit(now, r.anchor)
 	case "media":
 		// A new media resets the timebase completely: position, pause state and
 		// identity all change at once, so nothing carries over from the old one.
@@ -460,6 +494,7 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		// is the mechanism that decides when the room may start.
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
 			Paused: true, MediaKey: m.MediaKey, MediaURL: SanitizeMediaURL(m.MediaURL)}
+		r.commit(now, r.anchor)
 	}
 	r.lastCmdWhen = when
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}
