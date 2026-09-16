@@ -24,7 +24,8 @@ cd ../client/extension && npm install && npm run build
 ```
 
 Then `chrome://extensions` → Developer mode → **Load unpacked** → pick
-`client/extension/dist`. Open a YouTube video, hit **방 만들기**, and send the
+`client/extension/dist` (Firefox: `about:debugging` → Load Temporary Add-on →
+`client/extension/dist-firefox/manifest.json`). Open a YouTube video, hit **방 만들기**, and send the
 invite link — or just the room ID and key — to a friend. Wherever they join
 from, the room takes them to what it is watching, and takes everyone along when
 somebody moves it to another video.
@@ -66,7 +67,7 @@ server/           Go, no dependencies. The sync server and a deterministic
 client/core/      Platform-agnostic TypeScript: adapters, detector, clock,
                   protocol client, the shared bootstrap and the panel.
 client/userscript/  Tampermonkey shim.
-client/extension/   Chrome MV3 shim. Firefox is not supported yet.
+client/extension/   Chrome MV3 shim (dist/) and a Firefox MV2 build (dist-firefox/).
 harness/browser/  A pinned container with a real Chromium, a media server that
                   can starve the player on demand, and the probes that produced
                   every number in docs/BROWSER-FINDINGS.md.
