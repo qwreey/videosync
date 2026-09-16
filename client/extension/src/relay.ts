@@ -27,18 +27,21 @@ export type FromWorker =
   | { t: 'closed'; clean: boolean; reason: string };
 
 /**
- * One-shot messages (`chrome.runtime.sendMessage`).
+ * One-shot messages (`chrome.runtime.sendMessage`), for what the content
+ * script and the options page cannot do themselves.
  *
- * `auth` names a path, never a URL: the worker builds the URL from the server
- * the settings store holds, and answers with an `AuthResponse`. `server` is
- * only compared with that, so a call cannot land on a server another tab has
- * just switched the store to.
+ * `auth` is every HTTP call to a server -- room creation, sign-in, tickets,
+ * the provider index. It names a server and a path, never a URL: the worker
+ * builds the URL from the server's origin and one fixed path allowlist
+ * (`isAuthPath` in authfetch.ts), and adds the device token itself. The
+ * server comes from the message, not from the settings store: every
+ * extension context can write that store, so reading it back protected
+ * nothing, and it made one tab's call fail whenever another tab had chosen
+ * another server.
  */
 export type WorkerRequest =
   | { t: 'auth'; server: string; path: AuthPath; req: AuthRequest }
   | { t: 'openTab'; url: string }
-  /** GET under `/api/providers` of `server`, and nothing else. */
-  | { t: 'providers.fetch'; server: string; path: string }
   /** The granted host permissions (a content script has no `permissions` API). */
   | { t: 'providers.granted' }
   /** Re-register the content script after the user changed descriptors. */
@@ -48,17 +51,8 @@ export type WorkerAuthReply = AuthResponse;
 
 export const PORT_NAME = 'videosync';
 
-/** The settings store's key for the server URL (`content.ts` PREFIX + 'server'). */
-export const SERVER_KEY = 'videosync.server';
-
-export interface FetchReply { ok: boolean; status: number; body: string; error?: string }
 export interface GrantedReply { origins: string[] }
 export interface SyncReply { patterns: string[]; error?: string }
-
-/** The path a `providers.fetch` may ask for: the index or one file. */
-export function providersPath(path: string): boolean {
-  return path === '/api/providers' || /^\/api\/providers\/[a-z0-9-]{2,32}\.json$/.test(path);
-}
 
 /**
  * A `runtime.sendMessage` that resolves with the reply, or with `fallback`
@@ -76,4 +70,9 @@ export function ask<T>(msg: WorkerRequest, fallback: T | ((why: string) => T)): 
       res(fail(String(e)));
     }
   });
+}
+
+/** `Platform.authFetch`, through the worker. */
+export function authCall(server: string, path: AuthPath, req: AuthRequest): Promise<AuthResponse> {
+  return ask<AuthResponse>({ t: 'auth', server, path, req }, (why) => ({ status: 0, body: '', error: why }));
 }

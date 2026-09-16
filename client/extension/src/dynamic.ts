@@ -12,10 +12,13 @@
  * that called it, so the registration is redone every time the background
  * starts. Neither Firefox path has been run in a browser yet.
  */
-import { buildRegistry, readState, STORE_KEYS } from '@videosync/core/providers/adoption.ts';
+import { buildRegistry } from '@videosync/core/providers/adoption.ts';
 import { dynamicPagePatterns, grantedBy } from '@videosync/core/providers/manage.ts';
 
-const PREFIX = 'videosync.';
+import { loadProviderState } from './storage.ts';
+
+export { loadProviderState };
+
 const SCRIPT_ID = 'videosync-providers';
 
 interface FirefoxContentScripts {
@@ -23,15 +26,6 @@ interface FirefoxContentScripts {
 }
 
 let firefoxHandle: { unregister(): Promise<void> } | null = null;
-
-export async function loadProviderState() {
-  const keys = Object.values(STORE_KEYS).map((k) => PREFIX + k);
-  const got = await chrome.storage.local.get(keys);
-  return readState((k, fb = '') => {
-    const v = got[PREFIX + k];
-    return typeof v === 'string' ? v : fb;
-  });
-}
 
 export async function grantedOrigins(): Promise<string[]> {
   try {

@@ -22,8 +22,10 @@ import {
 } from '@videosync/core/providers/manage.ts';
 import type { Entry } from '@videosync/core/providers/registry.ts';
 
-import { ask } from './relay.ts';
-import type { FetchReply, SyncReply } from './relay.ts';
+import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
+
+import { ask, authCall } from './relay.ts';
+import type { SyncReply } from './relay.ts';
 
 const PREFIX = 'videosync.';
 const TIER: Record<string, string> = { 'built-in': '내장', server: '서버', user: '내가 추가' };
@@ -232,8 +234,12 @@ function draftSection(): HTMLElement {
     draftCheck ? diffTable(draftCheck.changes) : null);
 }
 
-async function fetchFromServer(path: string): Promise<FetchReply> {
-  return ask<FetchReply>({ t: 'providers.fetch', server: serverUrl, path }, (why) => ({ ok: false, status: 0, body: '', error: why }));
+/** Through the worker's one HTTP policy, as the content script does. */
+async function fetchFromServer(path: '/api/providers' | `/api/providers/${string}.json`): Promise<AuthResponse & { ok: boolean }> {
+  const r = await authCall(serverUrl, path, { method: 'GET' });
+  const ok = r.status === 200 && !r.gateway;
+  const why = r.status === 401 && !r.gateway ? '이 서버는 로그인이 필요해요. 방에 들어갈 때 로그인한 뒤 다시 시도하세요.' : r.error;
+  return { ...r, ok, ...(why !== undefined ? { error: why } : {}) };
 }
 
 async function loadIndex(): Promise<void> {

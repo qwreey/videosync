@@ -22,18 +22,19 @@ function wsUrl(serverUrl: string): string {
 }
 
 const store = { load, save };
+// The device token is kept in GM storage and added by this, never handed to
+// the app (see authfetch.ts). The provider index goes the same way.
+const authFetch = makeAuthFetch(gmHttp, gmTokens());
 
 const platform: Platform = {
   store,
-  providers: providerHooks(store),
+  providers: providerHooks(store, authFetch),
   makeTransport: (serverUrl) => new WebSocketTransport(wsUrl(serverUrl)),
-  // The device token is kept in GM storage and added by this, never handed to
-  // the app (see authfetch.ts).
-  authFetch: makeAuthFetch(gmHttp, gmTokens()),
+  authFetch,
   openTab,
   unreachable: (serverUrl) => unreachable(serverUrl, location, navigator.userAgent),
 };
 
-registerMenu(store);
+registerMenu(store, authFetch);
 const app = start(platform);
 window.VideoSync = app.api;

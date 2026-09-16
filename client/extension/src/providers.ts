@@ -7,13 +7,12 @@
  * worker.
  */
 import type { ProviderHooks, Store } from '@videosync/core/app/bootstrap.ts';
-import { buildRegistry, parseIndex, readState, writeState } from '@videosync/core/providers/adoption.ts';
-import { autoUpdate, grantedBy } from '@videosync/core/providers/manage.ts';
+import { buildRegistry, parseIndex, readState } from '@videosync/core/providers/adoption.ts';
+import { autoUpdateStored, grantedBy } from '@videosync/core/providers/manage.ts';
 
-import { ask } from './relay.ts';
-import type { FetchReply, GrantedReply } from './relay.ts';
-
-const FAILED: FetchReply = { ok: false, status: 0, body: '' };
+import { ask, authCall } from './relay.ts';
+import type { GrantedReply } from './relay.ts';
+import { loadProviderState } from './storage.ts';
 
 export async function providerHooks(store: Store): Promise<ProviderHooks> {
   // A content script has no `permissions` API; the worker does.
@@ -23,19 +22,22 @@ export async function providerHooks(store: Store): Promise<ProviderHooks> {
     registry,
     decideWhere: 'VideoSync 확장 프로그램의 옵션 페이지',
     async updatesFrom(serverUrl) {
-      const idx = await ask<FetchReply>({ t: 'providers.fetch', server: serverUrl, path: '/api/providers' }, FAILED);
-      if (!idx.ok) return [];
+      // Through the worker, on the same path policy as every other call; a
+      // server that gates its listing gets the device token there.
+      const idx = await authCall(serverUrl, '/api/providers', { method: 'GET' });
+      if (idx.status !== 200 || idx.gateway) return [];
       const fetchBody = async (id: string) => {
-        const f = await ask<FetchReply>({ t: 'providers.fetch', server: serverUrl, path: `/api/providers/${id}.json` }, FAILED);
-        if (!f.ok) throw new Error(`HTTP ${f.status}`);
+        const f = await authCall(serverUrl, `/api/providers/${id}.json`, { method: 'GET' });
+        if (f.status !== 200 || f.gateway) throw new Error(`HTTP ${f.status}`);
         return f.body;
       };
       // What auto-adopt may take is taken now and applies from the next page
       // load: this page was already set up with the old copy, and swapping a
       // descriptor under a running session would change its key mid-room.
-      const r = await autoUpdate(readState(store.load), serverUrl, parseIndex(idx.body), fetchBody);
-      if (r.applied.length) writeState(store.save, r.state);
-      return r.pending.map((e) => ({ id: e.id, name: e.name }));
+      // Read from storage itself, before and after the fetch, and only the
+      // pin written: the options page may have changed things meanwhile.
+      const pending = await autoUpdateStored(loadProviderState, store.save, serverUrl, parseIndex(idx.body), fetchBody);
+      return pending.map((e) => ({ id: e.id, name: e.name }));
     },
   };
 }

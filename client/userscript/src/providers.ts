@@ -9,13 +9,14 @@
  * from a descriptor only works once the user adds its `@match` line, and the
  * menu says which. Every rule is in client/core.
  */
+import type { AuthFetch, ProvidersPath } from '@videosync/core/app/authfetch.ts';
 import type { ProviderHooks, Store } from '@videosync/core/app/bootstrap.ts';
 import {
   buildRegistry, openOffers, parseIndex, pendingUpdates, readState, serverOrigin, writeState,
 } from '@videosync/core/providers/adoption.ts';
 import type { FieldChange, IndexEntry, ProviderState } from '@videosync/core/providers/adoption.ts';
 import {
-  adopt, autoUpdate, grantedBy, missingMatches, removeUser, saveUser, setAutoAdopt, unadopt,
+  adopt, autoUpdateStored, grantedBy, missingMatches, removeUser, saveUser, setAutoAdopt, unadopt,
 } from '@videosync/core/providers/manage.ts';
 
 declare const GM_registerMenuCommand: undefined | ((name: string, fn: () => void) => unknown);
@@ -31,18 +32,23 @@ function ownMatches(): string[] {
   }
 }
 
-async function getText(url: string): Promise<string> {
-  // A userscript's server is public with CORS anyway (see reach.ts).
-  const r = await fetch(url, { cache: 'no-cache' });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.text();
+/**
+ * A GET of the provider index or one file, on the same policy as every other
+ * call to the server (`authfetch.ts`): `GM_xmlhttpRequest`, and the device
+ * token for a server that gates its listing.
+ */
+async function getText(http: AuthFetch, server: string, path: ProvidersPath): Promise<string> {
+  const r = await http(server, path, { method: 'GET' });
+  if (r.status === 401 && !r.gateway) throw new Error('이 서버는 로그인이 필요해요. 방에 들어갈 때 로그인한 뒤 다시 시도하세요.');
+  if (r.status !== 200 || r.gateway) throw new Error(r.error ?? `HTTP ${r.status}`);
+  return r.body;
 }
 
-async function fetchIndex(server: string): Promise<IndexEntry[]> {
-  return parseIndex(await getText(new URL('/api/providers', server).toString()));
+async function fetchIndex(http: AuthFetch, server: string): Promise<IndexEntry[]> {
+  return parseIndex(await getText(http, server, '/api/providers'));
 }
 
-const fileUrl = (server: string, id: string) => new URL(`/api/providers/${id}.json`, server).toString();
+const fileText = (http: AuthFetch, server: string, id: string) => getText(http, server, `/api/providers/${id}.json`);
 
 function describeChanges(changes: readonly FieldChange[]): string {
   if (!changes.length) return '(달라지는 내용 없음)';
@@ -50,15 +56,17 @@ function describeChanges(changes: readonly FieldChange[]): string {
     .join('\n').slice(0, 1500);
 }
 
-export function providerHooks(store: Store): ProviderHooks {
+export function providerHooks(store: Store, http: AuthFetch): ProviderHooks {
   return {
     registry: buildRegistry(readState(store.load), grantedBy(ownMatches())),
     decideWhere: 'Tampermonkey 메뉴의 "VideoSync: 서버 제공자 설명"',
     async updatesFrom(serverUrl) {
-      const index = await fetchIndex(serverUrl);
-      const r = await autoUpdate(readState(store.load), serverUrl, index, (id) => getText(fileUrl(serverUrl, id)));
-      if (r.applied.length) writeState(store.save, r.state);
-      return r.pending.map((e) => ({ id: e.id, name: e.name }));
+      const index = await fetchIndex(http, serverUrl);
+      // GM storage is read afresh each time; the menu may change it while the
+      // files are fetched, so only the pin is written, over what is stored then.
+      const pending = await autoUpdateStored(() => readState(store.load), store.save, serverUrl, index,
+        (id) => fileText(http, serverUrl, id));
+      return pending.map((e) => ({ id: e.id, name: e.name }));
     },
   };
 }
@@ -82,12 +90,12 @@ async function addFromPaste(store: Store): Promise<void> {
   afterChange(`${r.descriptor.name} 설명을 저장했어요.`, missingMatches(r.descriptor, ownMatches()));
 }
 
-async function fromServer(store: Store): Promise<void> {
+async function fromServer(store: Store, http: AuthFetch): Promise<void> {
   const server = store.load('server', '');
   if (!serverOrigin(server)) { alert('먼저 패널에서 서버 주소로 방에 참가하세요.'); return; }
   let index: IndexEntry[];
   try {
-    index = await fetchIndex(server);
+    index = await fetchIndex(http, server);
   } catch (e) {
     alert(`서버 목록을 받지 못했어요: ${(e as Error).message}`);
     return;
@@ -122,7 +130,7 @@ async function fromServer(store: Store): Promise<void> {
   if (!e) return;
   let body: string;
   try {
-    body = await getText(fileUrl(server, e.id));
+    body = await fileText(http, server, e.id);
   } catch (err) {
     alert(`파일을 받지 못했어요: ${(err as Error).message}`);
     return;
@@ -153,9 +161,9 @@ function listAndDelete(store: Store): void {
   afterChange(`${id} 설명을 지웠어요.`, []);
 }
 
-export function registerMenu(store: Store): void {
+export function registerMenu(store: Store, http: AuthFetch): void {
   if (typeof GM_registerMenuCommand !== 'function') return;
   GM_registerMenuCommand('VideoSync: 제공자 설명 추가', () => { void addFromPaste(store); });
-  GM_registerMenuCommand('VideoSync: 서버 제공자 설명', () => { void fromServer(store); });
+  GM_registerMenuCommand('VideoSync: 서버 제공자 설명', () => { void fromServer(store, http); });
   GM_registerMenuCommand('VideoSync: 사용 중인 제공자 설명', () => { listAndDelete(store); });
 }

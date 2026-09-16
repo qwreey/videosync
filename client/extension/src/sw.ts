@@ -13,11 +13,11 @@
  * database (`tokens.ts`), which is state about the browser and not about a
  * session.
  */
-import { fetchHttp, makeAuthFetch, serverOrigin } from '@videosync/core/app/authfetch.ts';
+import { fetchHttp, makeAuthFetch } from '@videosync/core/app/authfetch.ts';
 
 import { grantedOrigins, syncContentScripts } from './dynamic.ts';
-import { PORT_NAME, providersPath, SERVER_KEY } from './relay.ts';
-import type { FetchReply, FromWorker, SyncReply, ToWorker, WorkerRequest } from './relay.ts';
+import { PORT_NAME } from './relay.ts';
+import type { FromWorker, SyncReply, ToWorker, WorkerRequest } from './relay.ts';
 import { idbTokens } from './tokens.ts';
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -88,47 +88,33 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 /**
- * Every HTTP call to the server -- room creation, sign-in, tickets -- is made
- * here, for two reasons. A content script on a public-origin page cannot reach
- * a private address at all. And the device token lives here and only here
- * (`tokens.ts`); the content script gets tickets.
+ * Every HTTP call to the server -- room creation, sign-in, tickets, the
+ * provider index -- is made here, for two reasons. A content script on a
+ * public-origin page cannot reach a private address at all. And the device
+ * token lives here and only here (`tokens.ts`); the content script gets
+ * tickets.
  *
  * This used to fetch whatever `msg.url` said, from the one context that can
- * reach the LAN. Now the URL is built from the server the settings store
- * holds and a fixed path list (`makeAuthFetch`), and a token only ever goes to
- * the origin that issued it.
+ * reach the LAN. Now the URL is the message's server origin plus one fixed
+ * path allowlist (`makeAuthFetch`), and a token only ever goes to the origin
+ * that issued it. Which origin is not a boundary -- any of our contexts could
+ * name any server by writing the settings store first -- so it is taken from
+ * the message; the boundary is the path list and the per-origin tokens.
  */
 const authFetch = makeAuthFetch(fetchHttp, idbTokens());
 
-async function storedServer(): Promise<string> {
-  const got = await chrome.storage.local.get(SERVER_KEY);
-  const v = got[SERVER_KEY];
-  return typeof v === 'string' ? v : '';
-}
-
 chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
-  // Only our own content scripts; a page cannot message an extension that
-  // declares no `externally_connectable`, and this makes that explicit.
+  // Only our own pages and content scripts; a page cannot message an
+  // extension that declares no `externally_connectable`, and this makes that
+  // explicit.
   if (sender.id !== chrome.runtime.id) return false;
   const reply = (p: Promise<unknown>) => {
-    p.then(respond, (e) => respond({ ok: false, status: 0, body: '', error: String(e) } satisfies FetchReply));
+    p.then(respond, (e: unknown) => respond({ status: 0, body: '', error: String(e) }));
   };
   switch (msg?.t) {
-    case 'auth': {
-      storedServer()
-        .then((stored) => {
-          const origin = serverOrigin(stored);
-          if (!origin) return { status: 0, body: '', error: 'no server configured' };
-          // The store is shared by every tab. Another tab choosing another
-          // server in between must fail this call, not redirect it there.
-          if (serverOrigin(msg.server) !== origin) {
-            return { status: 0, body: '', error: 'the server was changed in another tab; try again' };
-          }
-          return authFetch(stored, msg.path, msg.req);
-        })
-        .then(respond, (e: unknown) => respond({ status: 0, body: '', error: String(e) }));
+    case 'auth':
+      reply(authFetch(String(msg.server), msg.path, msg.req ?? { method: 'GET' }));
       return true; // async response
-    }
     case 'openTab': {
       // A login page, from the server's answer. Web URLs only: this is a
       // privileged `tabs.create`, and it must not open an extension page or
@@ -137,22 +123,6 @@ chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
         void chrome.tabs.create({ url: msg.url, active: true });
       }
       return false;
-    }
-    case 'providers.fetch': {
-      let url: URL;
-      try {
-        url = new URL(msg.path, msg.server);
-      } catch {
-        respond({ ok: false, status: 0, body: '', error: 'bad server URL' } satisfies FetchReply);
-        return false;
-      }
-      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !providersPath(url.pathname) || url.search) {
-        respond({ ok: false, status: 0, body: '', error: 'not a provider path' } satisfies FetchReply);
-        return false;
-      }
-      reply(fetch(url, { cache: 'no-cache' })
-        .then(async (r): Promise<FetchReply> => ({ ok: r.ok, status: r.status, body: await r.text() })));
-      return true;
     }
     case 'providers.granted':
       reply(grantedOrigins().then((origins) => ({ origins })));

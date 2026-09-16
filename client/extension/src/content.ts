@@ -12,15 +12,16 @@
  */
 import { start } from '@videosync/core/app/bootstrap.ts';
 import type { Platform, Store } from '@videosync/core/app/bootstrap.ts';
-import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
+import { sharedStore } from '@videosync/core/app/sharedstore.ts';
 
 import { STORE_KEYS } from '@videosync/core/providers/adoption.ts';
 
 import { PortTransport } from './porttransport.ts';
 import { providerHooks } from './providers.ts';
+import { authCall } from './relay.ts';
 import type { WorkerRequest } from './relay.ts';
+import { chromeArea, PREFIX } from './storage.ts';
 
-const PREFIX = 'videosync.';
 // Every key the app reads must be listed: only these are hydrated, and a key
 // that is saved but not listed is written and then never seen again -- which is
 // exactly how following the room to its video first lost the session.
@@ -29,27 +30,13 @@ const KEYS = ['server', 'room', 'secret', 'name', 'rejoin', 'authScope', ...Obje
 
 /**
  * `chrome.storage` is async and the panel is built before anything can await,
- * so the values are hydrated once up front and written through afterwards.
- * A write that loses a race costs a remembered server URL, which is not worth
- * an await in the click handler.
+ * so the values are hydrated once up front, written through afterwards, and
+ * kept in step with what other tabs and the options page write
+ * (`sharedstore.ts`). A write that loses a race costs a remembered server
+ * URL, which is not worth an await in the click handler.
  */
-async function hydrate(): Promise<Store> {
-  const cache = new Map<string, string>();
-  try {
-    const got = await chrome.storage.local.get(KEYS.map((k) => PREFIX + k));
-    for (const [k, v] of Object.entries(got)) {
-      if (typeof v === 'string') cache.set(k, v);
-    }
-  } catch { /* first run, or storage is unavailable; defaults are fine */ }
-  let pending: Promise<unknown> = Promise.resolve();
-  return {
-    load: (key, fallback = '') => cache.get(PREFIX + key) ?? fallback,
-    save: (key, value) => {
-      cache.set(PREFIX + key, value);
-      pending = Promise.all([pending, chrome.storage.local.set({ [PREFIX + key]: value }).catch(() => {})]);
-    },
-    flush: () => pending.then(() => {}),
-  };
+function hydrate(): Promise<Store> {
+  return sharedStore(chromeArea(), PREFIX, KEYS);
 }
 
 function wsUrl(serverUrl: string): string {
@@ -71,25 +58,8 @@ async function platform(store: Store): Promise<Platform> {
     providers: await providerHooks(store),
     openPanel: OPEN_PANEL,
     makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
-    /**
-     * The worker makes the call against the server the settings store holds
-     * -- it takes a path from here, never a URL -- so the server this call is
-     * for is written there first, and the write is waited for.
-     */
-    async authFetch(serverUrl, path, req) {
-      if (store.load('server', '') !== serverUrl) store.save('server', serverUrl);
-      await store.flush?.();
-      return new Promise<AuthResponse>((res) => {
-        try {
-          chrome.runtime.sendMessage({ t: 'auth', server: serverUrl, path, req } satisfies WorkerRequest, (out?: AuthResponse) => {
-            res(out ?? { status: 0, body: '', error: String(chrome.runtime.lastError?.message ?? 'no reply') });
-          });
-        } catch (e) {
-          // The extension was reloaded under this tab.
-          res({ status: 0, body: '', error: String(e) });
-        }
-      });
-    },
+    /** The worker makes the call, and holds the device token. */
+    authFetch: authCall,
     /** Through the worker: a tab it opens is not the popup blocker's business. */
     openTab(url) {
       try {
