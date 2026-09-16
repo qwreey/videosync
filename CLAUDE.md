@@ -100,9 +100,36 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **Exact-value assertions on one seed are coin flips.** Two regression tests asserted "exactly 0"
   and had been passing on seed 5's luck; the property holds in ~2/3 of seeds either way. Assert the
   comparison, average over seeds, keep the control (POC-FINDINGS §39).
-- **A `hello` never changes room state.** Only the first member's `mediaKey` names the media, and
-  only while the room is empty. Any later change is a `media` command — it takes a `seq` and
-  reaches everyone. Mutating the anchor on a join is invisible to the members already in the room.
+- **A `hello` never changes room state — not even the first one.** A room that names nothing is
+  named by a `media` command with `ifMediaKey: ""` (compare-and-set, refused as `media_stale`
+  without taking a `seq`), sent by the first member on media, who then seeds the room like a
+  creator. Moving to the next episode is the same CAS against the old key. Mutating the anchor on a
+  join is invisible to the members already in the room.
+- **A newly found video's state is the site's, not the member's** (D8, `docs/design/acquire.md`).
+  Autoplay, resume-from-history and the load algorithm all move the element without anyone
+  pressing anything. Conform it to the room; only a gesture made *after the media epoch began*
+  counts as intent — a next-episode click is still `isActive` when that episode autoplays
+  0.75–2 s later. Bump the epoch synchronously on `emptied`/`loadstart`: a reused element is
+  paused with **no `pause` event** and its `playbackRate` reset, and YouTube plays 1 ms after
+  `emptied`. Laftel rewrites its resume position until ~0.5 s before `canplaythrough`, so conform
+  at HAVE_FUTURE_DATA.
+- **The end of media is a `pause` with `ended` set.** Never send it, and never re-apply play to an
+  ended element (it restarts from 0).
+- **Never collect a secret in the panel.** It lives in the site's DOM and key events are composed:
+  a capture listener on `window` reads what is typed into a closed shadow root. Keys and passwords
+  go into the server's own `/auth/login` tab.
+- **A proxy vouches only where it gates** (D6). `/api/ticket` takes a device token only, because a
+  gateway must leave it open; `/api/session` trusts a trusted proxy only with
+  `X-VideoSync-Device`, which the preflight admits only for extension origins — otherwise any page
+  on a network the gateway admits could mint a device token. And **a gateway's answer is not the
+  server's**: only videosyncd's own JSON 401 may drop a device token; a redirect or an HTML page
+  means "log in in a tab". Device tokens never go in `chrome.storage.local`, which content scripts
+  read.
+- **A provider descriptor is data, and its tier limits what it can do** (D7). Server- and
+  user-supplied descriptors restrict only, make a host followable only if the user granted it, and
+  replace a built-in (by id, host or `keyPrefix`) only with explicit consent. No regular expressions:
+  a room member's `mediaUrl` must not be able to hang anyone's tab. `keyPrefix` and published key
+  bodies are frozen — they are on the wire.
 - **A member that has not applied the newest `seq` must not be judged.** It is still on the
   previous anchor, so its residual describes that disagreement and not drift — judging it anyway
   issues a "free seek" that yanks the room backwards right before the transition it already had
@@ -174,7 +201,7 @@ server/          Go. Sync server + the Risk-A simulation harness (shares the syn
 client/core/     Platform-agnostic TS: adapters, detector, sync engine, protocol client.
                  MUST NOT import browser-extension APIs — both shims depend on it.
   src/app/, src/ui/   The wiring and the panel, shared VERBATIM by both shims. The shims
-                 differ in three injected pieces: storage, transport, room creation.
+                 differ in three injected pieces: storage, transport, HTTP (`Platform.authFetch`).
 client/userscript/  Tampermonkey shim. Ships. Needs the server on a public address (see Traps).
 client/extension/   Chrome MV3 shim (dist/) and Firefox MV2 (dist-firefox/). Ships. Its background is
                  a frame relay and nothing else — the only way to reach a server on your own
@@ -192,6 +219,13 @@ refs/            Gitignored shallow clones of the 9 references. NOT durable —
   `build`, `probe`, `probe-stack`, `test-e2e` (fails, not skips, if `videosyncd` will not build).
 - Go module/package caches live in `.cache/` inside the project — the host FS runs tight on space.
 - The repo is git-tracked; `refs/`, `.cache/`, `node_modules/` are ignored.
+- **Live-run setup traps:** a Helium relaunched with `--load-extension` on a rebuilt, overwritten
+  folder can keep an old cached service worker — load a probe build from a new folder
+  (`NAME=<new> node harness/browser/local-ext.mjs`). Helium refuses CDP targets on
+  `chrome-extension://` URLs; open extension pages with `chrome.tabs.create` from the worker. The
+  probes write fixed result names; rename a new run instead of overwriting a cited file.
+  MPRIS media keys: `busctl --user call org.mpris.MediaPlayer2.chromium.instance<PID>
+  /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player PlayPause` (no `playerctl` here).
 
 ## PoC sequencing (why the extension is not first)
 

@@ -20,6 +20,10 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 | MV3 capability + service-worker lifetime | **measured** — BROWSER-FINDINGS §9, §10 |
 | Extension shim | **built and validated end to end** — `client/extension/`, BROWSER-FINDINGS §11 (12/12) |
 | Observability for a live session | **built and browser-validated** — `VideoSync.dump()`, `videosyncd -verbose` |
+| Firefox | **built and validated** — MV2 build, BROWSER-FINDINGS §19 |
+| Access control (D6) | **built; token sign-in browser-validated** (§22, 16/16) — password/proxy/OIDC tested against fakes and a real videosyncd only |
+| Provider descriptors (D7) | **built; server offer + adoption browser-validated** (§22, 10/10) — update notice, auto-adopt, replace-built-in and site permissions not yet run live |
+| Video acquisition (D8, C1, C3) | **built, measured and verified live** — BROWSER-FINDINGS §20–22, POC-FINDINGS §43–44 |
 
 ## What exists and works
 
@@ -47,7 +51,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 160 unit tests (engine, detector, media keys, and the app/panel layer on a fake DOM), plus 15 end-to-end tests that drive real engines over real WebSockets
+  build step. 359 unit tests (engine, detector, acquisition, providers, auth client, and the app/panel layer on a fake DOM), plus 21 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -125,7 +129,7 @@ exists because of that.
 
 ```bash
 mise run test          # Go + TS + both shims' typecheck
-mise run test-e2e      # 15 tests, real engines over real sockets against a real videosyncd
+mise run test-e2e      # 21 tests, real engines over real sockets against a real videosyncd
 
 cd server && go build -o videosyncd ./cmd/videosyncd
 ./videosyncd -addr 127.0.0.1:8787 -verbose -idle-ttl 30m
@@ -284,27 +288,69 @@ What mattered most, so it is not rediscovered:
 
 Still open from the review, each needing a decision or a measurement rather than code:
 
-- **F39 — room creation is unauthenticated and unlimited.** Anyone can fill `MaxRooms`. Options: a
-  per-IP limit (needs a trusted-proxy setting), a creation token, or leave it to the reverse proxy.
-- **C1 — a site's own autoplay is broadcast as the member's play.** The core cannot tell autoplay
-  from a press; a fix needs adapter-side gesture evidence (`navigator.userActivation` or a trusted
-  input just before `play`) and a probe first. Not a timer.
-- **F20 remainder** — on path-keyed sites a `media` command can still name any path
-  (`laftel:/logout`). A per-provider media-path allowlist would close it.
+- ~~**F39**~~ — closed when `-auth` is on (D6): every room creation spends a ticket. With
+  `-auth none` creation stays open by design (tailnet/LAN); no per-address creation limit was built.
+- ~~**C1**~~ — fixed (D8): gesture evidence plus acquisition states. The live control sent unpressed
+  play/seek/pause; the fixed build sends none (BROWSER-FINDINGS §21–22).
+- ~~**F20 remainder**~~ — closed for Laftel by its descriptor (`pathFallback:false`,
+  `/player/{int}/{int}`); still open for hosts with no descriptor (the same-site branch).
 - **F12 — "decoded video but no audio bytes" read as "no audio track"** is unmeasured in a real
   browser (probe-bgpause2 condition C with the detector); protected media is treated as unknown.
-- **An element swap resets the detector**, so a play pressed on the newly picked element is not
-  broadcast and the room's paused state is applied over it.
+- ~~**An element swap resets the detector**~~ — fixed: a gestured change while acquiring is sent.
 - **A sub-tolerance lag after every transition** (a member within 250 ms of a new anchor stays there
   and nothing closes it) — now visible in the sim (POC §42a). Product question, not a bug.
 - **Two same-profile tabs following at once share one `rejoin` record**; a real fix needs a per-tab
   identity from the extension (`sender.tab.id`) or `GM_saveTab`.
 - Smaller: a live/DRM seekable window that clamps tighter than `[0, duration]` is not visible to the
   engine; `ServerClock` drops samples with rtt in [-1.5, 0) that wire rounding produces on loopback;
-  `step-ramp+conf` recovers a reconnect slowly for an uninvestigated reason; the sim client does not
-  reset `appliedRate` on suspension as the engine does; `OUTCLASSED` (resolve.ts) has no test bound;
-  a room with no media (C3) now simply is not followed — naming it automatically would be a
-  protocol change.
+  `step-ramp+conf` recovers a reconnect slowly for an uninvestigated reason.
+
+## D6–D8 (2026-09-17)
+
+The user set the direction (D6–D8 in DECISIONS.md); research in `research/design-*.md`, designs and
+"As built" notes in `docs/design/`. Built in three parallel tracks, integrated, reviewed twice by
+independent reviewers (with mutation checks), and verified live (BROWSER-FINDINGS §20–22).
+`mise run test` (Go 10 packages; core 359; harness and manifest/meta tests; both shims' typecheck)
+and `mise run test-e2e` (21) pass; `go test -race` passes.
+
+- **D6 access control.** `server/internal/auth`: `token`, `password` (PBKDF2), `proxy` (trusted
+  CIDRs), `oidc` (server as RP; ID token over TLS with claim checks — JWKS signature verification is
+  still a later hardening). Stateless HMAC device tokens, 60 s single-use tickets,
+  `-auth-scope create|all`, `/healthz` advertises methods. Sign-in always happens in the server's
+  `/auth/login` tab; the panel collects no secrets. The shims' third injected piece is now HTTP
+  (`Platform.authFetch`): the extension worker is an HTTP relay with a fixed path allowlist and keeps
+  device tokens in its own IndexedDB; the userscript uses `GM_xmlhttpRequest` (`@connect *`). The
+  provider listing is gated whenever auth is on (device token). `email:` allowlist entries need
+  `email_verified`; `-public-url` must be an origin; rate-limit identity falls back to the proxy's
+  address when `X-Real-IP` and `X-Forwarded-For` disagree.
+- **D7 provider descriptors.** `providers/*.json` (YouTube, Laftel) with a regex-free template
+  grammar implemented in TS and Go against shared vectors; built-ins generate the manifest `matches`
+  and the userscript `@match`; `videosyncd -providers DIR` (+ `-providers-poll`, SIGHUP) serves an
+  index and files; the extension has an options page (import, adopt with sha256 pin, diff, auto-adopt
+  per server, site permissions via `registerContentScripts`); the userscript has a menu command. The
+  content-script store now follows `storage.onChanged` (`sharedstore.ts`) — a cross-tab bug both
+  tracks had hit. Extension permissions: `storage`, `scripting`, `optional_host_permissions`.
+- **D8 acquisition.** Media epochs, DETACHED/CONFORMING/GUARDED/STEADY/FOUGHT, gesture evidence
+  from `app/gestures.ts` (Chromium media keys show as an activation edge; Firefox's do not), the
+  end of media is not a pause, `media` compare-and-set (`ifMediaKey`), rooms may be created
+  unnamed and are named by the first member on media, next-episode continuation when the
+  descriptor's `continues` says so (Laftel: same series), and members in transit count as
+  present-but-unready. Constants from §20: G 500 ms, T_settle 1 s, endWindow 1 s, continuation
+  window 20 s (expires after 60 s), K 3 (unmeasured: nothing fought).
+
+Open after D6–D8, needing a browser, a person or a decision:
+
+- Live: password/proxy/OIDC sign-in with a real IdP or gateway (tinyauth, Authelia); scope `all`;
+  Firefox MV2 sign-in and site registration (API choice unverified); descriptor update notice,
+  auto-adopt, replace-built-in; YouTube ads (Y3) and fullscreen consuming activation (Y4); Laftel in
+  Firefox; real Tampermonkey for all of the above.
+- A descriptor's `watch` must be https, so an http-only site cannot be followed by descriptor.
+- An invite link only fills in the room and secret; the member still presses 참가.
+- A member who follows by full-page navigation during a continuation is not waited for (its unload
+  leaves the room). Would need session resumption.
+- A newer client against an older server loses the CAS and the acquiring gate (README notes it).
+- User decisions: should `T_settle` be longer than 1 s; how should ads be handled; should new server
+  descriptor offers surface beyond the options page; JWKS verification for OIDC.
 
 ## Open questions that block things
 
