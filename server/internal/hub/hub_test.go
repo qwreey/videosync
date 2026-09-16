@@ -1375,12 +1375,14 @@ func TestCrossOriginIsRestrictedWhenAnAllowlistIsSet(t *testing.T) {
 }
 
 func TestServesOverTLS(t *testing.T) {
-	// Not a nicety: measured in a real browser (BROWSER-FINDINGS §8), a script
-	// on an https page cannot reach an http server AT ALL -- neither `fetch`
-	// nor `ws://` -- and the localhost exemption for secure *contexts* does not
-	// extend to mixed-content blocking. Every provider we target serves https,
-	// so a plaintext server is unreachable from all of them and TLS is the only
-	// deployable configuration.
+	// Not a nicety, though not for the reason this comment once gave. Measured
+	// in a real browser (BROWSER-FINDINGS §8): a page on a public origin -- every
+	// provider we target -- cannot reach a loopback or private address by ANY
+	// scheme, https and wss included; the request never leaves the browser and
+	// hangs. So TLS alone does not help a server on 127.0.0.1 or a LAN; a
+	// userscript needs the server on a PUBLIC address with a real certificate,
+	// and there TLS is necessary. (The earlier reading blamed mixed content;
+	// §8 retracts it.) The extension's background is exempt from all of this.
 	cfg := DefaultConfig()
 	h := New(cfg, NewClock())
 	srv := httptest.NewTLSServer(h.Handler(DefaultHTTPConfig()))
