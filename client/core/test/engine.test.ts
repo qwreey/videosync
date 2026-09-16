@@ -721,6 +721,28 @@ describe('going absent', () => {
     assert.equal(h.player.rate, 1, 'left the player running fast on media the room is not watching');
     assert.equal(h.tr.sentOf('hb').at(-1)!.suspended, true);
   });
+
+  it('hands the playback rate back on leaving the room', async () => {
+    // Measured on Laftel: two tabs that had left their room were still
+    // playing at 0.997x and 1.036x.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    h.tr.deliver({ t: 'correct', mode: 'nudge', rate: 1.036, when: h.vt.now + OFFSET });
+    await h.vt.advance(300);
+    assert.equal(h.player.rate, 1.036);
+    h.engine.stop();
+    assert.equal(h.player.rate, 1, 'kept the room\'s nudge after leaving it');
+  });
+
+  it('leaves a rate somebody else chose after the last nudge', async () => {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    h.tr.deliver({ t: 'correct', mode: 'nudge', rate: 1.036, when: h.vt.now + OFFSET });
+    await h.vt.advance(300);
+    h.player.setRate(1.5);                        // the user picked 1.5x from the site's menu
+    h.engine.stop();
+    assert.equal(h.player.rate, 1.5);
+  });
 });
 
 describe('the anchor is truth about being paused, too', () => {

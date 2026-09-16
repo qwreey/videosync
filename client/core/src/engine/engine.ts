@@ -287,6 +287,8 @@ export class SyncEngine {
   private unsubscribeAdapter: (() => void) | null = null;
   /** When the player first started disagreeing with the anchor about play state. */
   private disagreeingSince = 0;
+  /** The last playbackRate this engine set, or 1 if it has not set one. */
+  private rateWeSet = 1;
   /** When the player started looking unready with a full buffer, or 0. */
   private transientUnreadySince = 0;
   /** One-shot: the creator's seed, consumed by the first settled evaluation. */
@@ -423,6 +425,7 @@ export class SyncEngine {
 
   stop(): void {
     this.running = false;
+    this.releaseRate();
     this.epoch++;
     this.unsubscribeAdapter?.();
     this.unsubscribeAdapter = null;
@@ -802,6 +805,7 @@ export class SyncEngine {
       }
       const r = Math.min(this.cfg.rateMax, Math.max(this.cfg.rateMin, rate ?? 1));
       a.setRate(r);
+      this.rateWeSet = r;
       this.stats.correctionsNudge++;
       return;
     }
@@ -908,9 +912,7 @@ export class SyncEngine {
     // would stick forever -- including onto whatever they navigate to next,
     // since a site that reuses its <video> element keeps its playbackRate. Hand
     // it back before going quiet.
-    if (absent && state.rate !== 1 && this.d.adapter.capabilities.supportsPlaybackRateNudge) {
-      this.d.adapter.setRate(1);
-    }
+    if (absent) this.releaseRate();
     const dueHeartbeat = now - this.lastHbAt >= this.cfg.hbIntervalMs;
     const anomaly =
       Math.abs(report.residualMs) >= this.cfg.reportThresholdMs ||
@@ -973,6 +975,20 @@ export class SyncEngine {
       if (epoch !== this.epoch || this.lastAppliedSeq !== seq || !this.anchor.paused) return;
       await this.applyTransition(expectedAt(this.anchor, this.serverNow()), true, HOLD_SEEK_TOLERANCE_MS);
     });
+  }
+
+  /**
+   * Hand back a playback rate the servo left on the player.
+   *
+   * Leaving the room used to keep whatever nudge was last in effect, so a
+   * member who left kept watching at 1.036x on their own -- measured on
+   * Laftel. Only a rate this engine set is undone: if the player's rate is
+   * something else, somebody chose it after us and it is theirs.
+   */
+  private releaseRate(): void {
+    if (this.rateWeSet === 1 || !this.d.adapter.capabilities.supportsPlaybackRateNudge) return;
+    if (this.d.adapter.readState().rate === this.rateWeSet) this.d.adapter.setRate(1);
+    this.rateWeSet = 1;
   }
 
   // --- outbound user intent -------------------------------------------------
