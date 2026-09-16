@@ -8,6 +8,11 @@
  * bigger thing to install than one that does not.
  *
  * Loads the real build twice, once with the permission and once without.
+ * The shipped manifest no longer asks for it (it was dropped on this probe's
+ * answer), so the "with" arm has to ADD it: an arm that only deleted it
+ * silently became a second copy of the "without" arm, and a re-run reported
+ * "with <all_urls>" passing for a build that never had the permission. Each arm
+ * now checks what it actually staged before it measures anything.
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -40,15 +45,20 @@ function stage(withHostPerms) {
   cpSync(built, dir, { recursive: true });
   const m = JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8'));
   m.content_scripts[0].matches.push('http://127.0.0.1/*', 'http://localhost/*');
-  if (!withHostPerms) delete m.host_permissions;
+  if (withHostPerms) m.host_permissions = ['<all_urls>'];
+  else delete m.host_permissions;
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(m, null, 2));
-  return dir;
+  return { dir, hostPermissions: m.host_permissions ?? [] };
 }
 
 let port = 9471;
 try {
   for (const withPerms of [true, false]) {
-    const dir = stage(withPerms);
+    const { dir, hostPermissions } = stage(withPerms);
+    const label = withPerms ? 'with <all_urls>' : 'WITHOUT host_permissions';
+    check(`${label}: the staged manifest says so`,
+      withPerms ? hostPermissions.includes('<all_urls>') : hostPermissions.length === 0,
+      JSON.stringify(hostPermissions));
     const b = await launch({
       port: port++, headful: true,
       extraFlags: [`--disable-extensions-except=${dir}`, `--load-extension=${dir}`, '--window-size=700,500'],
@@ -64,7 +74,6 @@ try {
       await Promise.race([loaded, sleep(20000)]);
       await s.waitFor('!!window.VideoSync', { timeoutMs: 20000, isolated: true });
 
-      const label = withPerms ? 'with <all_urls>' : 'WITHOUT host_permissions';
       const room = await s.evalIsolated(
         `window.VideoSync.createRoom(${JSON.stringify(SERVER)}, 'a')` +
         `.then(r => ({ ok: true, roomId: r.roomId }), e => ({ ok: false, err: String(e && e.message) }))`);
