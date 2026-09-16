@@ -64,7 +64,13 @@ type Member struct {
 // deadband turns into thousands of useless seeks. No reference implementation
 // detects this.
 type corrState struct {
+	// lastSeekAt is when the last seek went out, and is what the cooldown is
+	// measured from. It is never cleared: the effectiveness check used to zero
+	// it to mean "evaluated", which silently turned the 2000 ms floor into
+	// seekCooldownMs/2 plus one report interval. seekPending carries that
+	// meaning instead.
 	lastSeekAt     int64
+	seekPending    bool
 	residualAtSeek int64
 	failedSeeks    int
 	biasMs         int64 // learned clock-estimate bias, subtracted from reports
@@ -494,7 +500,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// Did the last seek accomplish anything? If we seeked and the residual is
 	// essentially unchanged, the fault is not the player's position -- it is
 	// our own idea of where the client should be.
-	if cs.lastSeekAt > 0 && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
+	if cs.seekPending && now-cs.lastSeekAt > seekCooldownMs/2 && cs.residualAtSeek != 0 {
 		improved := abs64(eff.ResidualMs) <= int64(float64(abs64(cs.residualAtSeek))*seekImprovementFrac)
 		if improved {
 			cs.failedSeeks = 0
@@ -520,7 +526,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 				eff.ResidualMs = rep.ResidualMs - cs.biasMs
 			}
 		}
-		cs.lastSeekAt = 0
+		cs.seekPending = false
 	}
 
 	d := r.corrector.Decide(eff, r.anchor, now, r.tun)
@@ -544,7 +550,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		if eff.Closing() && abs64(eff.ResidualMs) < r.tun.NudgeMaxResidual {
 			r.UnnecessarySeeks++
 		}
-		cs.lastSeekAt = now
+		cs.lastSeekAt, cs.seekPending = now, true
 		cs.residualAtSeek = eff.ResidualMs
 		r.send(id, Correct{Mode: "seek", When: now, Why: d.Why})
 	case vsync.ActionNudge:
