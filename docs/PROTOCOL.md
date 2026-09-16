@@ -268,11 +268,14 @@ Anything else — a member's own navigation outside that narrow case — still m
 
 ### Amendment: after a `media` command, nobody is ready yet (D8)
 
-Applying a `media` command marks **every** member unready, until it reports on the new `seq`. A
+Applying a `media` command marks every member unready, until it reports on the new `seq`. A
 continuation's `play` follows its `media` within one conform, which can be sooner than a member
-still navigating says it is acquiring; without this the `play` started without that member. A report
-from an absent member (elsewhere, suspended, finished) clears it like any other report, and
+still navigating says it is acquiring; without this the `play` started without that member.
 `GATE_TIMEOUT` bounds a member who never reports.
+
+*Integration:* not a member whose last report was `suspended` without `finished` — a backgrounded
+tab, which nothing waited for before and whose reports may come a minute apart under timer
+throttling. A `finished` member is the one on its way to the new media, and is gated.
 
 ## 4. Local detection and reporting (§4b, §4c)
 

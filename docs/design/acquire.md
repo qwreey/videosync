@@ -123,8 +123,9 @@ navigation click 750 ms). `T_settle` = 1 s (every measured site move ≤ 11 ms a
    is only the conditional `media` command now.
 6. **After any `media` command every member is unready until it reports on the new `seq`**
    (server, found by the end-to-end test): the winner's `play` follows its `media` within one
-   conform, which can beat the other member's first `acquiring` report. Absent members clear it
-   with their next report; `GATE_TIMEOUT` bounds the rest.
+   conform, which can beat the other member's first `acquiring` report. `GATE_TIMEOUT` bounds the
+   rest. *(Integration: a member already reporting `suspended` and not `finished` is not gated —
+   a throttled background tab would otherwise hold the next play for up to `GATE_TIMEOUT`.)*
 7. **A seeding member (creator or namer) reports `acquiring` while guarded**, so the server does
    not judge a player that is where *it* is against the room's placeholder. Its site's moves are
    absorbed, not put back, and restart `T_settle`. At `STEADY` it seeds the room (`seek`, then

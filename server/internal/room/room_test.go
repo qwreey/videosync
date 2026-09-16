@@ -422,6 +422,28 @@ func TestAMediaCommandDoesNotWaitForAnAbsentMember(t *testing.T) {
 	}
 }
 
+// Nor is one whose tab was already away when the media changed: its next
+// report may be a minute off (intensive throttling), and nothing was waiting
+// for it before. A member that finished the old media is the control: it is
+// on its way to the new one, so the play waits for it.
+func TestAMediaCommandDoesNotGateAMemberAlreadyAway(t *testing.T) {
+	for _, finished := range []bool{false, true} {
+		r, _ := newRoom(&scripted{action: vsync.ActionNone}, vsync.Anchor{MediaKey: "ep1", AtServerMs: 1})
+		r.Join(1, "a", "a")
+		r.Join(1, "b", "b")
+		rep := report(0, 0)
+		rep.Suspended = !finished
+		rep.Finished = finished
+		r.OnReport(50, "b", rep)
+		r.OnCmd(100, "a", media("m", "ep2", nil))
+		r.OnReport(150, "a", report(1, 0))
+		r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+		if r.Held() == !finished {
+			t.Fatalf("finished=%v: held=%v", finished, r.Held())
+		}
+	}
+}
+
 // And a member who never reports is waived by GATE_TIMEOUT, like any other.
 func TestAMediaCommandDoesNotWaitForeverForASilentMember(t *testing.T) {
 	r, _ := newRoom(&scripted{action: vsync.ActionNone}, vsync.Anchor{MediaKey: "ep1", AtServerMs: 1})

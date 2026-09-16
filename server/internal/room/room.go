@@ -38,6 +38,10 @@ type Member struct {
 	// Suspended is "absent": a suspended tab, a refused autoplay, other media,
 	// or a finished one.
 	Suspended bool
+	// Finished: its media ended, which makes it Suspended too. Kept apart
+	// because a finished member is about to move on with the room, and a
+	// member that is merely away is not.
+	Finished bool
 	// Acquiring is "present, not ready": see vsync.Report.Acquiring.
 	Acquiring      bool
 	ReadyState     int
@@ -514,10 +518,21 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		// on the new seq it is unready, so the `play` that follows -- a
 		// continuation sends one as soon as its sender is conformed -- cannot
 		// race the first "acquiring" report of a member still on its way. A
-		// report from an absent member clears this like any other, and
 		// GATE_TIMEOUT bounds a member who never reports (docs/design/acquire.md).
+		//
+		// Except a member whose last report said it is away and not finished:
+		// a backgrounded tab. Nothing was waiting for it before, it reports on
+		// throttled timers (a minute apart under Chrome's intensive throttling,
+		// and clearing the gate takes a drain and then a heartbeat), and
+		// gating it would hold the next play for up to GATE_TIMEOUT. A member
+		// that finished the old media is exactly the one on its way here, so
+		// it is gated; one that comes back reports unsuspended and is judged
+		// like anyone else.
 		for _, mid := range r.ids {
 			mm := r.members[mid]
+			if mm.Suspended && !mm.Finished {
+				continue
+			}
 			mm.gated, mm.gatedAt, mm.gateWaived = true, now, false
 		}
 	}
@@ -559,6 +574,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// corrector sees Suspended and leaves the member alone.
 	rep.Suspended = rep.Suspended || rep.Finished
 	m.Suspended = rep.Suspended
+	m.Finished = rep.Finished
 	m.Acquiring = rep.Acquiring && !rep.Suspended
 	m.ReadyState = rep.ReadyState
 	m.BufferedAheadS = rep.BufferedAheadS
