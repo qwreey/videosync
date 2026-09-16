@@ -249,6 +249,9 @@ export interface EngineDeps {
   ticket?(): Promise<string> | string;
 }
 
+/** How long a connect waits for its ticket before it counts as a network failure. */
+export const TICKET_TIMEOUT_MS = 20_000;
+
 /** What a ticket source rejects with when only signing in can help. */
 export function isAuthRequired(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'auth_required';
@@ -288,6 +291,8 @@ export interface EngineStats {
   supersededApplies: number;
   /** The transport refused to open at all. Any value above zero is our bug or a dead extension context. */
   connectFailures: number;
+  /** A ticket could not be had for a network reason, or in time. The network's doing, not ours. */
+  ticketFailures: number;
   /** play() failed for a reason that is not an autoplay refusal. */
   playFailures: number;
   /** Local plays re-paused to wait for the room's `when` (`holdLocalPlay`). */
@@ -450,7 +455,7 @@ export class SyncEngine {
     cmdsSent: 0, statesApplied: 0, acksApplied: 0, correctionsSeek: 0,
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
-    skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0,
+    skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0, ticketFailures: 0,
     playFailures: 0, playsHeld: 0, reportsDeferred: 0, reconciles: 0,
     mediaEpochs: 0, acquisitions: 0, siteMovesAbsorbed: 0, ungesturedIgnored: 0,
     gesturedIntents: 0, fought: 0, endsNotSent: 0, mediaStale: 0, continuations: 0,
@@ -832,11 +837,30 @@ export class SyncEngine {
       this.openTransport();
       return;
     }
+    // A server that accepts the connection and never answers must not leave
+    // the session on "connecting" with no reconnect armed: past the deadline
+    // the attempt counts as a network failure, and a late answer is dropped.
+    let settled = false;
+    const fail = (msg: string) => {
+      this.stats.ticketFailures++;
+      this.onClose(false, `ticket: ${msg}`);
+    };
+    const deadline = this.d.setTimer(() => {
+      if (settled || gen !== this.connectGen || !this.running) return;
+      settled = true;
+      fail(`no answer within ${TICKET_TIMEOUT_MS} ms`);
+    }, TICKET_TIMEOUT_MS);
     got.then((t) => {
+      if (settled) return;
+      settled = true;
+      this.d.clearTimer(deadline);
       if (gen !== this.connectGen || !this.running) return;
       this.ticket = t;
       this.openTransport();
     }, (e: unknown) => {
+      if (settled) return;
+      settled = true;
+      this.d.clearTimer(deadline);
       if (gen !== this.connectGen || !this.running) return;
       const msg = e instanceof Error ? e.message : String(e);
       if (isAuthRequired(e)) {
@@ -846,8 +870,7 @@ export class SyncEngine {
         this.ev.onError?.('auth_required', msg);
         return;
       }
-      this.stats.connectFailures++;
-      this.onClose(false, `ticket: ${msg}`);
+      fail(msg);
     });
   }
 

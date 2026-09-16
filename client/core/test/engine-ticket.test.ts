@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
+import { DEFAULT_ENGINE_CONFIG, SyncEngine, TICKET_TIMEOUT_MS } from '../src/engine/engine.ts';
 import { FakePlayer, FakeTransport, VirtualTime, flush } from './fakes.ts';
 
 class NeedsSignIn extends Error {
@@ -104,9 +104,33 @@ describe('tickets', () => {
     r.asks[1]!.resolve('');
     await flush();
     r.tr.open();
-    assert.equal(r.engine.stats.connectFailures, 1);
+    assert.equal(r.engine.stats.ticketFailures, 1);
+    assert.equal(r.engine.stats.connectFailures, 0, 'the network\'s failure was filed as our bug');
     assert.equal(hellos(r).length, 1);
     assert.equal('ticket' in hellos(r)[0]!, false, 'an empty ticket should not be on the wire');
+    r.engine.stop();
+  });
+
+  it('gives up on a ticket that never comes, and tries again', async () => {
+    const r = rig();
+    r.engine.start();
+    await r.vt.advance(TICKET_TIMEOUT_MS - 100);
+    assert.equal(r.asks.length, 1);
+    await r.vt.advance(200);
+    assert.equal(r.engine.stats.ticketFailures, 1);
+    assert.equal(r.engine.state, 'connecting');
+    // The first answer, arriving now -- before the reconnect -- opens nothing:
+    // that attempt is over, and its ticket would ride a hello nobody scheduled.
+    r.asks[0]!.resolve('late');
+    await flush();
+    assert.equal(r.tr.connects, 0);
+    await r.vt.advance(5000);
+    assert.equal(r.asks.length, 2, 'a stalled ticket request left the session with no reconnect');
+    r.asks[1]!.resolve('T2');
+    await flush();
+    assert.equal(r.tr.connects, 1);
+    r.tr.open();
+    assert.deepEqual(hellos(r).map((h) => h.ticket), ['T2']);
     r.engine.stop();
   });
 
