@@ -292,7 +292,7 @@ mechanism that exists because a measurement demanded it:
 | `residualMs`, `positionMs`, `paused`, `readyState`, `bufferedAheadS` | the basics; nothing works |
 | `slopeMsPerS` | the servo's frequency term integrates nothing; only the bias-*prone* phase term is left (§4c) |
 | `bufferedBehindS` | `targetBuffered()` is false for every backward target, so the free-backward-seek branch is unreachable and §35's cost rule is half-undone |
-| `lastAppliedSeq` | the stale-anchor resend never fires. 115 603 ms vs 250 ms (POC-FINDINGS §34) |
+| `lastAppliedSeq` | the stale-anchor resend never fires. 123 770 ms vs 31 ms when frames are lost on a live connection (POC-FINDINGS §41f; §34's 115 603 ms modelled a reconnect that cannot happen) |
 | `uncertaintyMs` | the dead-band collapses to `TOLERANCE` and the servo's built-in confidence is inert — the condition where three perfectly aligned clients were pushed 1.2 s apart *by the corrections themselves* (POC-FINDINGS §6) |
 | `rttMs` | `CMD_DELAY` is stuck at its 500 ms floor for the whole room, because it is computed from reported RTTs and nothing else |
 | `clockSamples` | `ConfidenceGated` cannot tell a settled estimate from a fresh one. (Count *completed* exchanges, not accepted ones — a min-RTT counter stops advancing once it converges, which froze the gate shut for whole sessions) |
@@ -310,8 +310,9 @@ resend the state instead of judging the report.
 > with it, and transitions `CMD_DELAY` **early** — destroying exactly the simultaneity this
 > timebase exists to provide. With a 1 Hz heartbeat and the 500 ms floor it fired on roughly half
 > of all commands, including for the originator, whose `ack` takes the same path. A client on a stale anchor measures its residual *against that stale anchor* and
-so reports ≈ 0 while being arbitrarily out of position — measured at 115 603 ms mean error without
-the resend and 250 ms with it (POC-FINDINGS §34). This is three lines and reads a field already on
+so reports ≈ 0 while being arbitrarily out of position — measured at 123 770 ms mean error without
+the resend and 31 ms with it, with frames lost on a connection that stays up (POC-FINDINGS §41f;
+§34's 115 603 ms → 250 ms modelled a reconnect, which the real `welcome` makes impossible). This is three lines and reads a field already on
 the wire.
 `slopeMsPerS` is computed **client-side at high frequency with zero network noise**; the server
 must never try to differentiate 1 Hz reports itself (§4c).

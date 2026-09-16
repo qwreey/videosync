@@ -65,7 +65,9 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   hangs rather than failing.
 - **A client on a stale anchor reports `residual == 0`** while arbitrarily out of position, because
   the residual is measured against that same stale anchor. `lastAppliedSeq` is the only signal;
-  resend state when it lags. Worth 115 603 ms -> 250 ms.
+  resend state when it lags. A backstop, not a headline: a real reconnect gets a fresh `welcome`,
+  so a stale anchor needs frames lost on a live connection — 123 770 ms -> 31 ms in that model
+  (POC-FINDINGS §41f). The old "115 603 ms -> 250 ms" came from a reconnect that cannot happen.
 - **No single metric scores a strategy.** Inter-client spread rewards a strategy that does nothing.
   `anchorErr` fixes that but **excludes a stalled client by construction**, so a room that leaves a
   buffering member behind and later yanks them forward scores *well* on it. Use `anchorErr` for
@@ -75,13 +77,14 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **Every millisecond field on the wire is an `int64`.** `performance.now()` is fractional; sending
   `{"t":"time","t0":874.47}` gets `bad_frame` and the session stays joined while the clock never
   settles and no correction ever fires. Round at the wire boundary.
-- **A public-origin page cannot reach a loopback or private address AT ALL** — any scheme, http and
+- **In Chromium, a public-origin page cannot reach a loopback or private address AT ALL** — any scheme, http and
   https and ws and wss alike. The request never leaves the browser (a permissive listener sees
   nothing, not even a preflight) and it hangs forever, so it looks exactly like a server that is
   down. The server needs a **public address with a real certificate**. An extension's **service
   worker is exempt**, which is the one thing the extension can do that a userscript structurally
   cannot. (`BROWSER-FINDINGS.md` §8, §9.) An earlier version of that section blamed mixed content;
-  that was an assumption that fit the data, not a measurement.
+  that was an assumption that fit the data, not a measurement. **Firefox does not block it** — an
+  https page opened `ws://127.0.0.1` (§19; LAN addresses unmeasured).
 - **A userscript or content script is ALWAYS on a different origin from the server**, so every
   `/api/rooms` call is cross-origin and needs CORS. Without it the browser succeeds at the request
   and then refuses to let the script read it — `TypeError: Failed to fetch`, naming nothing.
@@ -142,6 +145,19 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   included, whatever the manifest CSP says. That is why the Firefox build is MV2. And a detector
   that treats "unready" as "stalled" swallows real seeks — a seek drops `readyState` itself;
   compare the held reference before re-baselining.
+- **A position is only as good as the timeline it was read on.** `Cmd` carries no base `seq`, so a
+  `pause` arriving inside another command's lead is anchored on the room's schedule
+  (`Room.committedAt`), not on the sender's `positionMs`. And a `play` on an already-playing room
+  writes an anchor projected to its own `when`: anything reading `r.anchor` before then sees a
+  position up to `CMD_DELAY` in the future.
+- **An empty local `mediaKey` means "this page names no media", never "not resolved yet".** The key
+  comes from the URL. Such a page never follows a room, even a room that names nothing, and cannot
+  create one.
+- **The panel's shadow root is closed.** A room creator's secret sits in its input and is never in
+  the URL. Reach it with `VideoSync.panelRoot()` from the isolated world; the Firefox probe uses the
+  `local-ext.mjs` build, the only one that opens it.
+- **`ws.Conn.ReadTimeout` is per frame.** Use `ReadBefore` for an absolute bound — every ping used to
+  restart the wait for `hello`.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
   The detector reports play-state *transitions* only, so a member who was already playing when the
   room was created emits nothing: `cmdsSent` stays 0 while the room defends a position nobody is
@@ -172,7 +188,8 @@ refs/            Gitignored shallow clones of the 9 references. NOT durable —
 ## Working here
 
 - `mise` provides the toolchain (go, node), pinned in `mise.toml`. `mise run test` (Go + TS +
-  both shims' typecheck), `sim`, `build`, `probe`, `probe-stack`, `test-e2e`.
+  both shims' typecheck + `local-media.test.mjs`), `sim` (`-- -seeds N` averages every row),
+  `build`, `probe`, `probe-stack`, `test-e2e` (fails, not skips, if `videosyncd` will not build).
 - Go module/package caches live in `.cache/` inside the project — the host FS runs tight on space.
 - The repo is git-tracked; `refs/`, `.cache/`, `node_modules/` are ignored.
 

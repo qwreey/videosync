@@ -47,7 +47,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 80 unit tests, plus 15 end-to-end tests that drive real engines over real WebSockets
+  build step. 160 unit tests (engine, detector, media keys, and the app/panel layer on a fake DOM), plus 15 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -251,6 +251,61 @@ certificate, or a tunnel that gives you one:
   zero-dependency path as the documented default, so this goes behind an
   interface or not at all.
 
+## The many-eyes review (2026-09-16)
+
+At the user's request: 28 independent finders over 14 areas, each finding judged by three
+verifiers (refute / reproduce / weigh impact), then two fix rounds in isolated worktrees, each
+branch checked again by reviewers who reverted the fix to see the test fail. 106 raw findings,
+69 distinct, all confirmed (60 unanimously, most reproduced in a scratch test). Round 1 fixed 64;
+round-1 review found regressions and untested pieces, round 2 fixed those; a final pass fixed what
+round 2's review found. Everything is merged on `main`; `mise run test` (Go incl. `-race`, 160 TS,
+local-media) and `mise run test-e2e` (15) pass.
+
+What mattered most, so it is not rediscovered:
+
+- **The server could crash**: `conn.kill` was check-then-close with no lock (panic on a double
+  close). Fixed with `sync.Once`.
+- **SPA navigation seeked the next video to the old one's timestamp** (bootstrap retargeted the
+  adapter before renaming the media; the test called them in the opposite order).
+- **Reconnect after a secret rotation was refused** (the old secret was resent).
+- **User gestures during an engine seek were swallowed, and the reconciler undid them.**
+  `applyingRemote` is now the in-flight transition, not a silencing flag.
+- **drain() awaited player work**, so a newer command waited behind a slow seek.
+- **The clock estimate never re-converged after a clock step** (now: a sample that contradicts the
+  estimate beyond both half-RTTs plus 3 ms of wire rounding restarts it).
+- **The detector's own round-1 seek fix** turned a throttled tab's stall into a room-wide seek.
+- **Following the room** could send members to any path on a known provider; now only to the
+  provider's canonical watch URL.
+- **The simulation had drifted from what ships** in seven ways (corrector state leaking across
+  scenarios, pauses rewinding the room to 0, commands applied out of seq order, a reconnect that
+  cannot happen, ...). POC-FINDINGS §41–§42 record what changed and which earlier numbers are void.
+  `mise run sim -- -seeds N` now averages every row.
+- **The panel's shadow root is closed** (a room creator's secret was readable by page scripts).
+
+Still open from the review, each needing a decision or a measurement rather than code:
+
+- **F39 — room creation is unauthenticated and unlimited.** Anyone can fill `MaxRooms`. Options: a
+  per-IP limit (needs a trusted-proxy setting), a creation token, or leave it to the reverse proxy.
+- **C1 — a site's own autoplay is broadcast as the member's play.** The core cannot tell autoplay
+  from a press; a fix needs adapter-side gesture evidence (`navigator.userActivation` or a trusted
+  input just before `play`) and a probe first. Not a timer.
+- **F20 remainder** — on path-keyed sites a `media` command can still name any path
+  (`laftel:/logout`). A per-provider media-path allowlist would close it.
+- **F12 — "decoded video but no audio bytes" read as "no audio track"** is unmeasured in a real
+  browser (probe-bgpause2 condition C with the detector); protected media is treated as unknown.
+- **An element swap resets the detector**, so a play pressed on the newly picked element is not
+  broadcast and the room's paused state is applied over it.
+- **A sub-tolerance lag after every transition** (a member within 250 ms of a new anchor stays there
+  and nothing closes it) — now visible in the sim (POC §42a). Product question, not a bug.
+- **Two same-profile tabs following at once share one `rejoin` record**; a real fix needs a per-tab
+  identity from the extension (`sender.tab.id`) or `GM_saveTab`.
+- Smaller: a live/DRM seekable window that clamps tighter than `[0, duration]` is not visible to the
+  engine; `ServerClock` drops samples with rtt in [-1.5, 0) that wire rounding produces on loopback;
+  `step-ramp+conf` recovers a reconnect slowly for an uninvestigated reason; the sim client does not
+  reset `appliedRate` on suspension as the engine does; `OUTCLASSED` (resolve.ts) has no test bound;
+  a room with no media (C3) now simply is not followed — naming it automatically would be a
+  protocol change.
+
 ## Open questions that block things
 
 - ~~**Should the `play` presser wait instead of jump?**~~ **Done** — `holdLocalPlay`,
@@ -276,10 +331,10 @@ certificate, or a tunnel that gives you one:
 - **Client identity does not survive a reconnect.** The server mints a fresh client id per
   connection, so a member who drops and returns is a new member: `Forget` discards their servo
   state and learned clock bias, and they reappear in the roster under a new id. The harness's
-  `reconnect` scenario instead keeps identity across the drop, which is how the 115 603 ms → 250 ms
-  stale-anchor number was produced. The server's behaviour is arguably the better one — `welcome`
-  carries the current anchor, so there is nothing stale to resend — but here "the harness measures
-  what ships" is weaker than it is everywhere else. If session resumption is ever added, that gap
+  `reconnect` scenario used to keep identity across the drop, which is how the retracted
+  115 603 ms → 250 ms stale-anchor number was produced; since the 2026-09-16 review it follows the
+  shipped path (leave, fresh `welcome`), and the resend is measured only as a backstop for frames
+  lost on a live connection (POC-FINDINGS §41f). If session resumption is ever added, that gap
   closes on its own.
 - **A member who has never reported counts as ready.** `Join` sets `ReadyState: 4`, so a `play`
   fired immediately after somebody joins is not gated even though they have buffered nothing. The

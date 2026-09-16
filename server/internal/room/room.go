@@ -546,7 +546,8 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// from "confidently wrong about what it is syncing to": a client on a stale
 	// anchor measures its residual against that same stale anchor, so it
 	// reports ~0 while arbitrarily out of position. It is already on the wire
-	// and nothing was reading it. Worth 115 603 ms -> 250 ms.
+	// and nothing was reading it. Worth 123 770 ms -> 31 ms when frames are lost
+	// on a live connection (POC-FINDINGS 41f); a reconnect gets a fresh welcome.
 	//
 	// But until it catches up, it is also measuring against a different anchor
 	// than the one being judged against here -- so whatever residual it reports
@@ -566,7 +567,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		switch {
 		case r.NoStaleResend:
 			// The control arm: judge it anyway, which is what produced the
-			// 115 603 ms figure the resend exists to fix.
+			// stale-anchor error the resend exists to fix.
 		case now >= r.lastCmdWhen+m.RTTMs:
 			r.StaleResends++
 			r.send(id, State{Seq: r.seq, When: now, EmittedAt: now,

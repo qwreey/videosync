@@ -349,7 +349,7 @@ func TestSeqIsMonotonicUnderConcurrentCommands(t *testing.T) {
 func TestALaggingLastAppliedSeqTriggersAResend(t *testing.T) {
 	// A client on a stale anchor measures its residual against THAT anchor and
 	// so reports ~0 while being arbitrarily out of position. lastAppliedSeq is
-	// the only signal. Worth 115 603 ms -> 250 ms (POC-FINDINGS 34).
+	// the only signal (POC-FINDINGS 34, re-measured in 41f).
 	f := start(t, nil)
 	id, secret := f.createRoom("yt:abc")
 	a, _, _ := f.dial(id, secret, "a", "yt:abc")
