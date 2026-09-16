@@ -201,20 +201,47 @@ func controlRun(tun vsync.Tunables) {
 	fmt.Println()
 }
 
+// strategy is one row label in the table and the corrector it runs.
+type strategy struct {
+	name string
+	mk   func() vsync.Corrector
+}
+
+// strategies lists what the table compares, as constructors rather than
+// instances. Most correctors keep per-client state keyed by member id, every
+// scenario reuses the ids a/b/c, and nothing in a finished run tells the
+// corrector those members left. One instance shared across the table therefore
+// started each scenario with the previous scenario's integrators wound up, and
+// the published rows depended on the order the scenarios happened to be listed
+// in (POC-FINDINGS 41a). The real server builds one corrector per room.
+func strategies() []strategy {
+	return []strategy{
+		{"threshold-500", func() vsync.Corrector { return vsync.ThresholdCorrector{} }},                  // what all 9 references do
+		{"threshold-2000", func() vsync.Corrector { return vsync.ThresholdCorrector{HardSeekMs: 2000} }}, // cytube/SyncTube-style wide deadband
+		{"step-ramp+conf", func() vsync.Corrector { return vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}} }},
+		{"pll", func() vsync.Corrector { return &vsync.PLLCorrector{} }},       // phase-locked loop
+		{"fll", func() vsync.Corrector { return &vsync.FLLCorrector{} }},       // frequency-locked loop (bias-immune)
+		{"hybrid", func() vsync.Corrector { return &vsync.HybridCorrector{} }}, // FLL-aided PLL
+		{"hybrid+conf", func() vsync.Corrector { return vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}} }},
+		{"servo", func() vsync.Corrector { return &vsync.ServoCorrector{} }}, // synthesis of every finding
+	}
+}
+
+// table runs every strategy against every scenario, in order.
+func table(scs []sim.Scenario, tun vsync.Tunables) [][]sim.Result {
+	strats := strategies()
+	out := make([][]sim.Result, len(scs))
+	for i, sc := range scs {
+		for _, st := range strats {
+			out[i] = append(out[i], sim.Run(sc, st.mk(), tun))
+		}
+	}
+	return out
+}
+
 func main() {
 	tun := vsync.DefaultTunables()
-	correctors := []vsync.Corrector{
-		vsync.ThresholdCorrector{},                              // what all 9 references do
-		vsync.ThresholdCorrector{HardSeekMs: 2000},              // cytube/SyncTube-style wide deadband
-		vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}}, // ours, v3
-		&vsync.PLLCorrector{},                                   // phase-locked loop
-		&vsync.FLLCorrector{},                                   // frequency-locked loop (bias-immune)
-		&vsync.HybridCorrector{},                                // FLL-aided PLL
-		vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}},  // hybrid + confidence gating
-		&vsync.ServoCorrector{},                                 // synthesis of every finding
-	}
-	names := []string{"threshold-500", "threshold-2000", "step-ramp+conf",
-		"pll", "fll", "hybrid", "hybrid+conf", "servo"}
+	strats := strategies()
 
 	// anchorErr is the PRIMARY metric: error against the true server clock.
 	// meanDiv (inter-client spread) is kept for continuity but rewards
@@ -228,11 +255,11 @@ func main() {
 		"seek/in", "seek/OUT", "rateTime", "gates", "BAD")
 	fmt.Println(strings.Repeat("-", 104))
 
-	for _, sc := range scenarios() {
-		for i, c := range correctors {
-			r := sim.Run(sc, c, tun)
+	scs := scenarios()
+	for i, rows := range table(scs, tun) {
+		for j, r := range rows {
 			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %6d %5d\n",
-				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs,
+				scs[i].Name, strats[j].name, r.MeanAnchorErrMs, r.P95AnchorErrMs,
 				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs,
 				r.GatesOpened, r.Misdetections+r.SpuriousCmds)
 			if len(r.ConvergeMs) > 0 {
