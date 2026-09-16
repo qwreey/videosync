@@ -18,12 +18,14 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, it as nodeIt } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { AuthRequiredError, ServerAuth } from '../src/app/auth.ts';
+import { fetchHttp, makeAuthFetch, memoryTokens } from '../src/app/authfetch.ts';
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
 import type { EngineConfig } from '../src/engine/engine.ts';
 import { WebSocketTransport } from '../src/engine/transport.ts';
@@ -34,6 +36,7 @@ const serverDir = join(here, '..', '..', '..', 'server');
 
 let proc: ChildProcess | null = null;
 let base = '';
+let binPath = '';
 
 // Decided before any test is defined, because node:test only honours `skip` in
 // a test's options (or `t.skip()`); anything decided later has to be a failure.
@@ -67,6 +70,7 @@ before(async () => {
     throw new Error(`videosyncd does not build:\n${err.stderr?.toString() || err.message}`);
   }
   if (!existsSync(bin)) throw new Error('go build succeeded but produced no videosyncd');
+  binPath = bin;
 
   // Port 0 would be ideal but the server logs its own address; pick a high one
   // and retry rather than parse.
@@ -594,5 +598,146 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
     } finally {
       a.engine.stop();
     }
+  });
+});
+
+// Access control (D6), over the wire: the client's real sign-in path -- the
+// shims' token policy on a real `fetch`, `ServerAuth`, the engine's ticket
+// source -- against a real videosyncd started with `-auth password
+// -auth-scope all`. The pieces are unit-tested against models of each other;
+// this is where a disagreement about a field name or a status code shows.
+describe('client core against a videosyncd that requires sign-in', { concurrency: false }, () => {
+  let authProc: ChildProcess | null = null;
+  let server = '';
+
+  before(async () => {
+    if (skip) return;
+    const dir = join(tmpdir(), 'videosync-e2e');
+    const line = execFileSync(binPath, ['hash-password', '-iterations', '10000', 'alice'], { input: 'hunter22\n' });
+    const users = join(dir, 'users');
+    writeFileSync(users, line);
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const port = 23000 + Math.floor(Math.random() * 4000);
+      const p = spawn(binPath, ['-addr', `127.0.0.1:${port}`, '-auth', 'password',
+        '-auth-users-file', users, '-auth-scope', 'all'], { stdio: 'ignore' });
+      const url = `http://127.0.0.1:${port}`;
+      try {
+        await waitFor(async () => {
+          try { return (await fetch(`${url}/healthz`)).ok; } catch { return false; }
+        }, 3000, 'videosyncd -auth to listen');
+        authProc = p;
+        server = url;
+        return;
+      } catch {
+        p.kill();
+      }
+    }
+    throw new Error('could not start videosyncd -auth on any of 10 ports');
+  });
+
+  after(() => { authProc?.kill(); });
+
+  function client() {
+    const data = new Map<string, string>();
+    const fetchAuth = makeAuthFetch(fetchHttp, memoryTokens());
+    const auth = new ServerAuth(fetchAuth, {
+      load: (k, fb = '') => data.get(k) ?? fb,
+      save: (k, v) => { data.set(k, v); },
+    }, {
+      setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+      clearTimer: (h) => { clearTimeout(h); },
+    }, () => {});
+    return { fetchAuth, auth };
+  }
+
+  function member(roomId: string, secret: string, name: string, ticket?: () => Promise<string>) {
+    const player = new FakePlayer(realTime, { paused: true, positionS: 0 });
+    const errors: string[] = [];
+    const engine = new SyncEngine({
+      adapter: player,
+      transport: new WebSocketTransport(`${server.replace('http', 'ws')}/ws`),
+      now: () => performance.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+      clearTimer: (h) => { clearTimeout(h); },
+      isHidden: () => false,
+      ...(ticket ? { ticket } : {}),
+    }, { ...DEFAULT_ENGINE_CONFIG, room: roomId, secret, name, mediaKey: 'e2e:media' }, {
+      onError: (c) => { errors.push(c); },
+    });
+    return { engine, errors };
+  }
+
+  it('signs in with a password, creates a room with a ticket, and joins with another', async () => {
+    const c = client();
+    const info = await c.auth.info(server);
+    assert.deepEqual(info, { methods: ['password'], scope: 'all' });
+
+    await assert.rejects(c.auth.ticket(server, 'create'), AuthRequiredError);
+    const wrong = await c.auth.signIn(server, { user: 'alice', password: 'hunter2' });
+    assert.equal(wrong.ok, false);
+    const ok = await c.auth.signIn(server, { user: 'alice', password: 'hunter22' });
+    assert.deepEqual(ok, { ok: true, sub: 'alice' });
+
+    const ticket = await c.auth.ticket(server, 'create');
+    const r = await c.fetchAuth(server, '/api/rooms', {
+      method: 'POST', body: JSON.stringify({ mediaKey: 'e2e:media', ticket }),
+    });
+    assert.equal(r.status, 201, r.body);
+    const { roomId, secret } = JSON.parse(r.body) as { roomId: string; secret: string };
+
+    const a = member(roomId, secret, 'a', () => c.auth.ticket(server, 'join'));
+    try {
+      a.engine.start();
+      await waitFor(() => a.engine.state === 'joined', 10000, 'a signed-in member to join');
+      // A reconnect spends a fresh ticket; the old one is gone.
+      a.engine.stop();
+      a.engine.start();
+      await waitFor(() => a.engine.state === 'joined', 10000, 'the same member to rejoin');
+      assert.deepEqual(a.errors, []);
+    } finally {
+      a.engine.stop();
+    }
+  });
+
+  it('refuses a member without a ticket as auth_required, and does not keep trying', async () => {
+    const c = client();
+    await c.auth.signIn(server, { user: 'alice', password: 'hunter22' });
+    const ticket = await c.auth.ticket(server, 'create');
+    const r = await c.fetchAuth(server, '/api/rooms', {
+      method: 'POST', body: JSON.stringify({ mediaKey: 'e2e:media', ticket }),
+    });
+    const { roomId, secret } = JSON.parse(r.body) as { roomId: string; secret: string };
+
+    const stranger = member(roomId, secret, 'x');
+    try {
+      stranger.engine.start();
+      await waitFor(() => stranger.engine.state === 'closed', 10000, 'the stranger to be refused');
+      assert.deepEqual(stranger.errors, ['auth_required'], 'refused as the room rather than as a sign-in');
+      const reconnects = stranger.engine.stats.reconnects;
+      await sleep(1500);
+      assert.equal(stranger.engine.stats.reconnects, reconnects, 'kept knocking after a refusal');
+    } finally {
+      stranger.engine.stop();
+    }
+
+    // Signed out, the ticket source itself says so and nothing is opened.
+    const out = client();
+    const locked = member(roomId, secret, 'y', () => out.auth.ticket(server, 'join'));
+    try {
+      locked.engine.start();
+      await waitFor(() => locked.engine.state === 'refused', 5000, 'the signed-out member to stop');
+      assert.deepEqual(locked.errors, ['auth_required']);
+    } finally {
+      locked.engine.stop();
+    }
+  });
+
+  it('never creates a room without a ticket', async () => {
+    const r = await fetch(`${server}/api/rooms`, { method: 'POST', body: '{"mediaKey":"e2e:media"}' });
+    assert.equal(r.status, 401);
+    assert.equal(r.headers.get('access-control-allow-origin'), '*');
+    const body = await r.json() as { error: string; methods: string[] };
+    assert.equal(body.error, 'auth_required');
+    assert.deepEqual(body.methods, ['password']);
   });
 });
