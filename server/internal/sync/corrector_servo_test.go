@@ -16,10 +16,18 @@ type servoPlant struct {
 	behindS     float64 // buffered behind it
 	uncertainty int64
 
+	// kickAtMs, if set, moves the player by kickMs at that instant: a step
+	// the servo did not cause, such as a hiccup.
+	kickAtMs int64
+	kickMs   float64
+
 	res   float64 // ms, player - anchor
 	rate  float64 // the rate the servo last commanded
 	hist  [][2]float64
 	seeks int
+	// rateDrops counts decisions after the kick that put the player back to
+	// exactly 1.0, by a reset or a nudge.
+	rateDrops int
 }
 
 const plantStepMs = 50
@@ -54,6 +62,9 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 	worst := 0.0
 	for now := int64(plantStepMs); now <= durMs; now += plantStepMs {
 		p.res += (p.intrinsic*p.rate - 1) * plantStepMs
+		if p.kickAtMs > 0 && now == p.kickAtMs {
+			p.res += p.kickMs
+		}
 		p.hist = append(p.hist, [2]float64{float64(now) / 1000, p.res})
 		for len(p.hist) > 0 && p.hist[0][0] < float64(now-3000)/1000 {
 			p.hist = p.hist[1:]
@@ -79,6 +90,9 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 			p.rate = d.Rate
 		case d.ResetRate:
 			p.rate = 1
+		}
+		if p.kickAtMs > 0 && now > p.kickAtMs && p.rate == 1 && d.Action != ActionSeek {
+			p.rateDrops++
 		}
 	}
 	return worst
@@ -137,5 +151,65 @@ func TestServoLearnsARateMismatch(t *testing.T) {
 		if worst > float64(DefaultTunables().ToleranceMs) {
 			t.Errorf("%.3fx decoder: drifted %.0f ms out", intrinsic, worst)
 		}
+	}
+}
+
+// A seek removes a step, not a rate mismatch, and it does not touch the rate
+// the client is running. dropBias hands that rate over to the commanded offset
+// so the frequency term sees the client still compensating. Zeroing the bias
+// alone made the report right after the seek look settled -- residual 0, slope
+// 0 -- and the servo told a 0.99x decoder to run at exactly 1.0 again, then
+// learned the whole mismatch back from the drift that caused.
+func TestServoKeepsTheLearnedRateAcrossAFreeSeek(t *testing.T) {
+	// The kick lands on a report (whose slope then carries the step) or
+	// between two (whose window then carries it too steeply to integrate).
+	for _, kickAt := range []int64{120000, 120500} {
+		for _, intrinsic := range []float64{0.99, 0.995, 1.008} {
+			p := servoPlant{intrinsic: intrinsic, aheadS: 11, behindS: 10, kickAtMs: kickAt, kickMs: 1500}
+			p.run(&ServoCorrector{}, 180000, 0)
+			if p.seeks != 1 {
+				t.Fatalf("kick at %d, %.3fx decoder: %d seeks, want the one free seek for the kick", kickAt, intrinsic, p.seeks)
+			}
+			if p.rateDrops != 0 {
+				t.Errorf("kick at %d, %.3fx decoder: put back to rate 1.0 %d times after the seek; it needs ~%.4f",
+					kickAt, intrinsic, p.rateDrops, 1/intrinsic)
+			}
+			if want := 1 / intrinsic; math.Abs(p.rate-want) > 0.002 {
+				t.Errorf("kick at %d, %.3fx decoder: settled at rate %.4f after the seek, want ~%.4f", kickAt, intrinsic, p.rate, want)
+			}
+		}
+	}
+}
+
+// An absent member's engine resets its rate to 1.0 (engine.ts releaseRate),
+// so the phase nudge this loop last commanded is no longer in the slope. Read
+// as still in effect, it looked like a frequency error of the nudge's size,
+// integrated over the whole absence, and wound the bias to its clamp on the
+// first report back.
+func TestServoAbsenceDoesNotWindUpTheBias(t *testing.T) {
+	tun := DefaultTunables()
+	a := Anchor{PositionMs: 100000}
+	c := &ServoCorrector{}
+	rep := func(now int64, slope float64, suspended bool) Report {
+		return Report{ClientID: "m", ResidualMs: -1500, SlopeMsPerS: slope,
+			PositionMs: a.Expected(now) - 1500, ReadyState: 4,
+			BufferedAheadS: 1.2, BufferedBehindS: 10, ClockSamples: 10, Suspended: suspended}
+	}
+	// 1.5 s behind on a thin buffer: no free seek, so the servo nudges hard.
+	if d := c.Decide(rep(1000, 0, false), a, 1000, tun); d.Action != ActionNudge || d.Rate <= 1.05 {
+		t.Fatalf("setup: %v rate %.3f, want a strong nudge", d.Why, d.Rate)
+	}
+	before := c.st["m"].rateBias
+	for now := int64(2000); now <= 9000; now += 1000 {
+		c.Decide(rep(now, 0, true), a, now, tun)
+	}
+	// Back, running at 1.0 on a decoder 0.5% fast: the slope is real, and
+	// one report's worth of it is all that may be integrated.
+	const slope = 5.0
+	c.Decide(rep(10000, slope, false), a, 10000, tun)
+	got := c.st["m"].rateBias - before
+	want := -slope / 1000 * 0.35 * 1
+	if math.Abs(got-want) > 1e-9 {
+		t.Errorf("first report after the absence moved the bias by %.5f, want %.5f", got, want)
 	}
 }
