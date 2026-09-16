@@ -466,3 +466,33 @@ func TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers(t *testing.T) {
 		t.Error("the room was held for the rest of the run: the anti-hang timeout did not fire")
 	}
 }
+
+// A scripted pause is somebody pressing the button, and the engine sends where
+// their player is when they do: the room anchors a pause at that position
+// (POC-FINDINGS 40c). A scenario command that left PositionMs unset used to
+// reach the room as "pause at 0", so every scripted pause rewound everyone to
+// the start -- command-storm's pause at 60 s undid its seek to 300 s.
+func TestScriptedPauseStopsWhereThePauserIs(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	for _, seed := range seeds {
+		sc := Scenario{
+			Name: "pause-position", Seed: seed, DurationMs: 30000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good},
+			},
+			Commands: []Command{
+				{AtMs: 5000, ClientID: "a", Kind: "seek", PositionMs: 300000},
+				{AtMs: 20000, ClientID: "a", Kind: "pause"},
+			},
+		}
+		r := Run(sc, &vsync.ServoCorrector{}, tun)
+		// The pauser had been playing from 300 s for ~15 s when it pressed.
+		a := r.FinalAnchor
+		if !a.Paused || a.PositionMs < 310000 || a.PositionMs > 320000 {
+			t.Fatalf("seed %d: the room paused at %d ms (paused=%v); the pauser was at ~315 s",
+				seed, a.PositionMs, a.Paused)
+		}
+	}
+}

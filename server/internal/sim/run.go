@@ -94,6 +94,9 @@ type Result struct {
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
 	ConvergeMs []int64
+
+	// FinalAnchor is the room's anchor when the run ended.
+	FinalAnchor vsync.Anchor
 }
 
 // Run executes one scenario against one corrector. Deterministic: same seed,
@@ -151,8 +154,16 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		// 2. scenario commands
 		for cmdIdx < len(sc.Commands) && sc.Commands[cmdIdx].AtMs <= now {
 			cm := sc.Commands[cmdIdx]
+			pos := cm.PositionMs
+			if cm.Kind == "pause" || cm.Kind == "play" {
+				// A pressed button carries where the presser's player is --
+				// the engine always sends it, and the room anchors a pause
+				// there. Left to the scenario it was 0, and every scripted
+				// pause rewound the room to the start.
+				pos = int64(clients[cm.ClientID].Pos())
+			}
 			net.Send(now, cm.ClientID, cm.ClientID, "server", true,
-				MsgCmd{ReqID: strconv.Itoa(cmdIdx), Kind: cm.Kind, PositionMs: cm.PositionMs})
+				MsgCmd{ReqID: strconv.Itoa(cmdIdx), Kind: cm.Kind, PositionMs: pos})
 			awaiting = append(awaiting, pendingConv{at: now})
 			lastCmdAt = now
 			cmdIdx++
@@ -263,6 +274,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		GateHoldMs:             srv.GateHoldMs,
 		RoomPausedBySuspension: roomPausedBySuspension,
 		ConvergeMs:             converge,
+		FinalAnchor:            srv.Anchor(),
 	}
 	for _, id := range order {
 		c := clients[id]
