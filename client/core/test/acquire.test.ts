@@ -1054,3 +1054,55 @@ describe('a seeder whose site keeps moving its player', () => {
     assert.deepEqual(h.kinds(), ['seek']);
   });
 });
+
+describe('a creator of a room with no media, who then names it', () => {
+  it('seeds from its own player even though the room was moved while it named nothing', async () => {
+    const h = harness({ player: { paused: false, positionS: 42 }, cfg: { adoptLocalStateOnJoin: true, mediaKey: '' } });
+    await h.join({ mediaKey: '' }, 2);
+    // Another member's command, while nobody's media is named.
+    await h.state({ mediaKey: '', positionMs: 0, paused: true }, 'pause');
+    assert.deepEqual(h.kinds(), []);
+    h.engine.setLocalMediaKey(KEY);
+    await h.vt.advance(200);
+    const naming = h.cmds();
+    assert.deepEqual(naming.map((c) => c.kind), ['media']);
+    await h.ack(naming[0]!, { positionMs: naming[0]!.positionMs, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), ['media', 'seek', 'play'], 'the namer took an old move for one against its naming');
+    assert.equal(h.player.paused, false);
+  });
+});
+
+describe('the creator, moved while still loading', () => {
+  it('conforms at once rather than waiting out a seed it will not send', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    h.player.positionS = 813;
+    h.player.readyState = 4;
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs / 2);
+    assert.ok(Math.abs(h.player.positionS - 50) < 0.3, `still at ${h.player.positionS}`);
+    assert.equal(h.lastHb().acquiring, undefined, 'held the room as if it were about to seed it');
+  });
+});
+
+describe('a namer that lost the race', () => {
+  it('holds its own play for the room at once, with no naming of its own on the way', async () => {
+    const h = harness({ player: { paused: true, positionS: 42 } });
+    await h.join({ mediaKey: '' }, 2);
+    assert.deepEqual(h.kinds(), ['media']);
+    await h.state({ mediaKey: KEY, positionMs: 100_000, paused: true }, 'media');
+    h.tr.deliver({ t: 'error', code: 'media_stale', msg: 'x' });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.ok(Math.abs(h.player.positionS - 100) < 0.3, `at ${h.player.positionS}`);
+    // The member presses play, well inside OWN_ACK_WAIT_MS of the refused naming.
+    h.g.press();
+    h.player.paused = false;
+    h.player.emit('play');
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.player.paused, true, 'the play ran ahead of the room: a refused naming still counted as ours');
+  });
+});
