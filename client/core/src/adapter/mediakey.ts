@@ -25,8 +25,9 @@ export interface MediaKeyRule {
    */
   readonly pathFallback?: boolean;
   /**
-   * Where the media with this key body can be opened. Only for a provider
-   * whose identity is not simply its path; the generic rule is origin + path.
+   * The canonical page for the media with this key body, on the provider's
+   * own host. Without one, a page is opened at origin + path -- of whichever
+   * host the URL named, which for a known provider is any subdomain of it.
    */
   url?(body: string): string;
 }
@@ -71,6 +72,7 @@ const LAFTEL: MediaKeyRule = {
   id: 'laftel',
   hosts: ['laftel.net'],
   key: () => null, // fall through to the path
+  url: (path) => `https://laftel.net${path}`,
 };
 
 export const RULES: readonly MediaKeyRule[] = [YOUTUBE, LAFTEL];
@@ -130,8 +132,8 @@ export function watchUrl(href: string): string | null {
   if (!key) return null;
   const u = new URL(href);
   const rule = providerFor(u.hostname);
-  const explicit = rule?.key(u) ?? null;
-  if (explicit && rule?.url) return rule.url(explicit);
+  // A known provider's key is `<rule.id>:<body>`, whichever way the body was found.
+  if (rule?.url) return rule.url(key.slice(rule.id.length + 1));
   return `${u.origin}${u.pathname.replace(/\/+$/, '')}`;
 }
 
@@ -142,6 +144,12 @@ export function watchUrl(href: string): string | null {
  * must name exactly the room's media, and it must be on a provider this code
  * knows or on the site the member is already on. Without that, anyone in a
  * room could send everyone else to a page of their choosing.
+ *
+ * What comes back is the canonical `watchUrl` for that media, never the URL
+ * as sent. Naming the right media is not enough: YouTube's `?v=` is read on
+ * any path of any subdomain, and the path rule ignores the query, so
+ * `youtube.com/logout?v=<id>` or `laftel.net/player/1/2?next=...` would pass
+ * every check above and still land members where the sender chose.
  */
 export function followableUrl(url: string | undefined, roomKey: string, currentHref: string): string | null {
   if (!url || !roomKey) return null;
@@ -161,5 +169,5 @@ export function followableUrl(url: string | undefined, roomKey: string, currentH
   if (!known && !sameSite) return null;
   // Never downgrade: a known provider is https, whatever the URL says.
   if (known && u.protocol !== 'https:') return null;
-  return u.href;
+  return watchUrl(u.href);
 }

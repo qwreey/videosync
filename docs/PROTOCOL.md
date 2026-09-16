@@ -87,7 +87,11 @@ The URL comes from a member, so a client **checks it before following it**: it m
 exactly the anchor's `mediaKey`, and it must be on a provider the client knows or on the site the
 member is already on — otherwise anyone in a room could send everyone else to a page of their
 choosing. A site added only by a manifest `matches` entry is therefore followable from that same
-site, not from another one.
+site, not from another one. Passing those checks, the client goes to the **canonical** URL for that
+key, never the URL as sent: YouTube's `?v=` is read on any path of any subdomain and the path rule
+ignores the query, so `youtube.com/logout?v=<id>` names the right media too. What remains is a
+property of the path rule itself: on a path-keyed site, a `media` command can name any path there
+as "media", and members are taken to that path.
 
 A client that finds the room on other media **because it joined or because the room moved** takes
 the member there after a short grace period with a "stay here" button, and carries the session

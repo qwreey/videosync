@@ -335,6 +335,27 @@ describe('where a room\'s media can be opened', () => {
       'https://video.example/v/1');
   });
 
+  it('goes only to the canonical page for the media, whatever URL was sent', () => {
+    // The URL comes from another member. Naming the room's media is not
+    // enough: any path or host under the provider can carry `?v=`, and any
+    // query survives the path rule. Nobody may choose where everyone lands.
+    const here = 'https://laftel.net/player/9/9';
+    for (const [url, room, want] of [
+      ['https://www.youtube.com/logout?v=abc', 'yt:abc', 'https://www.youtube.com/watch?v=abc'],
+      ['https://www.youtube.com/redirect?v=abc&q=https://evil.example', 'yt:abc', 'https://www.youtube.com/watch?v=abc'],
+      ['https://accounts.youtube.com/x?v=abc', 'yt:abc', 'https://www.youtube.com/watch?v=abc'],
+      ['https://www.youtube.com/watch?v=abc&list=PL1&t=90', 'yt:abc', 'https://www.youtube.com/watch?v=abc'],
+      ['https://laftel.net/player/1/2?next=https://evil.example', 'laftel:/player/1/2', 'https://laftel.net/player/1/2'],
+      ['https://accounts.laftel.net/player/1/2', 'laftel:/player/1/2', 'https://laftel.net/player/1/2'],
+      ['https://laftel.net/player/1/2', 'laftel:/player/1/2', 'https://laftel.net/player/1/2'],
+    ] as const) {
+      assert.equal(followableUrl(url, room, here), want, url);
+    }
+    // An unknown site, from that same site: origin and path, never the query.
+    assert.equal(followableUrl('https://video.example/v/1?next=https://evil.example', 'video.example:/v/1',
+      'https://video.example/v/2'), 'https://video.example/v/1');
+  });
+
   it('refuses what no honest member sends', () => {
     const room = 'laftel:/player/1/2';
     const here = 'https://laftel.net/';
