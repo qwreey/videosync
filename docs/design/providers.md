@@ -72,3 +72,123 @@ implementations cannot drift.
 - Limits: 16 KiB per descriptor, 32 identity rules, 16 segments, 256-character selectors, no
   `:has(`.
 - `dump()` reports which descriptor (id, version, hash, tier) was in force.
+
+## As built (2026-09-17)
+
+Where the build had to decide something this document left open, or deviated from the research
+report's §3, it is recorded here.
+
+**Where the code is.** Grammar `client/core/src/providers/template.ts`, validator and evaluator
+`descriptor.ts`, precedence `registry.ts`, stored state and diffs `adoption.ts`, user actions
+`manage.ts` (pure transitions shared by the options page and the userscript menu). Go port
+`server/internal/provider`. Shared vectors `providers/testdata/templates.json` (grammar, hosts,
+encoding) and `descriptors.json` (65 whole descriptors accepted or rejected alike). The old code
+rules are frozen in `client/core/test/legacy-mediakey.ts` and the built-ins are checked against
+them URL by URL.
+
+**Schema decisions.**
+
+- **`pageHosts`** is a field the research schema did not have: the hosts whose pages the shims run
+  on, default `hosts`, each covered by `hosts`. Without it, generating `matches` from `hosts`
+  would have widened the install prompt to `*.youtube.com`, `youtube-nocookie.com` and `youtu.be`.
+  The YouTube built-in lists `www.` and `m.youtube.com`, exactly the old manifest. The userscript
+  loses its `youtu.be` `@match` — a redirect never renders a page, so nothing ran there.
+- **`pathFallback` and each rule's `watch` are required**, so a descriptor always says whether
+  unmatched paths are media and where a matched one is opened.
+- **Numbers out of range are rejected, not clamped.** A clamp would silently apply something the
+  author did not write; rejecting it matches the unknown-field rule.
+- **`requires`** accepts only what is implemented: `hosts`, `pageHosts`, `canonicalHost`,
+  `identity(.hosts|.query)`, `pathFallback`, `video(.*)`, `capabilities(.playbackRateNudge|
+  .directSeek)`, `seek(.landingToleranceS|.timeoutMs)`, `continues`. `ads` and `navigation` are
+  accepted as fields (informational) but a descriptor that *requires* them is refused.
+- **Capabilities** are only `playbackRateNudge` and `directSeek` — the two the engine consults.
+  The mask is restrict-only by construction (ANDed with the adapter's own), for built-ins too.
+  `seek.typicalInBufferMs` and `navigation.*` are informational.
+- **Identity rules may carry `hosts`** (the research's YouTube example uses it), a subset of the
+  descriptor's; that is what keeps `youtu.be/?v=x` naming nothing, as before.
+- **`continues`** is a list of `{from, to}` path templates matched against key *bodies*; captures
+  with the same name must be equal; a key does not continue itself. Examples of the form
+  `{from, to, continues}` test it. `Provider.continues(prev, next)` is the API D8 will call.
+- **`examples`**: `{url, key, watch?}` asserts what *this descriptor alone* gives — `key: null`
+  means it names no media or does not claim the host. A non-null key must also yield a watch URL
+  that re-normalises to it. At least one example must name media. The descriptor-level lint the
+  research asked for is enforced: a rule whose path is only `/**` with no `query` is refused.
+- **`watch` host** must be covered by `hosts` (not only `canonicalHost`); placeholders may appear
+  anywhere after the authority except in a query parameter's name.
+
+**Grammar decisions.**
+
+- Empty path segments are dropped before matching (`/a//b/` is `/a/b`), which is how the YouTube
+  code rule read paths. For Laftel this means `/player//1/2` now keys as `/player/1/2`; the old
+  path rule kept the double slash. No real page has one.
+- Path captures are percent-decoded once (the research's rule); the old YouTube code did not
+  decode `youtu.be/<id>` or `/embed/<id>`. Real ids contain no `%`, so no real key changed.
+- `{name}` is `[A-Za-z0-9._~-]{1,128}`, `{name:int}` `[0-9]{1,20}`, `{name:any}` 1–256 code
+  points; a segment that does not decode to valid UTF-8 matches nothing. Every length in the
+  grammar and the validator is counted in code points, because Go counts runes.
+- Query values are read as `URLSearchParams.get` does (first value, form-decoded); the Go port
+  reimplements that and `encodeURIComponent` by hand. URL *parsing* is not shared: the server
+  uses `net/url`, which differs from WHATWG at the edges (dot segments, IDN), so the vectors pin
+  the grammar on already-parsed parts, and the built-ins' examples are plain URLs.
+- A hostname is lowercased and one trailing dot is dropped before matching, so `laftel.net.` is
+  Laftel (an example says so). Before, it fell to the unknown-host branch with its own key.
+
+**Precedence.** One adopted descriptor per id (adopting another server's copy replaces it). An
+adopted copy with a built-in's id applies only when `replaceBuiltin` was confirmed; otherwise the
+built-in stays and `dump().providerNotes` says why. A tie between different ids for a host applies
+neither; the panel says so once at start and `dump().providerConflict` lists them.
+
+**Built-ins in the bundles.** `client/core/scripts/providers.mjs` validates `providers/*.json`
+(examples run) and writes `src/providers/builtin.gen.ts` with each file's exact text and sha256,
+so no JSON import is needed and a built-in's hash is comparable with a server's. The file is
+committed; `providers.test.ts` fails when it is stale, and both shim builds regenerate it first.
+The same module produces the match patterns (`https://<pageHost>/*`, in file-name order);
+`client/extension/manifest.mjs` and `client/userscript/meta.mjs` put them into the manifests
+and the `@match` lines, and `manifest.json`'s own list and `meta.txt`'s `@match` lines are gone.
+Bundle sizes after this: extension `content.js` 128 kB, `sw.js` 39 kB (it now builds a registry
+to decide what to register), `options.js` 54 kB; userscript 145 kB.
+
+**Video hints.** `include`/`exclude` use `closest`, so a selector may name the `<video>` or a
+player around it. An `include` that matches nothing is ignored and `dump().staleInclude` is true.
+`minIntrinsicArea` drops only elements whose size is known — the feature before its metadata has
+none. A selector the browser cannot parse matches nothing. `pierceShadow` walks open shadow roots
+(depth 8) on each check; the MutationObserver does not see inside them, the 1 Hz poll does.
+
+**The update notice.** Said as a system line in the panel's chat log, once per provider per page,
+on the adapter's `play` event for the page's provider — which also fires for a play the room
+applied, not only for the member's own press. Only *pinned descriptors whose server copy changed*
+are mentioned; new offers are never mentioned in the page, and are listed (tagged "새 설명") on
+the options page. Nothing opens the options page by itself.
+
+**Auto-adopt** runs where the index is fetched on join (the extension's content script, the
+userscript), writes the new pin, and takes effect on the next page load: swapping a descriptor
+under a running session could change the page's key mid-room.
+
+**Server.** A file's name need not match its id (`youtube.json` is `yt`); the id is the URL. Two
+files with one id: the first by file name is served and the other logged. At most 256 files. The
+poll compares name, size and mtime (`-providers-poll`, default 5 s; a rewrite that keeps both
+needs `SIGHUP`). `SIGHUP` is only caught when `-providers` is given, and is registered before the
+listener starts. `GET /api/providers/<id>.json` sends `ETag: "<sha256>"` and answers
+`If-None-Match`. **Not done: gating the listing behind `-auth-scope`** — that flag belongs to the
+auth track (D6), which is not merged; the route is registered next to `/api/rooms` so it can take
+the same gate.
+
+**Extension.** The worker's `providers.fetch` only fetches `/api/providers` and
+`/api/providers/<id>.json` of the given server (it can reach addresses a page cannot, so it
+fetches nothing else a caller names). The content script learns the granted hosts from the worker
+(`providers.granted`), since it has no `permissions` API. Added sites get the bundled
+`content.js` through `scripting.registerContentScripts` with the manifest's pages in
+`excludeMatches`, plus a double-injection guard in `content.ts`; the registration is redone on
+worker start and whenever stored descriptors or permissions change. Host permissions are asked
+for only from the "사이트 권한 허용" button, because the prompt needs a user gesture. **Firefox
+MV2** gets `optional_permissions` and uses `scripting.registerContentScripts` where Firefox exposes
+it to MV2, else `contentScripts.register`, which only lasts while the background page does —
+neither path has been run in a browser.
+
+**Userscript.** `prompt`/`confirm` from `GM_registerMenuCommand` stand in for the options page.
+Followability for non-built-in descriptors comes from the script's own `@match`/`@include` lines
+(`GM_info.script`), and after a change the menu prints the exact `@match` lines still missing.
+
+**Not built:** the optional `welcome.providers` hash list (research §3.5 rule 3, a protocol
+change), a server-side media allowlist (open question 1), and a live check of other Laftel player
+routes (research §5 step 2) — the lead's probes.
