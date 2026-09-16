@@ -119,9 +119,18 @@ try {
     await s.eval('window.VideoSync.mediaKey()') === `yt:${VIDEO_ID}`);
 
   await s.waitFor('!!window.VideoSync.adapter.current', { timeoutMs: 20000 });
-  check('it picked the player element, not a preview',
-    await s.eval("window.VideoSync.adapter.current !== null && " +
-      "document.querySelector('video.html5-main-video') === null || true"));
+  // Compared by identity with YouTube's own main player. This used to read
+  // `A && B || true`, which is `true` whatever was picked. `el` is the
+  // Html5Adapter's element: private to TypeScript, an ordinary property at run
+  // time, and the bundle does not mangle property names.
+  const picked = await s.eval(`(() => {
+    const main = document.querySelector('video.html5-main-video');
+    const el = window.VideoSync.adapter.current?.el ?? null;
+    return { same: !!main && el === main, hasEl: !!el, hasMain: !!main,
+      pickedClass: el ? String(el.className) : null };
+  })()`);
+  check('it picked the player element, not a preview', picked.same,
+    picked.same ? '' : JSON.stringify(picked));
 
   // --- can we drive it at all? ---------------------------------------------
   const played = await s.eval(

@@ -8,15 +8,20 @@
  * about the wire itself -- a renamed field, a number sent as a string, a frame
  * one side never sends.
  *
- * Requires the Go toolchain. Skips (loudly) without it rather than failing, so
- * `npm test` still works in a JS-only checkout.
+ * Requires the Go toolchain. Without one the suite is SKIPPED -- through
+ * node:test, so the summary counts it -- rather than failing, so a JS-only
+ * checkout can still run it. Only a missing toolchain skips: a server that
+ * does not compile or does not start is a failure. A `console.log('SKIP')` and
+ * an early return used to stand in for that, and node:test counted every such
+ * test as a pass, so a compile error in the server reported the wire suite
+ * green.
  */
 import assert from 'node:assert/strict';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it as nodeIt } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
@@ -29,7 +34,14 @@ const serverDir = join(here, '..', '..', '..', 'server');
 
 let proc: ChildProcess | null = null;
 let base = '';
-let skip: string | false = false;
+
+// Decided before any test is defined, because node:test only honours `skip` in
+// a test's options (or `t.skip()`); anything decided later has to be a failure.
+// ENOENT is the one error that means "no toolchain" rather than "broken".
+const noGo = spawnSync('go', ['version'], { stdio: 'ignore' }).error;
+const skip: string | false = noGo ? `no Go toolchain to build videosyncd (${noGo.message})` : false;
+// Per test rather than on the suite, so the summary's `skipped` counts them.
+const it = (name: string, fn: () => Promise<void>): void => { nodeIt(name, { skip }, fn); };
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -45,15 +57,16 @@ async function waitFor(fn: () => boolean | Promise<boolean>, ms: number, what: s
 }
 
 before(async () => {
+  if (skip) { console.log(`SKIP: ${skip}`); return; }
   const bin = join(tmpdir(), 'videosync-e2e', 'videosyncd');
+  mkdirSync(join(tmpdir(), 'videosync-e2e'), { recursive: true });
   try {
-    mkdirSync(join(tmpdir(), 'videosync-e2e'), { recursive: true });
     execFileSync('go', ['build', '-o', bin, './cmd/videosyncd'], { cwd: serverDir, stdio: 'pipe' });
   } catch (e) {
-    skip = `cannot build videosyncd (${(e as Error).message.split('\n')[0]})`;
-    return;
+    const err = e as Error & { stderr?: Buffer };
+    throw new Error(`videosyncd does not build:\n${err.stderr?.toString() || err.message}`);
   }
-  if (!existsSync(bin)) { skip = 'videosyncd was not produced'; return; }
+  if (!existsSync(bin)) throw new Error('go build succeeded but produced no videosyncd');
 
   // Port 0 would be ideal but the server logs its own address; pick a high one
   // and retry rather than parse.
@@ -72,7 +85,7 @@ before(async () => {
       p.kill();
     }
   }
-  skip = 'could not start videosyncd on any port';
+  throw new Error('could not start videosyncd on any of 10 ports');
 });
 
 after(() => { proc?.kill(); });
@@ -127,7 +140,6 @@ async function joined(...ps: Peer[]): Promise<void> {
 
 describe('client core against a real videosyncd', { concurrency: false }, () => {
   it('two members apply the same command at the same server instant', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a');
     const b = peer(roomId, secret, 'b');
@@ -159,7 +171,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   });
 
   it('holds a play for a member who is buffering, and releases it', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     // POC-FINDINGS §38 across the real wire: without the hold the slow member is
     // skipped past ~14 s of media.
     const { roomId, secret } = await createRoom('e2e:media');
@@ -185,7 +196,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   });
 
   it('corrects a member that fell behind buffering, without the fix echoing back', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     // A stall is the honest way to fall behind. Shoving the position instead
     // would be indistinguishable from the user dragging the scrubber -- the
     // client would broadcast it as a seek and the room would follow, which is
@@ -223,7 +233,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   });
 
   it('chat and membership round-trip', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a');
     const b = peer(roomId, secret, 'b');
@@ -248,7 +257,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   });
 
   it('reconnects and comes back on the current anchor', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a');
     const b = peer(roomId, secret, 'b');
@@ -257,13 +265,24 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       a.engine.seek(1200);
       await waitFor(() => b.engine.appliedSeq >= 1, 4000, 'the seek');
 
+      // The room has to move WHILE b is away. b keeps its anchor across a
+      // drop, so a room that stood still would compare b's pre-drop anchor
+      // with itself and pass even if `welcome` were ignored. The longer
+      // backoff keeps b away long enough for the move to land first.
+      (b.engine.cfg as { reconnectBaseMs: number }).reconnectBaseMs = 3000;
       // Kill b's socket the way a dropped link would.
       (b.engine as unknown as { d: { transport: { close(): void } } }).d.transport.close();
       (b.engine as unknown as { onClose(c: boolean, r: string): void }).onClose(false, 'test drop');
-      await waitFor(() => b.engine.state === 'joined' && b.engine.clock.ready, 8000, 'b to rejoin');
+      await waitFor(() => a.engine.roster.length === 1, 2500, 'the server to drop b');
+      a.engine.seek(1800);
+      await waitFor(() => a.engine.appliedSeq >= 2, 2500, 'the seek made while b was away');
+      assert.notEqual(b.engine.state, 'joined', 'b rejoined before the room moved; nothing is tested');
+      assert.equal(b.engine.currentAnchor.positionMs, 1200000);
 
-      assert.equal(b.engine.currentAnchor.positionMs, a.engine.currentAnchor.positionMs,
-        'the rejoined member is on a different anchor');
+      await waitFor(() => b.engine.state === 'joined' && b.engine.clock.ready, 8000, 'b to rejoin');
+      assert.equal(b.engine.appliedSeq, a.engine.appliedSeq, 'the rejoined member is on an older seq');
+      assert.equal(b.engine.currentAnchor.positionMs, 1800000,
+        'the rejoined member kept its pre-drop anchor instead of the room\'s');
       assert.ok(b.engine.stats.reconnects >= 1);
     } finally {
       a.engine.stop(); b.engine.stop();
@@ -276,7 +295,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // RECONCILE_AFTER while the servo nudged it. Found in the field on Laftel,
   // alone in a room, with `cmdsSent: 0` and `expectedMs: 0` as the proof.
   it('adopts the creator\'s already-playing player into the fresh room', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 640 }, true);
     try {
@@ -303,7 +321,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // The control: without the flag the bug reproduces, which is what makes the
   // test above evidence rather than decoration.
   it('leaves the room at paused@0 when the creator does NOT adopt', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 640 });
     try {
@@ -324,7 +341,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // truth about pause state too, and nothing in the correction table can press
   // pause. Only the creator path was covered; this pins the other one.
   it('pauses a joining member whose player is playing against a paused room', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 0 });
     try {
@@ -347,7 +363,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // safe is that the command's OWN transition pauses the member; if it ever
   // stops doing so, this is the fresh-room bug again by another route.
   it('a media command pauses the member whose player was already playing', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
     try {
@@ -376,7 +391,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // transition doing its job against an anchor placed CMD_DELAY in the future,
   // for the benefit of nobody: the room had one member.
   it('does not move the picture when the only member pauses and plays', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
     try {
@@ -419,7 +433,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // into the future and anchored where playback WOULD have reached, so the
   // pauser's own picture jumped forward into media they never saw.
   it('stops both members on the frame the pauser actually stopped on', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: true, positionS: 0 });
     const b = peer(roomId, secret, 'b', { paused: true, positionS: 0 });
@@ -453,7 +466,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // their own play landed. The room of two is what turns the hold on, so this
   // also proves the roster the real server sends counts both members.
   it('the member who presses play waits for the room instead of jumping back', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: true, positionS: 0 });
     const b = peer(roomId, secret, 'b', { paused: true, positionS: 0 });
@@ -505,7 +517,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // real server: from room creation to a joiner's anchor, and across a media
   // command to everybody.
   it('tells a joiner where the room\'s media can be opened, and keeps it current', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const first = 'https://laftel.net/player/45462/93304';
     const next = 'https://laftel.net/player/45462/93295';
     const { roomId, secret } = await createRoom('e2e:media', first);
@@ -527,7 +538,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // A trace that silently recorded nothing would be worse than none: "the
   // client never sent it" would look like evidence.
   it('records both directions of the wire, always, and stays bounded', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a');
     try {
@@ -558,7 +568,6 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
   // A joiner is NOT a creator: the anchor is truth and they must conform to it,
   // however loudly their own player disagrees.
   it('does not let a joining member seed a room that already has one', async function () {
-    if (skip) { console.log(`SKIP: ${skip}`); return; }
     const { roomId, secret } = await createRoom('e2e:media');
     const a = peer(roomId, secret, 'a', { paused: false, positionS: 100 }, true);
     try {

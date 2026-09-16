@@ -15,24 +15,29 @@
       "detail": "isolated world holds"
     },
     {
-      "name": "the service worker reached a loopback server the page cannot",
+      "name": "neither the page nor the content script can reach the server",
       "ok": true,
-      "detail": "QYSNxABQS2YsB8OBlkkqHA"
+      "detail": "page: hung, content script: hung"
+    },
+    {
+      "name": "the service worker reached the loopback server from that page",
+      "ok": true,
+      "detail": "Eubs9NNcK9fqI_E2M5RYlg"
     },
     {
       "name": "the relayed clock exchange still settles tightly",
       "ok": true,
-      "detail": "bestRTT 0.5 ms through the port, uncertainty ±0.25 ms"
+      "detail": "bestRTT 0.6999999992549419 ms through the port, uncertainty ±0.34999999962747097 ms"
     },
     {
       "name": "dump() returns parseable JSON with a live wire trace",
       "ok": true,
-      "detail": "17 traced frames, 3870 bytes"
+      "detail": "16 traced frames, 4176 bytes"
     },
     {
       "name": "the two players stayed together through the relay",
       "ok": true,
-      "detail": "18 ms apart (sampling skew 1 ms)"
+      "detail": "13 ms apart (sampling skew 3 ms)"
     },
     {
       "name": "a pause reached the other browser without echoing back",
@@ -59,10 +64,10 @@
     }
   ],
   "measurements": {
-    "relayedRttMs": 0.5,
-    "relayedUncertaintyMs": 0.25,
-    "playbackGapMs": 17.6,
-    "serviceWorkerTarget": "chrome-extension://ciegfeopocegcofebpepfcpajgkfdccn/sw.js",
+    "relayedRttMs": 0.6999999992549419,
+    "relayedUncertaintyMs": 0.34999999962747097,
+    "playbackGapMs": 13.4,
+    "serviceWorkerTarget": "chrome-extension://foecdaeocakekcgckgpjhomfnckcjeld/sw.js",
     "reconnectAfterWorkerKill": {
       "before": 0,
       "after": 1
@@ -73,9 +78,9 @@
         "statesApplied": 1,
         "acksApplied": 5,
         "correctionsSeek": 0,
-        "correctionsNudge": 5,
+        "correctionsNudge": 4,
         "nudgesUnsupported": 0,
-        "reportsSent": 9,
+        "reportsSent": 8,
         "timeSamples": 10,
         "reconnects": 1,
         "lateApplies": 0,
@@ -85,6 +90,8 @@
         "supersededApplies": 0,
         "connectFailures": 0,
         "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
         "reconciles": 0
       },
       "b": {
@@ -92,9 +99,9 @@
         "statesApplied": 5,
         "acksApplied": 0,
         "correctionsSeek": 0,
-        "correctionsNudge": 2,
+        "correctionsNudge": 4,
         "nudgesUnsupported": 0,
-        "reportsSent": 8,
+        "reportsSent": 7,
         "timeSamples": 6,
         "reconnects": 0,
         "lateApplies": 0,
@@ -104,6 +111,8 @@
         "supersededApplies": 0,
         "connectFailures": 0,
         "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
         "reconciles": 0
       }
     }

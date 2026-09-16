@@ -427,11 +427,12 @@ clock estimate away). The measurement says the common case is not even that.
 ## 11. The extension, end to end (`probe-extension.mjs`, `probe-hop.mjs`, `probe-extperm.mjs`)
 
 The same two-browser run as §7 with the shim swapped, plus the three checks only
-this shim can answer. **11/11.**
+this shim can answer. **13/13.**
 
 | | |
 |---|---|
-| the service worker reached `http://127.0.0.1` **from a page that provably cannot** | yes — the whole reason this shim exists |
+| the page, and the content script, reach the server themselves | **no** — both hang, in the same browser, before the extension is asked |
+| the service worker reached `http://127.0.0.1` **from that page** | yes — the whole reason this shim exists |
 | two players after 4 s of synced playback, through the relay | **2–40 ms apart** across runs |
 | `bestRTT` through the message port | **0.2–1 ms**, uncertainty ±0.1–0.5 ms |
 | the page could see `window.VideoSync` | no — the isolated world holds |
@@ -442,6 +443,16 @@ session state, so a teardown is a reconnect and nothing more. An earlier version
 of the check evaluated `close()` inside the worker — a no-op there — and passed
 while proving nothing. It now closes the target and confirms it is gone before
 asserting anything.
+
+> **Correction.** The first row used to be a check whose value was the literal
+> `true`, on a test page at `http://127.0.0.1` — which §8's own table shows *can*
+> reach loopback. It proved only that a room was created, and a transport moved
+> out of the worker into the content script would have passed it too. The probe
+> now launches Chromium with `--ip-address-space-overrides=127.0.0.1:8899=public`,
+> which puts the test page under the block a real OTT page is under (measured:
+> page `fetch` to the server answers 200 without the flag and hangs with it), and
+> asserts the page and the content script cannot reach the server before the
+> extension does. Without the flag that control fails, so it discriminates.
 
 ### The message port costs about half a millisecond
 

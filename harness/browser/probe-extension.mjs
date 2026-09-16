@@ -3,10 +3,17 @@
  * probe-userscript.mjs does, with the shim swapped.
  *
  * The point is not that a second shim works. It is that the extension reaches a
- * server on 127.0.0.1 from a real OTT page, which the userscript provably
- * cannot (docs/BROWSER-FINDINGS.md §8): the service worker is exempt from the
- * private-address block. That is the entire reason this shim exists, so it is
- * the check that matters most here.
+ * server on 127.0.0.1 from a page that cannot (docs/BROWSER-FINDINGS.md §8):
+ * the service worker is exempt from the private-address block. That is the
+ * entire reason this shim exists, so it is the check that matters most here.
+ *
+ * The test page is itself on 127.0.0.1, and a loopback page is NOT blocked from
+ * loopback (§8's table), so on its own this run could not tell a worker
+ * transport from a content-script one -- and for a while its check was a
+ * literal `true`. Chromium is therefore told to treat the page's address as
+ * public, which puts it under the same block a real OTT page is under, and the
+ * run shows in the same browser that neither the page nor the content script
+ * can reach the server before it lets the extension try.
  */
 import { spawn } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
@@ -62,6 +69,11 @@ for (let i = 0; ; i++) {
 
 const FLAGS = (x) => [
   '--autoplay-policy=no-user-gesture-required',
+  // The page counts as a public origin, so the private-address block applies
+  // to it exactly as it does on https://www.youtube.com. The server keeps its
+  // loopback address. Measured: without this, a page fetch to the server
+  // answers 200; with it, fetch and WebSocket both hang.
+  `--ip-address-space-overrides=127.0.0.1:${MEDIA}=public`,
   // Measuring sync, not the backgrounding rules §4 and §5 already measured.
   '--disable-backgrounding-occluded-windows',
   '--disable-background-timer-throttling',
@@ -102,6 +114,13 @@ async function openPeer(name, port, x) {
 // Everything the extension exposes is in the isolated world.
 const ev = (p, expr) => p.s.evalIsolated(expr);
 
+// Whether a context can reach the server itself. A blocked request does not
+// fail, it hangs (§8), so the answer is bounded here rather than awaited.
+const REACH = `Promise.race([
+  fetch(${JSON.stringify(`${SERVER}/healthz`)}).then((r) => 'reached ' + r.status, (e) => 'failed: ' + e.message),
+  new Promise((r) => setTimeout(() => r('hung'), 4000)),
+])`;
+
 let failed = false;
 try {
   const a = await openPeer('a', 9461, 0);
@@ -114,9 +133,16 @@ try {
     'isolated world holds');
 
   // --- the whole reason this shim exists ------------------------------------
+  // First the control: the page, and the content script (which is what a
+  // transport moved out of the worker would run in), cannot reach the server.
+  const fromPage = await a.s.eval(REACH);
+  const fromContent = await ev(a, REACH);
+  check('neither the page nor the content script can reach the server',
+    !fromPage.startsWith('reached') && !fromContent.startsWith('reached'),
+    `page: ${fromPage}, content script: ${fromContent}`);
   const room = await ev(a, `window.VideoSync.createRoom(${JSON.stringify(SERVER)}, 'a')`);
   await a.s.waitFor("window.VideoSync.status().state === 'joined'", { isolated: true });
-  check('the service worker reached a loopback server the page cannot', true, room.roomId);
+  check('the service worker reached the loopback server from that page', !!room?.roomId, room?.roomId);
 
   await ev(b, `window.VideoSync.join(${JSON.stringify(SERVER)}, ${JSON.stringify(room.roomId)}, ` +
     `${JSON.stringify(room.secret)}, 'b')`);
