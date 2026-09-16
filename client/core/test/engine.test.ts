@@ -75,6 +75,30 @@ function harness(opts: FakePlayerOptions = {}, cfg: Partial<EngineConfig> = {}):
 /** The server's clock reads this much more than ours. */
 const OFFSET = 1_000_000;
 
+interface ParkedSeek {
+  readonly pos: number;
+  /** Finish the seek. `move: false` is a seek whose target never took -- a
+   *  real adapter's timeout after the user scrubbed somewhere else. */
+  release(move?: boolean): void;
+}
+
+/**
+ * Make every seek on this player wait until the test lets it finish, the way
+ * an out-of-buffer seek does for up to ten seconds. Returns the parked seeks,
+ * oldest first; their `pos` is what the engine asked for.
+ */
+function parkSeeks(p: FakePlayer): ParkedSeek[] {
+  const parked: ParkedSeek[] = [];
+  const original = p.seekTo.bind(p);
+  p.seekTo = (pos: number) => new Promise<void>((res) => {
+    parked.push({
+      pos,
+      release: (move = true) => { if (move) void original(pos).then(res); else res(); },
+    });
+  });
+  return parked;
+}
+
 describe('handshake', () => {
   it('sends hello on open and joins on welcome', async () => {
     const h = harness();
@@ -640,13 +664,19 @@ describe('the element being replaced under us', () => {
     // Snapping someone's next episode to the previous one's timestamp is worse
     // than doing nothing, and a member on other media must not command a room
     // whose timeline theirs has nothing to do with.
+    //
+    // In the order `bootstrap`'s PageWatcher does it: the element is retargeted
+    // FIRST and the media key follows. `setTarget` fires `elementreplaced`
+    // synchronously, so at that instant the engine still believes it is on the
+    // room's media; only a check made when the queued work actually runs can
+    // see the navigation.
     const h = swapHarness();
     await join(h);
     const before = h.tr.sentOf('cmd').length;
 
-    h.engine.setLocalMediaKey('yt:two');
     const next = new FakePlayer(h.vt, { paused: false, positionS: 0 });
     h.swap.setTarget(next);
+    h.engine.setLocalMediaKey('yt:two');
     await h.vt.advance(3000);
 
     assert.equal(h.engine.followingRoom, false);
@@ -711,10 +741,9 @@ describe('the element being replaced under us', () => {
 
 describe('applying transitions is serialised', () => {
   it('a command arriving mid-seek cannot invert an earlier one', async () => {
-    // drain() awaits applyScheduled, which awaits seekTo. A frame arriving in
-    // that window re-arms the timer and a SECOND drain runs concurrently. The
-    // bookkeeping stays monotonic -- lastAppliedSeq is set synchronously -- but
-    // the effects can land out of order, leaving the player paused with an
+    // A frame arriving while an earlier transition is parked in seekTo is
+    // bookkept at once and its player work queued behind. Without the queue
+    // the effects could land out of order, leaving the player paused with an
     // anchor that says playing and nothing that will ever notice: the corrector
     // only ever seeks or nudges, it never presses play.
     //
@@ -754,6 +783,164 @@ describe('applying transitions is serialised', () => {
     assert.equal(h.engine.currentAnchor.paused, false);
     assert.equal(h.player.paused, false,
       'the player is paused while the room plays, and nothing in the design will ever press play');
+  });
+
+  it('a newer command is taken on while an older one is still seeking, and the older one yields', async () => {
+    // Waiting for each transition's player work before even bookkeeping the
+    // next meant a pause pressed by somebody else sat unacknowledged for as
+    // long as a slow seek took: the heartbeat kept saying the old seq, and
+    // when the seek finished the stale transition's play() ran first.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+
+    const when1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when: when1, emittedAt: when1,
+      anchor: { positionMs: 500_000, atServerMs: when1, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(1000);
+    assert.equal(parked.length, 1, 'seq 1 is not parked in its seek');
+
+    const when2 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 2, when: when2, emittedAt: when2,
+      anchor: { positionMs: 500_000, atServerMs: when2, paused: true, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'pause',
+    });
+    await h.vt.advance(4000);
+    assert.equal(h.engine.appliedSeq, 2, 'a pause waited for somebody else\'s seek');
+    assert.equal(h.engine.currentAnchor.paused, true);
+    assert.equal(h.tr.sentOf('hb').at(-1)!.lastAppliedSeq, 2);
+
+    const plays = h.player.plays;
+    parked[0]!.release();
+    await h.vt.advance(100);
+    assert.equal(h.player.plays, plays, 'the superseded transition still pressed play');
+    assert.equal(h.player.paused, true);
+    assert.ok(h.engine.stats.supersededApplies >= 1);
+  });
+});
+
+describe('queued player work re-checks the session when it runs', () => {
+  // Every mutation is serialised, and one can wait behind a seek for ten
+  // seconds. Whatever held when it was queued may not hold when it runs.
+
+  it('a correction queued behind a slow seek does nothing once the link drops', async () => {
+    // With the clock reset to a zero offset, `expected()` of a playing anchor
+    // is about -1.8e12 ms: a real element clamps that to 0, and the seek then
+    // blocks the queue for its whole timeout.
+    const h = harness({ paused: false, positionS: 100 });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await flush();
+    assert.equal(parked.length, 1);
+
+    h.tr.drop('link died');
+    parked[0]!.release();
+    await flush(); await flush();
+    assert.deepEqual(parked.slice(1).map((p) => p.pos), [], 'a queued correction ran into a dead session');
+    assert.ok(h.player.positionS > 99, `moved to ${h.player.positionS}s`);
+  });
+
+  it('a correction queued behind a slow seek does nothing after leaving', async () => {
+    const h = harness({ paused: false, positionS: 100 });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await flush();
+    h.engine.stop();
+    parked[0]!.release();
+    await flush(); await flush();
+    assert.equal(parked.length, 1, 'moved the player of somebody who left the room');
+  });
+
+  it('a click to sync while reconnecting waits for the session, then plays', async () => {
+    const h = harness({ paused: true, positionS: 0, autoplayBlocked: true });
+    await h.join({}, 0, 2);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 100_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'play',
+    });
+    await h.vt.advance(300);
+    assert.equal(h.engine.blocked, true);
+
+    h.tr.drop('link blip');
+    h.player.autoplayBlocked = false;             // the user clicks the overlay
+    const seeks = h.player.seeks;
+    await h.engine.resumeAfterGesture();
+    await flush();
+    assert.equal(h.player.seeks, seeks, `seeked to ${h.player.positionS}s with no clock`);
+    assert.equal(h.player.paused, true, 'started playing with no session');
+
+    // The session comes back; the click is honoured then.
+    await h.vt.advance(600);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 1,
+      anchor: { positionMs: 100_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      members: [], serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(500);
+    assert.equal(h.player.paused, false, 'the click was forgotten');
+    assert.equal(h.engine.blocked, false);
+    const expected = h.engine.expectedMs()! / 1000;
+    assert.ok(Math.abs(h.player.positionS - expected) < 0.5, `at ${h.player.positionS}s, room at ${expected}s`);
+  });
+
+  /** A joined engine on a swappable adapter; `answerTime` false leaves the clock unsettled. */
+  async function swapJoined(answerTime: boolean) {
+    const vt = new VirtualTime();
+    const swap = new SwappableAdapter();
+    const first = new FakePlayer(vt, { paused: false, positionS: 300 });
+    swap.setTarget(first);
+    const tr = new FakeTransport();
+    if (answerTime) tr.autoAnswerTime(OFFSET);
+    const engine = new SyncEngine(
+      { adapter: swap, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false },
+      { ...CFG },
+    );
+    engine.start();
+    tr.open();
+    tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 300_000, atServerMs: OFFSET, paused: false, mediaKey: 'yt:abc' },
+      members: [], serverMs: OFFSET, mediaKey: 'yt:abc',
+    });
+    await vt.advance(answerTime ? 1000 : 10);
+    return { vt, swap, first, tr, engine };
+  }
+
+  it('an element swap before the clock settles leaves the new element alone', async () => {
+    // Joined is not the same as settled: the welcome arrives before the probes
+    // come back, and a router swap in that window aimed at ~-1.8e12 ms.
+    const h = await swapJoined(false);
+    assert.equal(h.engine.clock.ready, false);
+    const next = new FakePlayer(h.vt, { paused: false, positionS: 5 });
+    h.swap.setTarget(next);
+    await h.vt.advance(50);
+    assert.equal(next.seeks, 0, `seeked the new element to ${next.positionS}s`);
+  });
+
+  it('an element swap queued behind a slow seek does not start playback after leaving', async () => {
+    const h = await swapJoined(true);
+    const parked = parkSeeks(h.first);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await flush();
+    assert.equal(parked.length, 1);
+    const next = new FakePlayer(h.vt, { paused: true, positionS: 0 });
+    h.swap.setTarget(next);                     // queues "put it where the room is"
+    h.engine.stop();                            // the user presses Leave
+    parked[0]!.release();
+    await flush(); await flush();
+    assert.equal(next.plays, 0, 'started the video playing after the user left');
+    assert.equal(next.seeks, 0);
   });
 });
 
