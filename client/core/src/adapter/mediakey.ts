@@ -114,7 +114,7 @@ export function normalizeMediaKey(href: string): string | null {
   if (explicit) return `${id}:${explicit}`;
   if (rule?.pathFallback === false) return null;
 
-  // Generic:the path is the identity. Trailing slash and case in the host are
+  // Generic: the path is the identity. Trailing slash and case in the host are
   // noise; the path's own case is not (ids are often case-sensitive).
   const path = u.pathname.replace(/\/+$/, '');
   if (path === '' || path === '/') return null;

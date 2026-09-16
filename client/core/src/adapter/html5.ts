@@ -70,7 +70,7 @@ export class Html5Adapter implements ProviderAdapter {
       readyState: this.el.readyState,
       muted: this.el.muted || this.el.volume === 0,
       hasAudio: this.hasAudio(),
-      durationS:Number.isFinite(this.el.duration) ? this.el.duration : 0,
+      durationS: Number.isFinite(this.el.duration) ? this.el.duration : 0,
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
