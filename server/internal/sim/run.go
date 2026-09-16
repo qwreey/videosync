@@ -199,13 +199,10 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			if now%timeSyncEveryMs == 0 || (now < 250 && now%50 == 0) {
 				c.TimeSync(net, now)
 			}
+			// One look per tick. The heartbeat is not a second evaluation at
+			// the same instant -- it is this one, reported regardless.
 			if now%evalIntervalMs == 0 {
-				if r, ok := c.Evaluate(now, tun, false); ok {
-					net.Send(now, id, id, "server", true, MsgReport{Report: r})
-				}
-			}
-			if now%hbIntervalMs == 0 {
-				if r, ok := c.Evaluate(now, tun, true); ok {
+				if r, ok := c.Evaluate(now, tun, now%hbIntervalMs == 0); ok {
 					net.Send(now, id, id, "server", true, MsgReport{Report: r})
 				}
 			}

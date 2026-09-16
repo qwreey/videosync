@@ -6,6 +6,9 @@ const (
 	stepMs          = 10   // virtual clock granularity
 	evalIntervalMs  = 100  // client local evaluation loop (~10 Hz)
 	hbIntervalMs    = 1000 // heartbeat
+	// minReportIntervalMs spaces anomaly reports between heartbeats; the
+	// engine's minReportIntervalMs.
+	minReportIntervalMs = 250
 	timeSyncEveryMs = 5000 // clock resync
 	slopeWindowMs   = 3000 // least-squares window for d(residual)/dt
 	metricSampleMs  = 100  // divergence sampling

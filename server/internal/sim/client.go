@@ -112,7 +112,10 @@ type Client struct {
 	// currentTime stops advancing while paused is still false.
 	stallSuspected bool
 	lastEvalPos    float64
+	lastEvalAt     int64
 	haveEvalPos    bool
+	lastReportAt   int64
+	haveReported   bool
 
 	// counters the harness reads
 	SeeksApplied  int
@@ -352,46 +355,71 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	// That signature is what separates it from a user seek; without it the
 	// two-diff test misclassifies every stall as a backward seek and
 	// broadcasts it to the room.
-	wasStalled := c.stallSuspected
-	frozen := c.haveEvalPos && !c.paused && (c.posMs-c.lastEvalPos) < float64(evalIntervalMs)*0.5
-	c.stallSuspected = !c.P.NoStallInference && (c.readyState < t.MinReadyState || frozen)
-	c.lastEvalPos = c.posMs
-	c.haveEvalPos = true
-
-	// --- two-diff seek detection --------------------------------------------
-	playerDiff := math.Abs(c.posMs - c.lastKnownPos)
-	roomDiff := math.Abs(c.posMs - expected)
-	if c.stallSuspected {
-		// Frozen playback is not a seek. Hold the reference point so the gap
-		// does not accumulate into a false positive, and let the readiness
-		// gate deal with the divergence instead.
-		c.lastKnownPos = c.posMs
-	} else {
-		if wasStalled {
-			// Just resumed: re-baseline rather than judging the stall gap.
-			c.lastKnownPos = c.posMs
-		} else if !c.paused {
-			c.lastKnownPos += float64(evalIntervalMs) * c.P.IntrinsicRate * c.appliedRate
-		}
-		if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
-			c.SeekDetections++
-			if c.stalled(serverMs) {
-				c.Misdetections++ // ground truth, for the harness only
-			}
-			c.lastKnownPos = c.posMs
-		}
-	}
-
+	//
+	// Everything here runs on the time that actually ELAPSED since the last
+	// look, never on the loop's nominal interval (CLAUDE.md trap). Assuming a
+	// fixed 100 ms step made a second look at the same instant see a frozen
+	// player, and made every look off that cadence move the predicted playhead
+	// by the wrong amount.
 	res := c.posMs - expected
-	c.residualHist = append(c.residualHist, sample{t: est, res: res})
-	cut := est - slopeWindowMs
-	for len(c.residualHist) > 0 && c.residualHist[0].t < cut {
-		c.residualHist = c.residualHist[1:]
+	elapsed := serverMs - c.lastEvalAt
+	if !c.haveEvalPos {
+		// First look: nothing to compare against yet.
+		c.lastKnownPos = c.posMs
+		elapsed = 0
 	}
+	if !c.haveEvalPos || elapsed > 0 {
+		wasStalled := c.stallSuspected
+		frozen := c.haveEvalPos && !c.paused && (c.posMs-c.lastEvalPos) < float64(elapsed)*0.5
+		c.stallSuspected = !c.P.NoStallInference && (c.readyState < t.MinReadyState || frozen)
+		c.lastEvalPos = c.posMs
+		c.lastEvalAt = serverMs
+		c.haveEvalPos = true
 
-	if !force && math.Abs(res) < float64(t.ReportThreshold) {
+		// --- two-diff seek detection ----------------------------------------
+		predicted := c.lastKnownPos
+		if !c.paused {
+			predicted += float64(elapsed) * c.P.IntrinsicRate * c.appliedRate
+		}
+		playerDiff := math.Abs(c.posMs - predicted)
+		roomDiff := math.Abs(c.posMs - expected)
+		if c.stallSuspected {
+			// Frozen playback is not a seek. Hold the reference point so the gap
+			// does not accumulate into a false positive, and let the readiness
+			// gate deal with the divergence instead.
+			c.lastKnownPos = c.posMs
+		} else {
+			if wasStalled {
+				// Just resumed: re-baseline rather than judging the stall gap.
+				c.lastKnownPos = c.posMs
+			} else {
+				c.lastKnownPos = predicted
+			}
+			if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
+				c.SeekDetections++
+				if c.stalled(serverMs) {
+					c.Misdetections++ // ground truth, for the harness only
+				}
+				c.lastKnownPos = c.posMs
+			}
+		}
+
+		c.residualHist = append(c.residualHist, sample{t: est, res: res})
+		cut := est - slopeWindowMs
+		for len(c.residualHist) > 0 && c.residualHist[0].t < cut {
+			c.residualHist = c.residualHist[1:]
+		}
+	}
+	// Nothing has happened since a look at this same instant, so there is
+	// nothing new for detection to judge -- but a heartbeat is still due.
+
+	// An anomaly is reported at once, but not more often than the engine
+	// allows (minReportIntervalMs); the heartbeat goes regardless.
+	if !force && (math.Abs(res) < float64(t.ReportThreshold) ||
+		(c.haveReported && serverMs-c.lastReportAt < minReportIntervalMs)) {
 		return vsync.Report{}, false
 	}
+	c.lastReportAt, c.haveReported = serverMs, true
 	return vsync.Report{
 		ClientID:        c.P.ID,
 		ResidualMs:      int64(res),

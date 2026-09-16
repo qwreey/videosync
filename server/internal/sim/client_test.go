@@ -43,6 +43,65 @@ func TestScheduledCommandsNeverApplyAnOlderSeqOverANewerOne(t *testing.T) {
 	}
 }
 
+// The detector must measure elapsed time, not assume its own interval
+// (CLAUDE.md). The harness evaluated twice at every whole second -- once for
+// the 10 Hz loop and once for the heartbeat -- and a detector that
+// dead-reckons a fixed step per call then saw either a frozen player (a stall
+// flagged every second) or, with the stall guard off, a playhead that had
+// moved 100 ms further than it had.
+func TestDetectorMeasuresElapsedTimeNotItsOwnCadence(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	cadences := []struct {
+		name  string
+		evals func(now int64) int // how many evaluations happen at this tick
+	}{
+		{"10 Hz plus a heartbeat at the same instant", func(now int64) int {
+			n := 0
+			if now%100 == 0 {
+				n++
+			}
+			if now%1000 == 0 {
+				n++
+			}
+			return n
+		}},
+		{"off-cadence, every 370 ms", func(now int64) int {
+			if now%370 == 0 {
+				return 1
+			}
+			return 0
+		}},
+	}
+	for _, cd := range cadences {
+		for _, noGuard := range []bool{false, true} {
+			c := readyClient(ClientProfile{ID: "a", NoStallInference: noGuard}, 0, false)
+			c.anchor = vsync.Anchor{PositionMs: 0, AtServerMs: 0}
+			stalls := 0
+			var worst float64
+			for now := int64(0); now <= 20000; now += stepMs {
+				c.Advance(now, stepMs)
+				for i := 0; i < cd.evals(now); i++ {
+					c.Evaluate(now, tun, i > 0)
+					if c.stallSuspected {
+						stalls++
+					}
+					if d := c.lastKnownPos - c.posMs; d > worst || -d > worst {
+						worst = max(d, -d)
+					}
+				}
+			}
+			if stalls > 0 {
+				t.Errorf("%s (guard off=%v): a player running at 1.0x was suspected stalled %d times",
+					cd.name, noGuard, stalls)
+			}
+			if worst > 50 {
+				t.Errorf("%s (guard off=%v): the detector's idea of the playhead drifted %.0f ms from the real one",
+					cd.name, noGuard, worst)
+			}
+		}
+	}
+}
+
 // A scheduled seek pays for the buffer exactly like a corrective one. Moving
 // the playhead from 30 s to 300 s without touching the buffer model left the
 // member playing at 1.0x while reporting readyState 2 and nothing buffered for
