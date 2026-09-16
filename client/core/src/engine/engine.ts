@@ -257,6 +257,21 @@ interface Applying {
   paused: boolean;
 }
 
+/**
+ * Where an element puts a seek to `targetMs`: per spec, one before the start
+ * lands on 0 and one past the end on the duration.
+ *
+ * A seek of the engine's is recognised mid-flight by where it lands, and a room
+ * that is past this member's end would otherwise look like a user scrubbing to
+ * the end -- sent, it moves the whole room there. The same rule
+ * `Html5Adapter.seekTo` resolves by. A live or DRM stream's seekable window can
+ * clamp tighter than this, and nothing in `PlayerState` says where.
+ */
+function landsAt(targetMs: number, durationS: number): number {
+  const t = Math.max(targetMs, 0);
+  return Number.isFinite(durationS) && durationS > 0 ? Math.min(t, durationS * 1000) : t;
+}
+
 /** One of our own commands, sent and not yet acked. */
 interface OwnCmd { reqId: string; kind: CmdKind; at: number }
 
@@ -1022,7 +1037,8 @@ export class SyncEngine {
     if (!this.autoplayBlocked && onRoomMedia) {
       if (observation.kind === 'seek') {
         if (!applying ||
-          Math.abs(observation.positionS * 1000 - applying.targetMs) > this.seekThresholdMs) {
+          Math.abs(observation.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) >
+            this.seekThresholdMs) {
           this.send('seek', observation.positionS * 1000);
         }
       } else if (observation.kind === 'playstate') {

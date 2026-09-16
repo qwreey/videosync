@@ -1023,6 +1023,116 @@ describe('queued player work re-checks the session when it runs', () => {
     assert.ok(Math.abs(sent[1]!.positionMs - 500_000) < 1000);
   });
 
+  it('a seek of the engine\'s that the element clamps to its end is not sent', async () => {
+    // A room past this member's end: the element lands on its duration, far
+    // from the target, and until the seek resolves that position looks like
+    // somebody scrubbed there. Sent, the engine's own transition moves the
+    // whole room to this member's end of media.
+    const h = harness({ paused: false, positionS: 1390, durationS: 1400 });
+    const read = h.player.readState.bind(h.player);
+    h.player.readState = () => {                  // a real element stops at its end
+      const s = read();
+      h.player.positionS = Math.min(s.positionS, h.player.durationS);
+      return { ...s, positionS: h.player.positionS };
+    };
+    await h.join({ positionMs: 1_390_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    const clamp = h.player.seekTo;
+    h.player.seekTo = (pos: number) => {          // the element clamps at once, `seeked` comes later
+      h.player.positionS = Math.min(pos, h.player.durationS);
+      return clamp(pos);
+    };
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 1_500_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(100);
+    assert.equal(parked.length, 1);
+    h.player.emit('seeking');
+    await h.vt.advance(2000);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'sent the engine\'s own clamped seek to the room');
+    parked[0]!.release(false);
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+  });
+
+  it('a seek of the engine\'s that is still landing after it was superseded is not sent', async () => {
+    // The room has moved on to seq 2 while seq 1's seek was parked. When that
+    // seek lands it is far from the NEW anchor as well as from where the
+    // player was -- a jump in both diffs -- and it is still the engine's.
+    const h = harness({ paused: false, positionS: 50 });
+    await h.join({ positionMs: 50_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    const when1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when: when1, emittedAt: when1,
+      anchor: { positionMs: 500_000, atServerMs: when1, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(100);
+    assert.equal(parked.length, 1);
+    const when2 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 2, when: when2, emittedAt: when2,
+      anchor: { positionMs: 100_000, atServerMs: when2, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(100);
+    parked[0]!.release();
+    h.player.emit('seeked');                      // seq 1's seek lands, before its rebaseline
+    await flush();
+    await h.vt.advance(100);
+    assert.equal(parked.length, 2, 'seq 2 did not queue its own seek');
+    parked[1]!.release();
+    await h.vt.advance(2000);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'sent the superseded seek\'s landing to the room');
+    const expected = h.engine.expectedMs()! / 1000;
+    assert.ok(Math.abs(h.player.positionS - expected) < 0.5, `at ${h.player.positionS}s, room at ${expected}s`);
+  });
+
+  it('a play of the engine\'s that starts after a pause superseded it is not sent', async () => {
+    // play() resolves when playback actually starts, which can take a while.
+    // A pause that arrives meanwhile is bookkept at once, so when the element
+    // finally starts, it disagrees with the anchor -- and it is still the
+    // engine's play, not the user's.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    const starting: Array<() => void> = [];
+    const play = h.player.play.bind(h.player);
+    h.player.play = () => new Promise<void>((res) => { starting.push(() => { void play().then(res); }); });
+
+    const when1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when: when1, emittedAt: when1,
+      anchor: { positionMs: 10_000, atServerMs: when1, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'play',
+    });
+    await h.vt.advance(100);
+    assert.equal(starting.length, 1, 'the play is not in flight');
+    const when2 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 2, when: when2, emittedAt: when2,
+      anchor: { positionMs: 10_000, atServerMs: when2, paused: true, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'pause',
+    });
+    await h.vt.advance(100);
+    assert.equal(h.engine.currentAnchor.paused, true);
+
+    h.player.paused = false;                      // the element starts, the promise has not settled
+    h.player.emit('play');
+    await h.vt.advance(200);
+    h.player.emit('playing');
+    await h.vt.advance(200);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'sent the engine\'s own play to the room');
+    starting[0]!();
+    await h.vt.advance(500);
+    assert.equal(h.player.paused, true, 'the pause that superseded it did not land');
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+  });
+
   it('control: the engine\'s own seek and pause inside that window are not sent', async () => {
     const h = harness({ paused: false, positionS: 50 });
     await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false }, 0, 2);
