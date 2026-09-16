@@ -95,6 +95,9 @@ interface Rejoin {
   until: number;
   /** A page it was not meant for has already said the move failed. */
   warned?: boolean;
+  /** The writing tab, per `readTabId`, and the origin that id belongs to. */
+  tab?: string;
+  origin?: string;
 }
 
 /**
@@ -136,6 +139,39 @@ export function redactInvite(href: string): string {
   return href.replace(/([#&]videosync=[^.&]*\.)[^&]*/g, '$1<redacted>');
 }
 
+/**
+ * What a refused join tells the user to do. Only `join_refused` is about the
+ * ID or the secret; a full room was reached with both right, and sending that
+ * user off to re-check them is sending them the wrong way.
+ */
+function refusalText(code: string | undefined): string {
+  if (code === 'room_full') return `방이 가득 찼어요 — 자리가 나면 다시 참가해주세요 (${code})`;
+  return `참가가 거절됐어요 (방 ID나 비밀키를 확인해주세요)${code ? ` — ${code}` : ''}`;
+}
+
+const TAB_KEY = 'videosync.tab';
+
+/**
+ * This tab's identity, as far as its origin can tell. `sessionStorage` is per
+ * tab and per origin and survives a navigation, which is exactly what tells a
+ * rejoin record's own tab apart from any other tab of the profile arriving on
+ * the same site. It is the page's storage, so it holds a random tag and
+ * nothing else; with no storage the answer is '' and nothing is decided by it.
+ */
+function readTabId(): string {
+  try {
+    const s = globalThis.sessionStorage;
+    let id = s.getItem(TAB_KEY) ?? '';
+    if (!id) {
+      id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      s.setItem(TAB_KEY, id);
+    }
+    return id;
+  } catch {
+    return '';
+  }
+}
+
 export function start(p: Platform): App {
   const adapter = new SwappableAdapter();
   let engine: SyncEngine | null = null;
@@ -163,11 +199,14 @@ export function start(p: Platform): App {
   let resumeMedia: 'follow' | 'offer' | null = null;
   /** Whether the last status was 'joined', so leaving it is seen once. */
   let wasJoined = false;
+  /** The rejoin record this page last wrote, exactly as written. */
+  let ownRejoin = '';
   let lastStatus: EngineStatus = 'idle';
   let session: { server: string; roomId: string; secret: string; name: string } | null = null;
   let waitingOn: readonly string[] = [];
   let members: readonly MemberInfo[] = [];
 
+  const tabId = readTabId();
   const invite = readInviteHash(location.hash);
   const panel = new Panel(document, {
     serverUrl: p.store.load('server', ''),
@@ -263,6 +302,17 @@ export function start(p: Platform): App {
     );
   }
 
+  /**
+   * Drop the rejoin record this page wrote, and only that one. The key is
+   * shared by every tab in the profile: another tab's follow may be on its way
+   * to its next page with a record of its own, and wiping that one leaves its
+   * member arriving out of the room with no word.
+   */
+  function forgetRejoin(): void {
+    if (ownRejoin && p.store.load('rejoin', '') === ownRejoin) p.store.save('rejoin', '');
+    ownRejoin = '';
+  }
+
   function cancelFollow(): void {
     if (followTimer) clearTimeout(followTimer);
     followTimer = 0;
@@ -303,22 +353,32 @@ export function start(p: Platform): App {
       followTimer = 0;
       const gen = followGen;
       const e = engine;
-      // Read now, not when the follow was scheduled: a secret rotated in
-      // between is the only one the server still accepts.
       if (!e || e.state !== 'joined' || !session) return;
-      const record = JSON.stringify({ ...session, key: roomMediaKey, until: Date.now() + REJOIN_TTL_MS } satisfies Rejoin);
-      p.store.save('rejoin', record);
+      const until = Date.now() + REJOIN_TTL_MS;
       // Past this point "stay here" can no longer stop anything; leaving can.
       panel.clearMediaAction();
       panel.setStatus('방이 보는 영상으로 이동하는 중…');
-      // The write is what carries the session to the next page; an async store
-      // that is still writing when the document unloads would drop it.
-      await p.store.flush?.();
-      if (gen !== followGen || engine !== e || e.state !== 'joined') {
-        // Cancelled while writing. Whatever cancelled it decides what happens
-        // next; a record left behind would pull a later page into this room.
-        if (p.store.load('rejoin', '') === record) p.store.save('rejoin', '');
-        return;
+      // Built from `session` as it is at each pass, not when the follow was
+      // scheduled: a secret rotated meanwhile -- during the write, too -- is
+      // the only one the server still accepts, so a record that changed while
+      // it was being written is written again.
+      for (;;) {
+        const record = JSON.stringify({
+          ...session, key: roomMediaKey, until, tab: tabId, origin: location.origin,
+        } satisfies Rejoin);
+        if (record === ownRejoin) break;
+        p.store.save('rejoin', record);
+        ownRejoin = record;
+        // The write is what carries the session to the next page; an async
+        // store that is still writing when the document unloads would drop it.
+        await p.store.flush?.();
+        if (gen !== followGen || engine !== e || e.state !== 'joined' || !session) {
+          // Cancelled while writing. Whatever cancelled it decides what
+          // happens next; a record left behind would pull a later page into
+          // this room.
+          forgetRejoin();
+          return;
+        }
       }
       location.assign(target);
     };
@@ -417,10 +477,10 @@ export function start(p: Platform): App {
         if (prev === 'refused' && s === 'closed') return;
         const text: Record<EngineStatus, string> = {
           idle: '', connecting: '연결하는 중…', joining: '방에 들어가는 중…',
-          joined: '연결됨', refused: '참가가 거절됐어요 (방 ID나 비밀키를 확인해주세요)',
-          closed: '연결이 끊겼어요',
+          joined: '연결됨', refused: refusalText(detail), closed: '연결이 끊겼어요',
         };
-        panel.setStatus(detail ? `${text[s]} — ${detail}` : text[s], s === 'refused' ? 'err' : '');
+        if (s === 'refused') panel.setStatus(text[s], 'err');
+        else panel.setStatus(detail ? `${text[s]} — ${detail}` : text[s]);
         if (s === 'joined') refreshStatus();
       },
       onMembers: (m) => { members = m; panel.setMembers(m, engine?.id ?? '', waitingOn); },
@@ -467,8 +527,12 @@ export function start(p: Platform): App {
           panel.setStatus('너무 빠릅니다 — 잠시 후 다시 시도해주세요.', 'warn');
           return;
         }
-        // Already said by `onStatus`, in words that tell the user what to check.
-        if (code === 'join_refused' || code === 'room_full') return;
+        // Said by `onStatus` already, in words that tell the user what to
+        // check; the server's own words, when it has any, are added to them.
+        if (code === 'join_refused' || code === 'room_full') {
+          if (msg) panel.setStatus(`${refusalText(code)} — ${msg}`, 'err');
+          return;
+        }
         // bad_frame means WE sent something malformed. It is our bug, and the
         // symptom is a mechanism quietly not working, so it must be visible.
         panel.setStatus(`오류 ${code}${msg ? `: ${msg}` : ''}`, 'err');
@@ -481,9 +545,8 @@ export function start(p: Platform): App {
     cancelFollow();
     // A follow may already be on its way to the next page. The navigation
     // cannot be taken back, but arriving must not rejoin a room left on
-    // purpose. Only with a session: `join` calls this too, and a record the
-    // page is still to act on is not this page's to drop.
-    if (session) p.store.save('rejoin', '');
+    // purpose.
+    forgetRejoin();
     engine?.stop();
     engine = null;
     session = null;
@@ -516,8 +579,15 @@ export function start(p: Platform): App {
   // leave the member who followed arriving out of the room, with no word.
   // A page it was not meant for says so once and leaves it for the TTL --
   // which also lets a login redirect that comes back in time still rejoin.
+  //
+  // On the origin that wrote it, the tab id settles whose it is: another tab
+  // there neither takes it nor warns about it. Anywhere else -- the room's
+  // video on another site, a login page -- nothing can tell, and the page is
+  // what decides.
   const rejoin = readRejoin(p.store);
-  if (rejoin) {
+  const otherTab = !!rejoin && !!rejoin.tab && !!tabId &&
+    rejoin.origin === location.origin && rejoin.tab !== tabId;
+  if (rejoin && !otherTab) {
     if (rejoin.key === mediaKey) {
       p.store.save('rejoin', '');
       panel.setFields({ roomId: rejoin.roomId, secret: rejoin.secret });

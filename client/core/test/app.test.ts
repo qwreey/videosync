@@ -60,8 +60,25 @@ interface H {
 
 let current: H | null = null;
 
-function harness(href: string, store: FakeStore = makeStore()): H {
+/** One tab's `sessionStorage` (for its origin). A new Map is a new tab. */
+type TabStorage = Map<string, string>;
+const savedSession = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+
+function useTab(tab: TabStorage | null): void {
+  const value = tab && {
+    getItem: (k: string) => tab.get(k) ?? null,
+    setItem: (k: string, v: string) => { tab.set(k, v); },
+  };
+  Object.defineProperty(globalThis, 'sessionStorage', {
+    configurable: true,
+    // No storage at all: reading it throws, as it does with site data blocked.
+    get: () => { if (!value) throw new Error('SecurityError'); return value; },
+  });
+}
+
+function harness(href: string, store: FakeStore = makeStore(), tab: TabStorage | null = new Map()): H {
   mock.timers.enable({ apis: ['setTimeout'] });
+  useTab(tab);
   const dom = installDom(href);
   const transports: FakeTransport[] = [];
   const p: Platform = {
@@ -118,7 +135,19 @@ afterEach(() => {
   current?.dom.uninstall();
   current = null;
   mock.timers.reset();
+  if (savedSession) Object.defineProperty(globalThis, 'sessionStorage', savedSession);
+  else delete (globalThis as Record<string, unknown>)['sessionStorage'];
 });
+
+/**
+ * The document goes away, the store stays: the next `harness` is the next page.
+ * Not `destroy()`, which leaves the room -- a navigation does not.
+ */
+function unload(h: H): void {
+  h.dom.uninstall();
+  mock.timers.reset();
+  current = null;
+}
 
 function savedRejoin(h: H): { secret: string; key: string } | null {
   const raw = h.store.data.get('rejoin');
@@ -160,6 +189,23 @@ describe('following the room to its video', () => {
     // The old document stays interactive until the new one commits.
     h.app.api.leave();
     assert.equal(savedRejoin(h), null);
+  });
+
+  it('carries a secret rotated while the session is being written', async () => {
+    const h = harness(HOME, makeStore(true));
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await h.tick(2000);
+    assert.equal(savedRejoin(h)?.secret, 'S');      // the write is in flight
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    h.store.release();
+    await h.tick(100);
+    assert.equal(savedRejoin(h)?.secret, 'S2', 'the next page would be refused');
+    assert.equal(h.dom.loc.assigned.length, 0, 'left before the new secret was written');
+    h.store.release();
+    await h.tick(100);
+    assert.deepEqual(h.dom.loc.assigned, [ROOM_URL]);
+    assert.equal(savedRejoin(h)?.secret, 'S2');
   });
 
   it('carries the secret the room has NOW, not the one it had when the follow was scheduled', async () => {
@@ -244,6 +290,37 @@ describe('the move-the-room offer', () => {
   });
 });
 
+describe('the move-the-room offer, reconnecting', () => {
+  it('is made for a video the member moved to while the connection was down', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(100);
+    assert.equal(h.visibleButton('이 영상으로 방 옮기기'), undefined);
+    h.tr().drop();
+    h.dom.loc.href = 'https://www.youtube.com/watch?v=mine';
+    await h.tick(1100);                  // the page watcher sees the navigation
+    assert.equal(h.app.api.mediaKey(), 'yt:mine');
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(100);
+    assert.ok(h.visibleButton('이 영상으로 방 옮기기'),
+      'the room is elsewhere and nothing says so');
+  });
+
+  it('sends nothing for a press that lands after the connection dropped', async () => {
+    const h = harness('https://www.youtube.com/watch?v=mine');
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(100);
+    // The handler as it was bound: the backstop behind taking the button down.
+    const press = h.visibleButton('이 영상으로 방 옮기기')!.onclick!;
+    h.tr().drop();
+    const before = h.tr().sentOf('cmd').length;
+    press({ type: 'click' });
+    assert.equal(h.tr().sentOf('cmd').length, before);
+  });
+});
+
 describe('the member list', () => {
   it('does not keep a buffering tag from before a reconnect', async () => {
     const h = harness(ROOM_URL);
@@ -270,6 +347,21 @@ describe('a refused join', () => {
     const s = h.status();
     assert.match(s.text, /거절/);
     assert.match(s.text, /비밀키를 확인/);
+    assert.match(s.text, /unknown room or secret/, 'the server\'s own words were dropped');
+    assert.match(s.cls, /\berr\b/);
+  });
+
+  it('because the room is full does not send the member to re-check the secret', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.tr().open();
+    h.tr().deliver({ t: 'error', code: 'room_full' });
+    h.tr().drop('1008 room full');
+    await h.tick(100);
+    const s = h.status();
+    assert.doesNotMatch(s.text, /비밀키/);
+    assert.match(s.text, /가득/);
+    assert.match(s.text, /room_full/);
     assert.match(s.cls, /\berr\b/);
   });
 });
@@ -313,6 +405,16 @@ describe('a pending rejoin', () => {
     assert.notEqual(store.data.get('rejoin') ?? '', '', 'another tab ate the session');
   });
 
+  it('survives another tab leaving its own room', () => {
+    const store = pending(ROOM_KEY);
+    const h = harness(HOME, store);
+    h.join();
+    h.welcome({ mediaKey: 'yt:elsewhere' });
+    h.app.api.join(SERVER, 'R2', 'S2', 'me');    // switching rooms leaves first
+    h.app.api.leave();
+    assert.equal(savedRejoin(h)?.key, ROOM_KEY, 'the member following in the other tab arrives out of the room');
+  });
+
   it('warns about a failed move only once', () => {
     const store = pending(ROOM_KEY);
     const h1 = harness('https://www.youtube.com/watch?v=login', store);
@@ -320,6 +422,51 @@ describe('a pending rejoin', () => {
     h1.app.destroy(); h1.dom.uninstall(); mock.timers.reset();
     const h2 = harness('https://www.youtube.com/watch?v=unrelated', store);
     assert.doesNotMatch(h2.status().text, /이동하지 못했어요/);
+  });
+
+  it('is neither taken nor warned about by another tab of the same site', async () => {
+    // Tab A follows and is on its way.
+    const store = makeStore();
+    const a = harness(HOME, store, new Map());
+    a.join();
+    a.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await a.tick(2000);
+    assert.equal(a.dom.loc.assigned.length, 1);
+    unload(a);
+    // Tab B, on the same site, opens the very video, then some other page.
+    for (const href of [ROOM_URL, 'https://www.youtube.com/watch?v=other']) {
+      const b = harness(href, store, new Map());
+      assert.equal(b.app.api.engine(), null, `${href} joined another tab's room`);
+      assert.doesNotMatch(b.status().text, /이동하지 못했어요/);
+      unload(b);
+    }
+    assert.equal(savedRejoin({ store } as H)?.key, ROOM_KEY);
+  });
+
+  it('is warned about by its own tab, and taken by it on the right page', async () => {
+    const store = makeStore();
+    const tab: TabStorage = new Map();
+    const a = harness(HOME, store, tab);
+    a.join();
+    a.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await a.tick(2000);
+    unload(a);
+    const login = harness('https://www.youtube.com/signin', store, tab);
+    assert.match(login.status().text, /이동하지 못했어요/);
+    unload(login);
+    const back = harness(ROOM_URL, store, tab);
+    assert.ok(back.app.api.engine(), 'the login round trip lost the room');
+  });
+
+  it('is still taken on the right page when nothing can tell tabs apart', async () => {
+    const store = makeStore();
+    const a = harness(HOME, store, null);
+    a.join();
+    a.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await a.tick(2000);
+    unload(a);
+    const b = harness(ROOM_URL, store, null);
+    assert.ok(b.app.api.engine(), 'no storage must not mean no rejoin');
   });
 
   it('is picked up, once, by the page it was meant for', () => {
@@ -346,7 +493,8 @@ describe('the panel', () => {
       panel(dom, chats);
       const input = all(dom).find((e) => e.placeholder === '메시지…')!;
       input.value = '안녕';
-      input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: true, keyCode: 229 });
+      // Each flag alone: browsers disagree on which one the committing Enter carries.
+      input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: true, keyCode: 13 });
       input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: false, keyCode: 229 });
       assert.deepEqual(chats, []);
       assert.equal(input.value, '안녕', 'cleared under an open composition');
