@@ -1035,3 +1035,277 @@ The 500 ms floor still sets the size of that on a fast link, and it remains a
 chosen safety margin rather than a measured one (SYNTHESIS §2 amendment). The
 harness cannot answer it, for the reason in §40c. It needs two people and a
 number.
+
+## 41. Round 12 — the harness was measuring itself in six places, and the servo stalled against its own nudge
+
+A code review found six places where the simulation did not do what the shipped
+code does, and one real defect in `ServoCorrector` that the simulation could not
+reach. Each harness fix below moves some rows, so this section says which
+earlier numbers each one invalidates. The last table is the one to quote now.
+
+`mise run sim` gained two things along the way: a `skipped` column (the table
+used to score strategies on `anchorErr` alone, which CLAUDE.md says cannot be
+done) and `-seeds N`, which prints every row as a mean over seeds 1..N (§39: one
+seed is not evidence). Every "mean over seeds" below is `-seeds 20` unless it
+says otherwise.
+
+### 41a. One corrector instance served the whole table
+
+`main.go` built each corrector once and passed the same instance to every
+scenario. PLL, FLL, Hybrid and Servo keep per-member state keyed by member id,
+every scenario uses the ids a/b/c, and nothing in a finished run makes anyone
+leave. So each scenario started with the previous one's integrators already
+wound up, and a row depended on which scenarios were listed above it. The real
+server builds one corrector per room (`hub.go`), so the table was not measuring
+anything that ships. Each run now gets a fresh instance, and a test runs the
+table forwards and backwards and requires every row to match.
+
+Rows that were carried-over state (single seed, mean/p95 ms, shared → fresh):
+
+| scenario | strategy | shared | fresh |
+|---|---|---|---|
+| latency-asymmetry | servo | 194/585 | **5/10** |
+| clock-skew | servo | 23/56 | **12/31** |
+| one-slow-client | servo | 82/291 | **106/390** |
+| command-storm | servo | 8/20 | 11/54 |
+| tab-suspension | hybrid | 3772/29990 | **49/147** |
+| long-stalls | hybrid | 1004/7490 | **73/145** |
+| one-slow-client | hybrid | 410/3718 | **119/466** |
+| clock-skew | hybrid | 118/294 | **16/33** |
+| clock-skew | fll | 102/285 | **11/23** |
+| tab-suspension | pll | 3436/26810 | 285/15 |
+
+**Invalidated:** §25's "`hybrid` loses badly on `long-stalls`, `one-slow-client`
+and `clock-skew`" — the losses were mostly state from the scenario before. §40's
+"three together" table for `clock-skew`, `latency-asymmetry` and
+`one-slow-client`. It went both ways: one-slow-client's servo row was *flattered*
+by state from the rows above it. The first stateful correctors entered the
+table in round 6 (§24), and the table has shared instances ever since. Treat
+every multi-strategy table from §24 on as affected to some unknown degree. Only
+the rows above were re-measured.
+
+### 41b. Every scripted pause rewound the room to 0
+
+Since §40c the room anchors a `pause` at the position the sender reports. The
+engine always sends one. Scenario commands left `PositionMs` unset, so every
+scripted pause reached the room as "pause at 0". In `command-storm` the pause at
+60 s undid the seek to 300 s, and `asymmetry+cmds` measured its convergence
+through a rewind to the start. A scripted `pause`/`play` now carries the
+presser's player position.
+
+- `asymmetry+cmds` convergence: 1300 ms → **100–200 ms** for every strategy.
+- `command-storm` gate events: 6 → 3 (5 → 3 for servo).
+- `command-storm` servo, mean over seeds: 8/29 → **15/32**.
+
+**Invalidated:** §40's `command-storm` improvement (22 → 8) and its
+`asymmetry+cmds` convergence (1600 → 1300). Both were measured through the
+rewind. `TestSchedulingLaundersClockBias` also measured through it; it still
+passes with the rewind gone.
+
+### 41c. Scheduled commands were applied in arrival order
+
+A `pause` pressed inside a `play`'s `CMD_DELAY` is the newer command and also
+the one due first. The sim client walked its pending list in arrival order with
+no seq check. The older play therefore landed last, the member played against a
+paused room, and its `lastAppliedSeq` went *backwards*, which the room then
+reads as a stale anchor. The engine sorts by `when` and drops anything not newer
+than what it has applied, and the sim now does the same. No scenario in the
+table creates that overlap, so **no row moved**. The tests drive the client
+directly.
+
+### 41d. A scheduled seek did not pay for the buffer
+
+A corrective seek charged the buffer model (a segment fetch and a rebuffer), but
+a seek ordered by a *command* only moved the playhead. A member sent from 30 s to
+300 s kept playing at 1.0x while its buffer end crept up from 41 s at a net
+3 s/s. For about 90 s it reported `readyState 2` with nothing buffered, so every
+corrector gated on it and the detector assumed a stall. Both kinds of seek now go
+through one helper, and a command-ordered out-of-buffer seek counts in `seek/OUT`.
+
+This is the change that moved the table, and what it exposed is real. A member
+on a slow link now finishes a user seek **one segment fetch late**: the room
+keeps moving while the member rebuffers. On the `bad` link that is ~400 ms, which
+is inside `ToleranceMs`, so no corrector touches it and the member stays there:
+
+| command-storm (mean over seeds) | before | after |
+|---|---|---|
+| threshold-500 | 12/25 | **105/394** |
+| servo | 15/32 | **78/327** |
+| pll | 18/52 | 13/48 |
+
+Only `pll` closes it, because it is the only law with a phase integrator (the
+integrator §30 rejected for clock-bias reasons). `reconnect` moves the same way
+(servo 243/25 → 273/94). This is the harness showing a cost it previously hid,
+not a regression. Whether a sub-tolerance lag after every user seek is
+acceptable is a product question the harness cannot answer.
+
+### 41e. The detector was evaluated twice per second at the same instant
+
+At every whole second, `run.go` called `Evaluate` once for the 10 Hz loop and
+again for the heartbeat. `Evaluate` dead-reckoned a fixed 100 ms per call, which
+is the CLAUDE.md trap inside the harness that is supposed to measure it. The
+second call saw a frozen player and flagged a stall every second. With the stall
+guard off, it moved the predicted playhead 100 ms past the real one each second
+(2.2 s of phantom lead after 20 s). It also sent two reports per heartbeat. Each
+tick now makes one look, the look runs on elapsed time, and anomaly reports keep
+the engine's 250 ms spacing.
+
+The stall-guard control still misdetects **13** times, so §5's conclusion
+stands on sound data. Most rows move by a few ms. The one worth recording is
+servo on `latency-asymmetry`: mean over seeds 15/71 → **27/99**. Per seed it is
+not a drift. In 3 of 20 seeds (4, 15, 19) the servo takes a "free seek" onto a
+bias that happens to exceed that client's uncertainty band, and each of those
+seeds scores 56–188 ms, while the rest score 4–18 ms. The single-seed row
+(seed 5, 8/15) cannot show this. It is §39's coin flip again, and a known limit
+of a seek gate at `max(tolerance, uncertainty)`, not something this change
+introduced.
+
+### 41f. Join, leave and reconnect did not take the shipped path
+
+`Run` joined every member at t=0 regardless of `JoinAtMs`. A disconnect only
+dropped frames: no `Leave`, no welcome, no clock reset. That made two numbers in
+this log measure things the real system cannot produce:
+
+- **Late join was vacuous.** The joiner's player ran from t=0 while "offline",
+  so it arrived already on the anchor, and a corrector that never corrects passed
+  `TestLateJoinerConverges` *with a better score than the servo* (10 vs 14 ms).
+  It also counted toward `CMD_DELAY` before it existed.
+- **Reconnect was a stale anchor.** A real reconnect gets a welcome with the
+  current seq and anchor. The engine adopts both and resets its clock and
+  detector. It is never stale. It is far out of position against an anchor it
+  holds correctly, which the residual channel can see.
+
+Membership now changes when the connection does. A disconnect is a `Leave` (the
+corrector forgets the member, the gate releases it). A (re)connect is a `Join`
+plus a welcome, with fast clock probes at the start of every session. A joiner's
+player starts when it joins.
+
+- `late-join`, servo, mean over seeds: 9/21 → **54/96**, now with one real
+  out-of-buffer seek. The no-correction control scores 7496 ms. `threshold-500`
+  is 116/225, `hybrid` 611/1048.
+- `reconnect`, servo: resends 1.00 → **0.00**. Recovery is now a correction the
+  room issues (a gap seek), and anchorErr is unchanged at ~272 ms.
+- `reconnect` exposes strategies that cannot recover a returning member:
+  `fll` never seeks (**115 514 ms**), and `step-ramp+conf` / `hybrid+conf` score
+  979 / 2094 ms (mean over seeds). Why the two confidence-gated laws recover
+  slowly was not investigated.
+
+**Invalidated:** §34's headline, *115 603 ms → 250 ms*, which CLAUDE.md and
+`room.go` both quote. That number is a member that reconnected and was left on a
+stale anchor, and that state does not occur. A stale anchor now needs frames lost
+on a connection that stays up (`DropsDown`). A WebSocket does not do that either:
+the hub closes a connection whose outbox overflows instead of dropping frames
+into it. So the resend is a **backstop**. Re-measured in that model
+(`TestStaleAnchorAfterLostFrames`, 2 s of lost frames across a seek): **123 770
+ms without the resend → 31 ms with it**, one resend. The mechanism is sound, but
+the old figure describes a failure a reconnect cannot cause.
+
+**Caution on `skipped` in these two rows.** `SkippedMs` counts forward
+correction seeks, so it charges the returning member 569 s and the joiner 30 s.
+Neither is media the room made anyone miss, so do not read those two rows'
+`skipped` as a cost.
+
+### 41g. The servo's frequency term wound up against its own phase nudge
+
+This is a real defect in shipped code. The simulation could not reach it.
+
+The slope a client reports is fitted to the *raw* residual, so it already
+includes the rate the servo commanded: bias and phase nudge together. The
+frequency integrator treated the whole slope as frequency error:
+
+```
+rate - 1 = b + p,  p = -e/NudgeCloseMs      (b bias, e excess residual)
+e' = 1000(b + p),  b' = -g(b + p)           =>  g·e + 1000·b is conserved
+```
+
+That system has a line of equilibria with rate exactly 1.0 and the residual
+still outside the band. From a standing start it removes only
+`1000/(g·NudgeCloseMs + 1000)` ≈ 26 % of the excess, and once the bias hits its
+±0.06 clamp the stuck excess is 480 ms. From then on every report is a nudge to
+1.0000, which the room suppresses as already held. Only the free-seek and
+`NudgeMaxResidual` escapes could close the gap. The simulation never reached this
+state because its players always keep a back buffer and ~11 s ahead, so a free
+seek is always available below 3 s.
+
+Driven directly against a player model (`corrector_servo_test.go`), 4 minutes of
+nudging:
+
+| member | before | after |
+|---|---|---|
+| 2000 ms ahead, no back buffer | stuck at **+981 ms**, rate 1.0000 | inside the 500 ms band |
+| 800 ms ahead, 0.5 s back buffer | stuck at **+729 ms** | inside the band |
+| 2500 ms behind, 1.05 s ahead, unc 600 | stuck at **-1081 ms** | nudged to the buffer edge, then one free seek |
+| 2000 ms ahead on a 0.99x decoder | stuck at **+900 ms** (rate 1.0101) | inside the band, rate 1.0101 |
+
+The fix records the phase part of the rate the servo last commanded
+(`rate - 1 - bias`, after clamping) and integrates only `slope - phase`. A seek
+leaves the client's rate where it was, so the seek hands that remaining rate to
+the phase term instead of throwing it away with the bias. Rate-mismatch learning
+is unchanged: 0.99x, 0.995x and 1.008x decoders still settle at `1/intrinsic`
+within 0.002.
+
+Because this changes the control law, it was held to the §39 standard before
+shipping: **neutral or better on `anchorErr` and `SkippedMs`, averaged over
+seeds.** Over 60 seeds:
+
+| scenario | anchorErr before → after | skipped before → after | rateTime before → after |
+|---|---|---|---|
+| steady/rate-drift | 15/29 → 15/29 | 0 → 0 | 2136 → 2134 |
+| transient-hiccup | 15/19 → 15/19 | 2300 → 2300 | 40 → 31 |
+| long-stalls | 63/53 → **61/53** | 16550 → 16550 | 265 → 207 |
+| one-slow-client | 100/334 → 100/334 | 4019 → 4019 | 1224 → 1216 |
+| clock-skew | 10/21 → 10/21 | 0 → 0 | 721 → 718 |
+| latency-asymmetry | 33/100 → 33/100 | 10 → 10 | 52 → 48 |
+| asymmetry+cmds | 300/601 → 300/601 | 10 → 10 | 54 → 45 |
+| tab-suspension | 29/41 → 29/41 | 30050 → 30050 | 32 → 26 |
+| reconnect | 271/85 → 271/86 | 569472 → 569471 | 120 → 113 |
+| late-join | 55/96 → 56/97 | 30001 → 30001 | 356 → 351 |
+| slow-to-buffer | 10/16 → 10/16 | 0 → 0 | 11 → 9 |
+| command-storm | 75/318 → 76/323 | 0 → 0 | 638 → 640 |
+
+In short: anchorErr is within 2 ms everywhere and `SkippedMs` is identical.
+Rate-time is equal or lower everywhere except `command-storm` (+2 ms), which
+fits a loop that no longer spends effort fighting itself.
+This measurement proves the fix is safe, not that it helps. No scenario in the
+simulation reaches the stuck state, and the unit test is the evidence for the
+fix. One consequence is reasoned, not measured: a client that cannot apply
+rate at all (`nudgesUnsupported`) now accumulates bias against a phase nudge it
+never ran. That bias clamps at ±0.06 and should do nothing, since that client is
+corrected only by seeks.
+
+### 41h. The gate-timeout test accepted the bug it names
+
+`TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers` says `GATE_TIMEOUT`
+runs from when the member entered the gate, not from the held command. It then
+accepted any hold between 12 and 32 s. Timing from the held command gives
+~30 s, inside that window. Mutating `room.go` to that rule left the whole suite
+green (hold 30 050 ms against the correct 21 060 ms). The window is now
+`GATE_TIMEOUT − 10 s ± 3 s`, and the same mutation fails it.
+
+### The table now
+
+Servo, single seed (as `mise run sim` prints it), against round 11's published
+numbers:
+
+| scenario | round 11 | now | now, mean over seeds |
+|---|---|---|---|
+| steady/rate-drift | 14/26 | 14/26 | 15/27 |
+| transient-hiccup | 12/29 | 16/16 | 15/20 |
+| long-stalls | 54/45 | 60/49 | 62/58 |
+| one-slow-client | 82/291 | 113/392 | 104/347 |
+| clock-skew | 23/56 | 13/34 | 10/19 |
+| latency-asymmetry | 194/585 | 9/16 | 27/98 |
+| asymmetry+cmds | 294/595 | 293/600 | 298/599 |
+| tab-suspension | 28/40 | 29/35 | 28/40 |
+| reconnect | 257/68 | 269/80 | 272/87 |
+| late-join | 12/18 | 66/135 | 54/96 |
+| slow-to-buffer | 14/20 | 11/15 | 10/16 |
+| command-storm | 8/20 | 68/287 | 79/328 |
+
+Two rows are worse, and both are now measuring something real. `late-join` has
+a joiner that actually needs correcting (§41f). `command-storm` has user seeks
+that actually cost a fetch (§41d). Two rows are better only because they no
+longer inherit state from an earlier scenario: `latency-asymmetry` and
+`clock-skew` (§41a). `one-slow-client` got worse for the same reason: the shared
+state had been helping it. The readiness-gate control (§38) is unchanged: gate
+on 11 ms / 0 skipped, gate off 77 ms / 14 470 ms skipped.
