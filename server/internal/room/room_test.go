@@ -126,6 +126,40 @@ func TestAPauseInsideAPlaysLeadStaysWhereTheRoomIs(t *testing.T) {
 	}
 }
 
+// A `play` that reaches a room which is already playing -- two members
+// pressing play close together, or a coalesced play applied after someone
+// else's -- changes nothing about the timeline, but its anchor is projected
+// to its own `when`. A pause inside that lead must stop where the room
+// actually is, not up to CMD_DELAY ahead of it: that is media nobody saw.
+func TestAPauseInsideAPlayOnAPlayingRoomDoesNotJumpAhead(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 100_000, AtServerMs: 0})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "go", Kind: "play"})
+	if play := r.Anchor(); play.AtServerMs <= 1000 || play.PositionMs <= 101_000 {
+		t.Fatalf("the play carries no lead (%+v); the test measures nothing", play)
+	}
+	r.OnCmd(1100, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 101_100})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 101_100 {
+		t.Fatalf("anchor %+v, want paused at 101100, where the room was", got)
+	}
+}
+
+// A play queued behind a seek that has not come due yet: the room is
+// committed to the seek's target, and neither the play's projection nor a
+// backward projection from a start time still in the future is a position.
+func TestAPauseInsideAPlayQueuedBehindASeekStaysAtTheSeekTarget(t *testing.T) {
+	r, _ := newRoom(&scripted{}, vsync.Anchor{PositionMs: 100_000, AtServerMs: 0})
+	r.Join(0, "a", "a")
+	r.Join(0, "b", "b")
+	r.OnCmd(1000, "b", Cmd{ReqID: "s", Kind: "seek", PositionMs: 600_000})
+	r.OnCmd(1050, "b", Cmd{ReqID: "go", Kind: "play"})
+	r.OnCmd(1100, "a", Cmd{ReqID: "p", Kind: "pause", PositionMs: 101_100})
+	if got := r.Anchor(); !got.Paused || got.PositionMs != 600_000 {
+		t.Fatalf("anchor %+v, want paused at the seek target 600000", got)
+	}
+}
+
 // Outside any lead the pauser's own position is still the one that counts --
 // that is the whole point of anchoring a pause where the person stopped.
 func TestAPauseOutsideAnyLeadStopsWhereThePauserStopped(t *testing.T) {
