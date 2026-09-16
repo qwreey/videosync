@@ -770,6 +770,7 @@ describe('what a user can do with descriptors', () => {
 
 describe("a descriptor's capability mask on the HTML5 adapter", () => {
   class El extends EventTarget {
+    ended = false;
     currentTime = 0;
     paused = true;
     playbackRate = 1;
@@ -780,6 +781,20 @@ describe("a descriptor's capability mask on the HTML5 adapter", () => {
     buffered = { length: 0, start: () => 0, end: () => 0 };
   }
   const el = () => new El() as unknown as HTMLVideoElement;
+
+  it('says when the media changes under the element, and when it has ended (D8)', () => {
+    const e = el();
+    const a = new Html5Adapter(e);
+    const heard: string[] = [];
+    for (const t of ['emptied', 'loadstart'] as const) a.on(t, () => { heard.push(t); });
+    e.dispatchEvent(new Event('emptied'));
+    e.dispatchEvent(new Event('loadstart'));
+    assert.deepEqual(heard, ['emptied', 'loadstart'], 'a src swap on the same element went unannounced');
+    assert.equal(a.readState().ended, false);
+    (e as unknown as { ended: boolean }).ended = true;
+    assert.equal(a.readState().ended, true, 'the end of the media is invisible to the engine');
+    a.destroy();
+  });
 
   it('can only take capabilities away', () => {
     const plain = new Html5Adapter(el());

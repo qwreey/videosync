@@ -38,12 +38,14 @@ export class FakeServer {
   readonly tickets = new Set<string>();
   private n = 0;
   readonly tokens: TokenStore = memoryTokens();
+  /** Every answer waits for this: a test holds it to interleave. */
+  gate: Promise<void> = Promise.resolve();
   /** Answers something else for a path: a gateway page, a refusal. */
   override: (path: string) => HttpResult | undefined = () => undefined;
   readonly fetch: AuthFetch;
 
   constructor() {
-    this.fetch = makeAuthFetch((url, init) => Promise.resolve(this.answer(url, init)), this.tokens);
+    this.fetch = makeAuthFetch((url, init) => this.gate.then(() => this.answer(url, init)), this.tokens);
   }
 
   get on(): boolean { return this.methods.length > 0; }

@@ -12,7 +12,7 @@ import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
 import { FakePlayer, FakeTransport, flush, realTime } from './fakes.ts';
-import { CODE, FakeServer, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
+import { CODE, FakeServer, json, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
 import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
@@ -302,6 +302,9 @@ describe('the move-the-room offer', () => {
     assert.equal(media.length, 1);
     assert.equal(media[0]!.kind, 'media');
     assert.equal(media[0]!.mediaKey, 'yt:mine');
+    // Conditional on the room the button was shown against: pressed after
+    // somebody else moved the room, it must not undo their move.
+    assert.equal(media[0]!.ifMediaKey, ROOM_KEY);
   });
 });
 
@@ -602,6 +605,35 @@ describe('the panel', () => {
   });
 });
 
+describe('the engine the page builds', () => {
+  it('has everything D6-D8 need: gesture evidence, the continuation rule, a ticket source', () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    const e = JSON.parse(h.app.api.dump()).engine;
+    assert.deepEqual(e.wiring, { gestures: true, continues: true, ticket: true });
+    // Gesture evidence is what turns acquisition on at all.
+    assert.notEqual(e.acquisition, 'steady', 'a fresh page trusted a video it has not found yet');
+  });
+
+  it('asks the registry in force whether the next episode continues', async () => {
+    // A user's Laftel copy that continues nothing: the page's engine must use it.
+    const lf = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'laftel.json')!.source) as Descriptor;
+    const quiet = { ...lf, examples: lf.examples.filter((x) => 'url' in x) } as Descriptor;
+    delete (quiet as { continues?: unknown }).continues;
+    const source = JSON.stringify(quiet);
+    const reg = buildRegistry({ user: [{ source, sha256: await sha256Hex(source) }], adopted: [], servers: {} }, () => false);
+    const seen: boolean[] = [];
+    for (const providers of [undefined, { registry: reg }]) {
+      const h = harness('https://laftel.net/player/1/2', makeStore(), new Map(), providers ? { providers } : {});
+      h.join();
+      const engine = h.app.api.engine()! as unknown as { d: { continues(a: string, b: string): boolean } };
+      seen.push(engine.d.continues('laftel:/player/1/2', 'laftel:/player/1/3'));
+      unload(h);
+    }
+    assert.deepEqual(seen, [true, false], 'the page used a rule other than its own registry');
+  });
+});
+
 describe('signing in to a server', () => {
   function input(h: H, placeholder: string): FakeElement {
     const e = [...h.root().shadow!.walk()].find((x) => x.tagName === 'INPUT' && x.placeholder === placeholder);
@@ -801,6 +833,72 @@ describe('signing in to a server', () => {
     const session = server.to('/api/session');
     assert.equal(session.length, 1);
     assert.equal(session[0]!.authorization, '', 'sent credentials nobody typed');
+  });
+
+  it('retries a refused room creation once, then asks', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    // A server that refuses every creation, ticket or not.
+    server.override = (p) => (p === '/api/rooms' ? json(401, { error: 'auth_required', methods: ['token'] }) : undefined);
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    assert.equal(server.to('/api/rooms').length, 2, 'not exactly one retry');
+    assert.ok(signInShown(h));
+  });
+
+  it('rejoins a creator as a creator after the server refused its hello', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    await create(h);
+    assert.equal(h.transports.length, 1);
+    assert.equal(JSON.parse(h.app.api.dump()).engine.seedsRoom, true, 'control: the creator seeds the room');
+    h.tr().open();
+    h.tr().deliver({ t: 'error', code: 'auth_required' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.equal(h.transports.length, 2, 'the refused hello was not retried');
+    assert.equal(JSON.parse(h.app.api.dump()).engine.seedsRoom, true,
+      'the retry joined as a plain member: adoptLocalStateOnJoin was lost');
+  });
+
+  it('does nothing with a sign-in that finishes after the member left', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    assert.ok(signInShown(h));
+    let release: () => void = () => {};
+    server.gate = new Promise((res) => { release = res; });
+    input(h, '접속 키').value = KEY;
+    h.visibleButton('로그인')!.click();
+    await flush();
+    h.app.api.leave();
+    release();
+    await h.tick(100);
+    assert.equal(server.to('/api/rooms').length, 1, 'a room was created for a member who had left');
+    assert.equal(h.transports.length, 0);
+  });
+
+  it('hides the signed-in row as soon as the server says otherwise', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    input(h, '접속 키').value = KEY;
+    h.visibleButton('로그인')!.click();
+    await h.tick(50);
+    assert.ok(h.visibleButton('로그아웃'));
+    h.app.api.leave();
+    server.devices.clear(); // the server's key was rotated
+    await create(h);
+    assert.ok(signInShown(h));
+    assert.equal(h.visibleButton('로그아웃'), undefined, 'still showing a sign-in the server just refused');
   });
 
   it('signs out, and is asked again next time', async () => {

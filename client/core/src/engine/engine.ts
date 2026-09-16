@@ -1945,6 +1945,19 @@ export class SyncEngine {
   /** Where this member is in acquiring its video. See `AcquisitionState`. */
   get acquisition(): AcquisitionState { return this.acq.state; }
 
+  /**
+   * Which optional pieces this engine was built with. Every one of them is
+   * optional so that a test can leave it out -- and so a shim that forgets one
+   * degrades silently: without gesture evidence all of D8 is off. `dump()`
+   * reports this, and the app tests pin that the shared wiring supplies all.
+   */
+  get wiring(): { gestures: boolean; continues: boolean; ticket: boolean } {
+    return { gestures: !!this.d.gestures, continues: !!this.d.continues, ticket: !!this.d.ticket };
+  }
+
+  /** Whether this member is still to seed the room from its own player (a creator or namer). */
+  get seedsRoom(): boolean { return this.adoptFor !== null; }
+
   /** Where the room should be right now, or null before the clock settles. */
   expectedMs(): number | null {
     return this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;

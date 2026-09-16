@@ -963,6 +963,8 @@ export function start(p: Platform): App {
           appliedSeq: engine.appliedSeq,
           autoplayBlocked: engine.blocked,
           acquisition: engine.acquisition,
+          wiring: engine.wiring,
+          seedsRoom: engine.seedsRoom,
           followingRoom: engine.followingRoom,
           expectedMs: engine.expectedMs(),
           anchor: engine.currentAnchor,
