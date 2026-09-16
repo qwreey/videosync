@@ -73,6 +73,43 @@ the easier of the two for MAIN-world player-API access. It is also a good testbe
 > and it has never shipped `background.service_worker`, so the manifest's earlier gecko id was a
 > promise the build could not keep.
 
+> **Amended (2026-09-16):** Firefox is supported as a Manifest V2 build (`dist-firefox/`),
+> because Firefox's MV3 background upgrades `ws://` to TLS (BROWSER-FINDINGS §19).
+
+## D6 — Access control is opt-in and pluggable (2026-09-17)
+There is no single right way to close a self-hosted server, so there is not one. Operators range
+from "on my tailnet, no auth" to "public, behind Authelia". The server offers several
+authenticators that can be enabled **together**, off by default:
+
+- `none` — the default; nothing changes.
+- `token` — shared access keys from a file (stored hashed).
+- `password` — per-person users from a file, PBKDF2-SHA256 (Go stdlib; bcrypt/argon2 would be a
+  dependency, so htpasswd files are not read).
+- `proxy` — trust a reverse proxy or forward-auth gateway (Basic at the proxy, tinyauth, Authelia,
+  authentik, oauth2-proxy) **only** when the TCP peer is in `-trusted-proxies`.
+- `oidc` — the server is the only relying party (confidential code flow); clients never see IdP
+  tokens.
+
+Whatever authenticates, the server issues its **own** device token, and a short single-use ticket
+per connection. The room id + rotatable secret stays in every mode (D4). What is gated is a
+setting: room creation by default, joining too if asked. Design: `docs/design/auth.md`.
+
+## D7 — Provider knowledge is data: descriptor JSON sets (2026-09-17)
+Per-site knowledge (what names a video, its canonical URL, which paths are media, which element
+is the player, which capabilities to distrust) lives in declarative JSON **provider descriptors**,
+in the spirit of VIA's keyboard definitions. The repo ships the supported set; a server can offer
+more from a mounted directory; a user can author their own in the extension. Descriptors are data
+evaluated by bundled code — never code (MV3). Server-offered descriptors are applied only after
+the user adopts them, and a changed one asks again. Design: `docs/design/providers.md`.
+
+## D8 — A newly found video is not trusted; the room names its media once (2026-09-17)
+When a client acquires a video (join, navigation, next episode, element swap), the element's
+state is the site's doing until shown otherwise: it is conformed to the room, and only gestured
+changes are sent until startup has settled. A room may exist before anyone names its media and
+stays quiet until then; naming, and moving on to the next episode, use a compare-and-set `media`
+command so racing members cannot fight. Built on measurements taken first.
+Design: `docs/design/acquire.md`.
+
 ## Non-goals (explicit)
 - **No screen capture, no stream relay, no media proxying.** Only URL + position + play state +
   chat cross the wire. Every participant must independently hold legal access to the media.
