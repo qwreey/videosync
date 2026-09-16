@@ -1004,6 +1004,132 @@ YouTube ads (Y3), fullscreen consuming activation (Y4), Laftel in Firefox, a
 member who follows by full-page navigation during a continuation (it leaves
 the room while its page loads, so the gate is released without it).
 
+## 22. The integrated branch, live (`integrate/d678`)
+
+Run on 2026-09-17 against `integrate/d678` at 161abbf: D6 (auth), D7
+(provider descriptors) and D8 (acquisition) together. Helium 153 over CDP on
+the dedicated profile (logged in to Laftel), Firefox 156 over BiDi,
+`local-media.mjs` on :8898, and a `videosyncd` built from the same commit
+with `-verbose`. Both browsers ran the `local-ext.mjs` build
+(`NAME=ext-d678`). Every result file carries a `-d678` suffix; the files the
+earlier sections cite are unchanged.
+
+**A trap in the rig first: a rebuilt unpacked extension can keep its old
+service worker.** Helium was relaunched with `--load-extension` on a
+directory the new build had just overwritten. `content.js` was the new one,
+but the worker was a much older build: its only handler was a `createRoom`
+message (read back with `Debugger.getScriptSource`). Every new
+`runtime.sendMessage` (`auth`, `providers.granted`) failed with *"The
+message port closed before a response was received"*, so `createRoom`
+threw. It looks exactly like a product bug. Calling `chrome.runtime.reload()`
+from the worker unloaded the extension and left orphaned content scripts
+behind, and it did not come back. What worked was a copy at a **new path**,
+which gets a new extension id and so has no cached worker. Before a live
+run, check the worker's source against `dist/sw.js`, or load a build from a
+fresh path. Also: `Target.createTarget` on a `chrome-extension://` URL is
+refused by Helium (`ERR_BLOCKED_BY_CLIENT`), so the options page is opened
+from the worker with `chrome.tabs.create`.
+
+**The existing probes, on the integrated build:**
+
+| probe | result | against the last run |
+|---|---|---|
+| `probe-laftel.mjs` (`laftel-d678.json`) | **8/8**; a seek stays within 0.098 s of its line, rate 1.1 gives 1.097× | §14 8/8 |
+| `probe-laftel-room.mjs`, adapter, 6 trials (`laftel-room-d678.json`) | presser starts 525–545 ms, the other member 551–577 ms; **no jump at landing**; the known re-aim at the press in 3 of 6 trials (145–217 ms); 0 correction seeks, 0 reconciles, 0 late applies; the pause moves the presser by 0; gap 4 s later −180 to +17 ms; rate 1 on leaving | §21: 525–536 / 549–572 ms, re-aim 3 of 6 (91–246 ms), gap −209 to +12 ms |
+| the same with `PRESS=click`, 4 trials (`laftel-room-click-d678.json`) | presser 576–616 ms, other 605–641 ms; re-aim in 2 of 4 (147, 187 ms); 0 correction seeks; gap −156 to +137 ms | §16, 10 trials: 527–696 / 538–717 ms, re-aim 8 of 10 (91–219 ms), gap −190 to +46 ms |
+| `probe-follow.mjs` (`follow-d678.json`) | **11/11**; taken to the room's episode 2.56 s after joining by code, rejoined 0.82 s later; followed the move in 2.40 s. On the wire, B sent **no command**, and A sent only its adoption `seek` and the conditional `media` | §21 11/11, the same commands |
+| `probe-firefox.mjs LOCAL=1`, `FF_EXT=…/ext-d678` (`firefox-local-d678.json`) | **10/10**; taken to the video and rejoined in 1.64 s; conformed at 30.00 s; play from Chromium −139 ms, pause from Firefox −128 ms, play from Firefox 170 ms, seek to 200 s 43 ms; 30 s together at −58 to +71 ms; rate 1 on leaving | §19: −2 / 9 / 53 / 49 ms, 29–81 ms |
+
+The three transition gaps in the Firefox run are larger than in §19. This is
+one run of each, and the pass bound held. The 30 s hold is no worse. It is
+not investigated here.
+
+**D8's cases (`probe-acquire.mjs SCEN=CONTROL`, `acquire-CONTROL-d678.json`),
+compared with §21's "after" column:**
+
+| case | §21 | this build |
+|---|---|---|
+| L1 Laftel follow | none; both paused at 300 s | **none**; both paused at 300 s, one site move absorbed |
+| N1 Laftel end → next episode | no pause; B's continuation `media`, then `play`; both on episode 11 | **`media@0`, `play@0` from B, no pause** (`endsNotSent` 1 each, B `continuations` 1); both on episode 11 (`/93305`) at 27.82 s, playing |
+| A1 | none | none; B paused at 30 s |
+| A2 (1.5 s, past T_settle) | `play` | `play@30000`, as designed |
+| A3 (0.8 s) | none | none; one move absorbed |
+| B1 | none | none; the resume and autoplay put back |
+| D1 | none (4 epochs) | none (4 epochs) |
+| E1 | none (5 epochs) | none (5 epochs) |
+| G1 | none; `endsNotSent` 1 | none; `endsNotSent` 1 on both |
+| P1 trusted click, steady | `pause` | `pause@68219` |
+| P2 trusted click while `guarded` | `play` | `play@30000`, `gesturedIntents` 1 |
+| P3 MPRIS play while `guarded` | `play` | `play@30000`, `gesturedIntents` 1 |
+
+`fought` was 0 in every case, and no case drew an `error` frame.
+
+**Auth (D6), in Helium** (`auth-smoke.json`, 16/16). `videosyncd -auth token
+-auth-tokens-file <one key> -auth-scope create`, driven through the panel by
+`results/drivers/auth-smoke.mjs`:
+
+- `POST /api/rooms` without a ticket answers 401. From the panel, "방 만들기"
+  (create room) does not create a room. The sign-in box appears ("이 서버는
+  로그인이 필요해요", "this server needs sign-in"), with **no key field in the
+  page**: the panel's only inputs are server, name, room, secret and chat.
+- "브라우저에서 로그인" (sign in in the browser) opens a tab on the server's
+  origin (`/auth/login?flow=…`). The tab asks for the access key (a password
+  input) and shows the same code as the panel (`RSXH-9B3M` in both).
+- A wrong key: the tab says "키나 비밀번호가 맞지 않아요" (the key or
+  password is wrong) and offers the form again. The panel keeps waiting, and
+  no room is created.
+- The right key: the tab says "로그인했어요" (signed in). The panel hides the
+  box, shows "서버에 key(으)로 로그인됨" (signed in to the server as key),
+  and **the create is retried by itself**. A is in a fresh room. The worker
+  now gets a ticket (200).
+- Then "로그아웃" (sign out): the device's ticket request answers 401, and A
+  stays in the room, as scope `create` intends.
+- B, in a new window on the invite link, with the device signed out: the link
+  **fills in** room and secret, and B joins by pressing "참가" (join). It is
+  never asked to sign in, the room has 2 members, and the server logged the
+  join and no error. An invite link does not join by itself; that was
+  already the design (`readInviteHash` only pre-fills), and the first
+  attempt of the smoke run assumed otherwise.
+
+The run was made with the device signed out, because both windows share one
+extension and so one device token. Without the sign-out, B's join would not
+have shown anything.
+
+**Provider descriptors (D7), in Helium** (`providers-smoke.json`, 10/10).
+`videosyncd -providers <dir>` with one test descriptor
+(`results/drivers/localmedia.json`: id `localmedia`, key prefix `local`,
+host `127.0.0.1`, `/watch/{n:int}`), driven by
+`results/drivers/providers-smoke.mjs` on the extension's own options page:
+
+- The server refused the first draft: `identity[0]: "watch" is required`,
+  and a `watch` must be `https://`. **An http-only site cannot be described
+  with a working watch URL**, so the descriptor says
+  `https://127.0.0.1/watch/{n}` (nothing serves that). Following to such a
+  page by descriptor is therefore not possible, and was not tested. The
+  directory poll picked up the fixed file within its 5 s.
+- The options page, with the server entered and "불러오기" (load) pressed,
+  lists the descriptor: name, id, `v1.0.0`, `sha256 ab860a8d9189`, hosts,
+  and the tag **"새 설명"** (new description), with "살펴보기" (review) and
+  "거절" (decline).
+- "살펴보기" shows the difference table and "적용" (apply). "적용"
+  succeeds, and the offer now reads "사용 중" (in use). The descriptors in
+  force list it as a **서버** (server) one, "사이트 권한 있음" (site access
+  granted). That grant comes from the probe build, whose manifest already
+  lists `http://127.0.0.1/*`; a shipped build would show "사이트 권한 허용"
+  (grant site access) here, which was not exercised.
+- The open local-media page keeps `127.0.0.1:/watch/1` until reloaded, as
+  the page says. After a reload it keys **`local:/watch/1`**, and a room
+  created there carries that key. `dump()` has no provider notes or
+  conflicts.
+- "사용 중지" (stop using) undoes it: after a reload the page is back on
+  `127.0.0.1:/watch/1`. The profile is left as it was.
+
+Not covered here: `-auth password`/`proxy`/`oidc`, scope `all`, the
+sign-in path from the userscript, a pinned descriptor whose server copy
+changed (the update notice and the diff of an update), auto-adopt,
+`replaceBuiltin`, the site-permission prompt, and Firefox for either D6 or
+D7.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
@@ -1070,6 +1196,15 @@ BROWSER=firefox SCEN=FF node harness/browser/probe-acquire.mjs  # M1/M2/M6/M4, F
 N=3 SCEN=L1,L2,L3,L5 node harness/browser/probe-acquire.mjs     # Laftel, logged in
 SITE=youtube SCEN=L5 node harness/browser/probe-acquire.mjs     # Y5
 SCEN=CONTROL BUILD=... LABEL=... CASES='^(A|B|D|E|G|P)' node harness/browser/probe-acquire.mjs
+```
+
+§22's smoke runs are driven by the scripts in `harness/browser/results/drivers/`,
+against the same Helium with a `local-ext.mjs` build loaded from a path it has
+never loaded before (see §22 for why):
+
+```
+KEY_FILE=<file with the key> node harness/browser/results/drivers/auth-smoke.mjs  # videosyncd -auth token -auth-tokens-file <same file> -auth-scope create
+EXT_ID=<build id> node harness/browser/results/drivers/providers-smoke.mjs         # videosyncd -providers <dir holding drivers/localmedia.json>
 ```
 
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
