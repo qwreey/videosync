@@ -53,6 +53,26 @@ describe('SeekDetector', () => {
     assert.equal(d.seekDetections, 1);
   });
 
+  test('a user seek is detected even when the player reports unready while seeking', () => {
+    // Found live (BROWSER-FINDINGS §19). A real seek drops readyState: ~100 ms
+    // at 1 for an in-buffer seek on a Widevine stream, far longer out of the
+    // buffer on YouTube. The stall guard used to take any unready evaluation
+    // as a buffering stall and re-baseline onto the new position -- so the
+    // jump was absorbed, the seek never reached the room, and the room then
+    // "corrected" the user straight back to where they had left.
+    for (const unreadyFrames of [1, 8]) {
+      const d = new SeekDetector(visible);
+      const frames = [
+        ...Array.from({ length: 20 }, (_, i) => ({ positionS: 10 + i * 0.1 })),
+        // Jumped to 120 s, frozen there while it loads, the room still at ~12 s.
+        ...Array.from({ length: unreadyFrames }, (_, i) => ({ positionS: 120, readyState: 1, bufferedAheadS: 0, expectedS: 12 + i * 0.1 })),
+        ...Array.from({ length: 10 }, (_, i) => ({ positionS: 120 + i * 0.1, expectedS: 13 + i * 0.1 })),
+      ];
+      const kinds = run(d, frames);
+      assert.equal(kinds.filter((k) => k === 'seek').length, 1, `${unreadyFrames} unready frame(s): ${kinds.join(',')}`);
+    }
+  });
+
   test('a jump the room also made is NOT a seek -- this is the two-diff rule', () => {
     const d = new SeekDetector(visible);
     // The element jumps AND the room jumps with it: a server correction.

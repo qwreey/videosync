@@ -135,12 +135,29 @@ export class SeekDetector {
 
     let observation: Observation = { kind: 'idle' };
 
+    const roomDiff = expectedMs === null ? Infinity : Math.abs(posMs - expectedMs);
+    const jumped = (playerDiff: number) =>
+      expectedMs !== null && playerDiff > this.cfg.seekThresholdMs && roomDiff > this.cfg.seekThresholdMs;
+
     if (this.stallSuspected) {
-      // Frozen playback is not a seek. Hold the reference so the gap cannot
-      // accumulate into a false positive; the readiness gate handles the rest.
+      // Frozen playback is not a seek: while stalled the reference is held at
+      // the frozen position, so no gap can accumulate into a false positive.
+      //
+      // But "unready" is not the same as "frozen". A seek drops readyState
+      // itself -- ~100 ms at 1 on Laftel even inside the buffer, far longer on
+      // YouTube outside it -- and the position has ALREADY moved when it
+      // does. Re-baselining onto that position without looking absorbed the
+      // jump, so the seek never reached the room and the room then corrected
+      // the user straight back (BROWSER-FINDINGS §19). Compare against the
+      // held reference first: a stall leaves it where it is, a seek does not.
+      if (jumped(Math.abs(posMs - this.lastKnownPos))) {
+        this.seekDetections++;
+        observation = { kind: 'seek', positionS: s.positionS };
+      } else {
+        this.stallDetections++;
+        observation = { kind: 'stall' };
+      }
       this.lastKnownPos = posMs;
-      this.stallDetections++;
-      observation = { kind: 'stall' };
     } else {
       if (wasStalled) {
         this.lastKnownPos = posMs; // just resumed: re-baseline, do not judge the gap
@@ -148,13 +165,7 @@ export class SeekDetector {
         this.lastKnownPos += dt * s.rate;
       }
 
-      const playerDiff = Math.abs(posMs - this.lastKnownPos);
-      const roomDiff = expectedMs === null ? Infinity : Math.abs(posMs - expectedMs);
-      if (
-        expectedMs !== null &&
-        playerDiff > this.cfg.seekThresholdMs &&
-        roomDiff > this.cfg.seekThresholdMs
-      ) {
+      if (jumped(Math.abs(posMs - this.lastKnownPos))) {
         this.seekDetections++;
         this.lastKnownPos = posMs;
         observation = { kind: 'seek', positionS: s.positionS };
