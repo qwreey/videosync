@@ -44,6 +44,12 @@ export interface CmdFrame {
   positionMs: number;
   mediaKey?: string;
   mediaUrl?: string;
+  /**
+   * `media` only: apply only while the room is on exactly this key, else the
+   * server answers `error{code:"media_stale"}` and takes no seq. `""` names a
+   * room that names nothing yet.
+   */
+  ifMediaKey?: string;
 }
 
 /**
@@ -68,6 +74,10 @@ export interface HbFrame {
   rttMs: number;
   clockSamples: number;
   suspended: boolean;
+  /** On its way to the room's media: present, not ready (PROTOCOL §4 amendment). */
+  acquiring?: boolean;
+  /** The element reached its end. Sent with `suspended: true`. */
+  finished?: boolean;
 }
 
 export interface ChatInFrame { t: 'chat'; text: string }
