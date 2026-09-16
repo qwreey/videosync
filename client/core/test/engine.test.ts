@@ -1540,6 +1540,58 @@ describe('the clock estimate follows a clock that steps', () => {
         now += 5000;
       }
       assert.ok(c.rttMs <= 30, `seed ${seed}: settled on a ${c.rttMs} ms sample`);
+      assert.equal(c.steps, 0, `seed ${seed}: took a step on a clock that never moved`);
+    }
+  });
+
+  /**
+   * One exchange as the wire really carries it: `t0` rounded by the engine,
+   * the server's stamps truncated to whole ms (Go's `UnixMilli`), `t1` left
+   * fractional, and a server clock that is not on a millisecond boundary of
+   * ours.
+   */
+  function wireProbe(c: ServerClock, clientNow: number, offset: number, up: number, hold: number, down: number): void {
+    const recv = clientNow + up + offset;
+    c.addSample({
+      t0: Math.round(clientNow), tRecv: Math.floor(recv), tSend: Math.floor(recv + hold),
+      t1: clientNow + up + hold + down,
+    });
+  }
+
+  it('does not mistake whole-millisecond wire stamps for a step, on a loopback path', () => {
+    // A server on this machine -- which the extension exists to reach -- has
+    // RTTs under 2 ms, where the stamps' own rounding is as large as the path.
+    // Each sample can then sit up to 1.5 ms outside its rtt/2, so two of them
+    // up to 3 ms apart with nothing having changed.
+    let falseSteps = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const rnd = lcg(seed);
+      const c = new ServerClock();
+      const offset = 1_700_000_000_000 + rnd();
+      let now = 1000 + rnd();
+      for (let i = 0; i < 300; i++) {
+        wireProbe(c, now, offset, rnd() * 1.5, rnd() * 0.5, rnd() * 0.3);
+        now += 5000 + rnd();
+      }
+      falseSteps += c.steps;
+    }
+    assert.equal(falseSteps, 0, `${falseSteps} steps on a clock that never moved`);
+  });
+
+  it('control: a 20 ms step on that same loopback path is still taken', () => {
+    for (const seed of [21, 22, 23, 24, 25]) {
+      const rnd = lcg(seed);
+      const c = new ServerClock();
+      let offset = 1_700_000_000_000 + rnd();
+      let now = 1000 + rnd();
+      for (let i = 0; i < 20; i++) { wireProbe(c, now, offset, rnd() * 1.5, rnd() * 0.5, rnd() * 0.3); now += 5000; }
+      offset += 20;
+      // Long enough that rounding cannot make the RTT negative, which
+      // discards a sample outright; the step would then be taken one probe on.
+      wireProbe(c, now, offset, 1.5 + rnd(), rnd() * 0.5, rnd() * 0.3);
+      assert.equal(c.steps, 1, `seed ${seed}`);
+      assert.ok(Math.abs(c.serverNow(now) - (now + offset)) <= c.uncertaintyMs + 1.5,
+        `seed ${seed}: ${c.serverNow(now) - (now + offset)} ms off after the step`);
     }
   });
 

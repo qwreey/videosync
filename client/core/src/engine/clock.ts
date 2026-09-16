@@ -19,10 +19,16 @@ export interface ClockSample {
 }
 
 /**
- * Rounding allowance for the consistency test below: `t0` goes out as an
- * integer (the wire is int64) while `t1` is fractional.
+ * Rounding allowance for the consistency test below, per PAIR of samples.
+ *
+ * Every stamp on the wire is a whole millisecond: `t0` is rounded here (up to
+ * 0.5 ms off), and the server truncates `tRecv` and `tSend` (each up to 1 ms
+ * early). Worked through the offset and RTT formulas, that puts one sample up
+ * to 1.5 ms outside its own rtt/2 -- so two samples of an unchanged offset can
+ * be 3 ms further apart than their half-RTTs allow. With 1 ms here, a server on
+ * loopback, where the path is no longer than the rounding, took false steps.
  */
-const CONSISTENCY_SLACK_MS = 1;
+const CONSISTENCY_SLACK_MS = 3;
 
 export class ServerClock {
   private offsetMs = 0;
@@ -43,8 +49,10 @@ export class ServerClock {
    * never improves just because the offset moved, so without this the stale
    * estimate survived for as long as the socket did: `when`s fired late by the
    * length of the sleep and every report was stamped with the wrong instant.
-   * The test is exact rather than a tuned threshold, so path jitter cannot
-   * trip it; slow drift does, eventually, which is also a real change.
+   * The test is a bound rather than a tuned threshold -- exact but for the
+   * wire's millisecond rounding, which `CONSISTENCY_SLACK_MS` covers -- so path
+   * jitter cannot trip it; slow drift does, eventually, which is also a real
+   * change.
    */
   addSample(s: ClockSample): boolean {
     const rtt = (s.t1 - s.t0) - (s.tSend - s.tRecv);
