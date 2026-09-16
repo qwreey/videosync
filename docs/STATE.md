@@ -47,7 +47,7 @@ Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
   `SyncEngine` (the protocol client), media-key normalization, element resolution,
   `SwappableAdapter`, the `Panel` (`src/ui/`) and the shared wiring (`src/app/bootstrap.ts`).
   Written without TS parameter properties so `node --experimental-strip-types` runs it with no
-  build step. 70 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
+  build step. 72 unit tests, plus 14 end-to-end tests that drive real engines over real WebSockets
   against a real `videosyncd` (`mise run test-e2e`). The engine keeps an always-on ring of the last
   250 wire frames; `VideoSync.dump()` returns it with everything else as one JSON object.
 - `client/userscript` — the Tampermonkey bundle (`npm run build` → one IIFE, ~64 kB).
@@ -201,9 +201,9 @@ still ends ~100 ms behind — Laftel starts a just-seeked or briefly-played elem
 
 Small things left from this, none blocking:
 
-- The gate still flickers open for ~100 ms during every Laftel seek (`readyState` 1). Harmless
-  since the §15 fix, but a play pressed inside that window waits for the next report. A report
-  taken while the element is `seeking` inside its buffer is not evidence of buffering.
+- ~~The gate flickers open for ~100 ms during every Laftel seek.~~ **Fixed:** an unready report
+  with ≥ 1 s buffered is held back for up to 300 ms (`reportsDeferred`); 0 gate frames in the
+  next live run (BROWSER-FINDINGS §16).
 - A pause leaves any member within `seekToleranceMs` where they are, so the next play starts with
   that offset (the presser is re-aimed; the others are not). Measured 35–200 ms.
 - The 500 ms floor itself is now only the length of the wait after pressing play. Whether it can

@@ -183,6 +183,8 @@ export interface EngineStats {
   playFailures: number;
   /** Local plays re-paused to wait for the room's `when` (`holdLocalPlay`). */
   playsHeld: number;
+  /** Reports held back because the player looked unready mid-seek. */
+  reportsDeferred: number;
   /** Times the player disagreed with the anchor long enough to be re-applied. */
   reconciles: number;
 }
@@ -217,6 +219,20 @@ const TRACE_MAX = 250;
  */
 const HOLD_SEEK_TOLERANCE_MS = 80;
 
+/**
+ * A report that says "not ready" while plenty is buffered ahead is, almost
+ * always, a report taken in the middle of an in-buffer seek: on Laftel
+ * `readyState` sits at 1 for ~100 ms of every one, with 45 s buffered
+ * (BROWSER-FINDINGS §14). Sent, it gates the room for nothing until the next
+ * report, and a play pressed in that window waits for it. Such a report is
+ * held back for at most this long -- long enough for a seek, short enough that
+ * a player genuinely stuck with a full buffer is still reported as stuck.
+ * Deferring, not rewriting: whatever is sent is what the player said.
+ */
+const TRANSIENT_UNREADY_MS = 300;
+/** Buffered ahead above which "not ready" is taken to be transient. */
+const TRANSIENT_UNREADY_MIN_AHEAD_S = 1;
+
 export class SyncEngine {
   readonly cfg: EngineConfig;
   readonly clock = new ServerClock();
@@ -226,7 +242,7 @@ export class SyncEngine {
     correctionsNudge: 0, nudgesUnsupported: 0, reportsSent: 0, timeSamples: 0,
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
     skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0,
-    playFailures: 0, playsHeld: 0, reconciles: 0,
+    playFailures: 0, playsHeld: 0, reportsDeferred: 0, reconciles: 0,
   };
 
   private readonly d: EngineDeps;
@@ -271,6 +287,8 @@ export class SyncEngine {
   private unsubscribeAdapter: (() => void) | null = null;
   /** When the player first started disagreeing with the anchor about play state. */
   private disagreeingSince = 0;
+  /** When the player started looking unready with a full buffer, or 0. */
+  private transientUnreadySince = 0;
   /** One-shot: the creator's seed, consumed by the first settled evaluation. */
   private pendingAdopt = false;
 
@@ -870,6 +888,17 @@ export class SyncEngine {
     }
 
     if (!report) return;
+
+    if (report.readyState < 3 && report.bufferedAheadS >= TRANSIENT_UNREADY_MIN_AHEAD_S) {
+      if (this.transientUnreadySince === 0) this.transientUnreadySince = now;
+      if (now - this.transientUnreadySince < TRANSIENT_UNREADY_MS) {
+        this.stats.reportsDeferred++;
+        return;
+      }
+    } else {
+      this.transientUnreadySince = 0;
+    }
+
     // Watching something else is the same fact to the server as a suspended tab
     // or a refused autoplay: this member cannot follow the room and no
     // correction can change that. Absent, not behind.

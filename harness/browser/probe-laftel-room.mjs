@@ -165,7 +165,7 @@ async function main() {
       gapAtEndMs: Math.round((posAt(sp, e2) - posAt(so, e2)) * 1000),
     };
     const st = await iso(p, 'return VideoSync.engine().stats');
-    trial.presserStats = { cmdsSent: st.cmdsSent, playsHeld: st.playsHeld, correctionsSeek: st.correctionsSeek, lateApplies: st.lateApplies, reconciles: st.reconciles };
+    trial.presserStats = { cmdsSent: st.cmdsSent, playsHeld: st.playsHeld, reportsDeferred: st.reportsDeferred, correctionsSeek: st.correctionsSeek, lateApplies: st.lateApplies, reconciles: st.reconciles };
     results.trials.push(trial);
     flush();
     console.log(JSON.stringify(trial));

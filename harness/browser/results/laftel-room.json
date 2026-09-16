@@ -1,5 +1,5 @@
 {
-  "when": "2026-09-16T08:38:56.755Z",
+  "when": "2026-09-16T08:56:31.672Z",
   "server": "http://127.0.0.1:8787",
   "trials": [
     {
@@ -7,15 +7,15 @@
       "play": {
         "presserJumps": [],
         "presserHeld": true,
-        "presserStartsAfterMs": 518,
-        "otherStartsAfterMs": 529,
-        "presserNetMs": -594,
-        "gapAtEndMs": -83
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 548,
+        "presserNetMs": -610,
+        "gapAtEndMs": 8
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 30,
-        "gapAtEndMs": -108
+        "otherStopsAfterMs": 24,
+        "gapAtEndMs": -6
       },
       "presserStats": {
         "cmdsSent": 3,
@@ -28,22 +28,17 @@
     {
       "presser": "b",
       "play": {
-        "presserJumps": [
-          {
-            "atMs": 15,
-            "jumpMs": -108
-          }
-        ],
+        "presserJumps": [],
         "presserHeld": true,
-        "presserStartsAfterMs": 518,
-        "otherStartsAfterMs": 530,
-        "presserNetMs": -613,
-        "gapAtEndMs": -20
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 532,
+        "presserNetMs": -469,
+        "gapAtEndMs": -5
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 25,
-        "gapAtEndMs": -35
+        "otherStopsAfterMs": 26,
+        "gapAtEndMs": -29
       },
       "presserStats": {
         "cmdsSent": 2,
@@ -58,15 +53,15 @@
       "play": {
         "presserJumps": [],
         "presserHeld": true,
-        "presserStartsAfterMs": 518,
+        "presserStartsAfterMs": 517,
         "otherStartsAfterMs": 533,
-        "presserNetMs": -615,
-        "gapAtEndMs": -167
+        "presserNetMs": -472,
+        "gapAtEndMs": -86
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 27,
-        "gapAtEndMs": -202
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -95
       },
       "presserStats": {
         "cmdsSent": 5,
@@ -81,20 +76,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 18,
-            "jumpMs": -202
+            "atMs": 16,
+            "jumpMs": -95
           }
         ],
         "presserHeld": true,
         "presserStartsAfterMs": 517,
-        "otherStartsAfterMs": 539,
-        "presserNetMs": -723,
-        "gapAtEndMs": -59
+        "otherStartsAfterMs": 534,
+        "presserNetMs": -668,
+        "gapAtEndMs": -123
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 23,
-        "gapAtEndMs": -81
+        "otherStopsAfterMs": 25,
+        "gapAtEndMs": -151
       },
       "presserStats": {
         "cmdsSent": 4,
@@ -109,20 +104,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 18,
-            "jumpMs": -81
+            "atMs": 17,
+            "jumpMs": -151
           }
         ],
         "presserHeld": true,
         "presserStartsAfterMs": 517,
-        "otherStartsAfterMs": 532,
-        "presserNetMs": -661,
-        "gapAtEndMs": -70
+        "otherStartsAfterMs": 534,
+        "presserNetMs": -741,
+        "gapAtEndMs": -71
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 27,
-        "gapAtEndMs": -88
+        "otherStopsAfterMs": 24,
+        "gapAtEndMs": -96
       },
       "presserStats": {
         "cmdsSent": 7,
@@ -137,20 +132,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 16,
-            "jumpMs": -87
+            "atMs": 12,
+            "jumpMs": -96
           }
         ],
         "presserHeld": true,
-        "presserStartsAfterMs": 518,
-        "otherStartsAfterMs": 534,
-        "presserNetMs": -688,
-        "gapAtEndMs": -178
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 530,
+        "presserNetMs": -639,
+        "gapAtEndMs": -117
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 23,
-        "gapAtEndMs": -185
+        "otherStopsAfterMs": 25,
+        "gapAtEndMs": -156
       },
       "presserStats": {
         "cmdsSent": 6,
@@ -165,20 +160,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 12,
-            "jumpMs": -186
+            "atMs": 13,
+            "jumpMs": -155
           }
         ],
         "presserHeld": true,
-        "presserStartsAfterMs": 517,
-        "otherStartsAfterMs": 531,
-        "presserNetMs": -776,
-        "gapAtEndMs": -178
+        "presserStartsAfterMs": 518,
+        "otherStartsAfterMs": 535,
+        "presserNetMs": -726,
+        "gapAtEndMs": -152
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 26,
-        "gapAtEndMs": -203
+        "otherStopsAfterMs": 25,
+        "gapAtEndMs": -189
       },
       "presserStats": {
         "cmdsSent": 9,
@@ -193,20 +188,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 16,
-            "jumpMs": -203
+            "atMs": 13,
+            "jumpMs": -189
           }
         ],
         "presserHeld": true,
         "presserStartsAfterMs": 517,
         "otherStartsAfterMs": 534,
-        "presserNetMs": -712,
-        "gapAtEndMs": -142
+        "presserNetMs": -699,
+        "gapAtEndMs": -78
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 30,
-        "gapAtEndMs": -172
+        "otherStopsAfterMs": 24,
+        "gapAtEndMs": -85
       },
       "presserStats": {
         "cmdsSent": 8,
@@ -221,20 +216,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 12,
-            "jumpMs": -172
+            "atMs": 11,
+            "jumpMs": -85
           }
         ],
         "presserHeld": true,
-        "presserStartsAfterMs": 517,
-        "otherStartsAfterMs": 534,
-        "presserNetMs": -700,
-        "gapAtEndMs": -72
+        "presserStartsAfterMs": 508,
+        "otherStartsAfterMs": 525,
+        "presserNetMs": -664,
+        "gapAtEndMs": -93
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 26,
-        "gapAtEndMs": -92
+        "otherStopsAfterMs": 24,
+        "gapAtEndMs": -103
       },
       "presserStats": {
         "cmdsSent": 11,
@@ -249,20 +244,20 @@
       "play": {
         "presserJumps": [
           {
-            "atMs": 13,
-            "jumpMs": -93
+            "atMs": 15,
+            "jumpMs": -103
           }
         ],
         "presserHeld": true,
         "presserStartsAfterMs": 517,
-        "otherStartsAfterMs": 530,
-        "presserNetMs": -690,
-        "gapAtEndMs": -110
+        "otherStartsAfterMs": 531,
+        "presserNetMs": -698,
+        "gapAtEndMs": -188
       },
       "pause": {
         "presserJumps": [],
-        "otherStopsAfterMs": 25,
-        "gapAtEndMs": -117
+        "otherStopsAfterMs": 23,
+        "gapAtEndMs": -192
       },
       "presserStats": {
         "cmdsSent": 10,
@@ -276,63 +271,63 @@
   "summary": {
     "playPresserBackJumpMs": [
       0,
-      -108,
       0,
-      -202,
-      -81,
-      -87,
-      -186,
-      -203,
-      -172,
-      -93
+      0,
+      -95,
+      -151,
+      -96,
+      -155,
+      -189,
+      -85,
+      -103
     ],
     "playGapAtEndMs": [
-      -83,
-      -20,
-      -167,
-      -59,
-      -70,
-      -178,
-      -178,
-      -142,
-      -72,
-      -110
+      8,
+      -5,
+      -86,
+      -123,
+      -71,
+      -117,
+      -152,
+      -78,
+      -93,
+      -188
     ],
     "playPresserStartsAfterMs": [
+      517,
+      517,
+      517,
+      517,
+      517,
+      517,
       518,
-      518,
-      518,
       517,
-      517,
-      518,
-      517,
-      517,
-      517,
+      508,
       517
     ],
     "playOtherStartsAfterMs": [
-      529,
-      530,
-      533,
-      539,
+      548,
       532,
+      533,
       534,
-      531,
       534,
+      530,
+      535,
       534,
-      530
+      525,
+      531
     ],
     "playPresserNetMs": [
-      -594,
-      -613,
-      -615,
-      -723,
-      -661,
-      -688,
-      -776,
-      -712,
-      -700,
-      -690
+      -610,
+      -469,
+      -472,
+      -668,
+      -741,
+      -639,
+      -726,
+      -699,
+      -664,
+      -698
     ],
     "pausePresserLargestJumpMs": [
       0,
@@ -347,106 +342,106 @@
       0
     ],
     "pauseGapAtEndMs": [
-      -108,
-      -35,
-      -202,
-      -81,
-      -88,
-      -185,
-      -203,
-      -172,
-      -92,
-      -117
+      -6,
+      -29,
+      -95,
+      -151,
+      -96,
+      -156,
+      -189,
+      -85,
+      -103,
+      -192
     ]
   },
   "notes": [],
-  "roomId": "8t6ixfBEu-2zVLInB6c4QQ",
+  "roomId": "Dn0liVLiamoxdRinw1eNFA",
   "clock": {
     "a": {
-      "rttMs": 0.599999999627471,
-      "uncertaintyMs": 0.2999999998137355
+      "rttMs": 0.8999999985098839,
+      "uncertaintyMs": 0.44999999925494194
     },
     "b": {
-      "rttMs": 1.099999999627471,
-      "uncertaintyMs": 0.5499999998137355
+      "rttMs": 0.599999999627471,
+      "uncertaintyMs": 0.2999999998137355
     }
   },
   "traceA": [
     {
-      "at": 12946,
+      "at": 12933,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "seek",
-        "positionMs": 400664,
-        "reqId": "oc4kwtlnJ_4-1"
+        "positionMs": 453698,
+        "reqId": "hYqH1UUPnPg-1"
       }
     },
     {
-      "at": 12947,
+      "at": 12934,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 1,
-        "when": 1789547937518,
+        "when": 1789548992437,
         "kind": "seek",
-        "reqId": "oc4kwtlnJ_4-1",
-        "anchor": "400664P@1789547937518"
+        "reqId": "hYqH1UUPnPg-1",
+        "anchor": "453698P@1789548992437"
       }
     },
     {
-      "at": 17270,
+      "at": 17269,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "play",
-        "positionMs": 400752,
-        "reqId": "oc4kwtlnJ_4-2"
+        "positionMs": 453813,
+        "reqId": "hYqH1UUPnPg-2"
       }
     },
     {
-      "at": 17273,
+      "at": 17272,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 2,
-        "when": 1789547942343,
+        "when": 1789548997273,
         "kind": "play",
-        "reqId": "oc4kwtlnJ_4-2",
-        "anchor": "400664-@1789547942343"
+        "reqId": "hYqH1UUPnPg-2",
+        "anchor": "453698-@1789548997273"
       }
     },
     {
-      "at": 22205,
+      "at": 22202,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "pause",
-        "positionMs": 405001,
-        "reqId": "oc4kwtlnJ_4-3"
+        "positionMs": 458035,
+        "reqId": "hYqH1UUPnPg-3"
       }
     },
     {
-      "at": 22211,
+      "at": 22202,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 3,
-        "when": 1789547946777,
+        "when": 1789549001705,
         "kind": "pause",
-        "reqId": "oc4kwtlnJ_4-3",
-        "anchor": "405001P@1789547946777"
+        "reqId": "hYqH1UUPnPg-3",
+        "anchor": "458035P@1789549001705"
       }
     },
     {
-      "at": 28123,
+      "at": 28125,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 4,
-        "when": 1789547953194,
+        "when": 1789549008128,
         "kind": "play",
-        "anchor": "405001-@1789547953194"
+        "anchor": "458035-@1789549008128"
       }
     },
     {
@@ -455,97 +450,97 @@
       "t": "state",
       "detail": {
         "seq": 5,
-        "when": 1789547957623,
+        "when": 1789549012554,
         "kind": "pause",
-        "anchor": "409421P@1789547957623"
+        "anchor": "462516P@1789549012554"
       }
     },
     {
-      "at": 38970,
+      "at": 38968,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "play",
-        "positionMs": 409546,
-        "reqId": "oc4kwtlnJ_4-4"
+        "positionMs": 462630,
+        "reqId": "hYqH1UUPnPg-4"
       }
     },
     {
-      "at": 38972,
+      "at": 38971,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 6,
-        "when": 1789547964042,
+        "when": 1789549018972,
         "kind": "play",
-        "reqId": "oc4kwtlnJ_4-4",
-        "anchor": "409421-@1789547964042"
+        "reqId": "hYqH1UUPnPg-4",
+        "anchor": "462516-@1789549018972"
       }
     },
     {
-      "at": 43900,
+      "at": 43894,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "pause",
-        "positionMs": 413773,
-        "reqId": "oc4kwtlnJ_4-5"
+        "positionMs": 467019,
+        "reqId": "hYqH1UUPnPg-5"
       }
     },
     {
-      "at": 43903,
+      "at": 43895,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 7,
-        "when": 1789547968473,
+        "when": 1789549023398,
         "kind": "pause",
-        "reqId": "oc4kwtlnJ_4-5",
-        "anchor": "413773P@1789547968473"
+        "reqId": "hYqH1UUPnPg-5",
+        "anchor": "467019P@1789549023398"
       }
     },
     {
-      "at": 49816,
+      "at": 49812,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 8,
-        "when": 1789547974887,
+        "when": 1789549029814,
         "kind": "play",
-        "anchor": "413773-@1789547974887"
+        "anchor": "467019-@1789549029814"
       }
     },
     {
-      "at": 54744,
+      "at": 54742,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 9,
-        "when": 1789547979315,
+        "when": 1789549034243,
         "kind": "pause",
-        "anchor": "418186P@1789547979315"
+        "anchor": "471376P@1789549034243"
       }
     },
     {
-      "at": 60661,
+      "at": 60656,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "play",
-        "positionMs": 418357,
-        "reqId": "oc4kwtlnJ_4-6"
+        "positionMs": 471596,
+        "reqId": "hYqH1UUPnPg-6"
       }
     },
     {
-      "at": 60662,
+      "at": 60660,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 10,
-        "when": 1789547985733,
+        "when": 1789549040660,
         "kind": "play",
-        "reqId": "oc4kwtlnJ_4-6",
-        "anchor": "418186-@1789547985733"
+        "reqId": "hYqH1UUPnPg-6",
+        "anchor": "471376-@1789549040660"
       }
     },
     {
@@ -554,85 +549,74 @@
       "t": "cmd",
       "detail": {
         "kind": "pause",
-        "positionMs": 422538,
-        "reqId": "oc4kwtlnJ_4-7"
+        "positionMs": 475711,
+        "reqId": "hYqH1UUPnPg-7"
       }
     },
     {
-      "at": 65590,
+      "at": 65589,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 11,
-        "when": 1789547990160,
+        "when": 1789549045091,
         "kind": "pause",
-        "reqId": "oc4kwtlnJ_4-7",
-        "anchor": "422538P@1789547990160"
+        "reqId": "hYqH1UUPnPg-7",
+        "anchor": "475711P@1789549045091"
       }
     },
     {
-      "at": 65590,
-      "dir": "rx",
-      "t": "state",
-      "detail": {
-        "seq": 11,
-        "when": 1789547990161,
-        "kind": "resync",
-        "anchor": "422538P@1789547990160"
-      }
-    },
-    {
-      "at": 71508,
+      "at": 71504,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 12,
-        "when": 1789547996578,
+        "when": 1789549051506,
         "kind": "play",
-        "anchor": "422538-@1789547996578"
+        "anchor": "475711-@1789549051506"
       }
     },
     {
-      "at": 76434,
+      "at": 76430,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 13,
-        "when": 1789548001005,
+        "when": 1789549055932,
         "kind": "pause",
-        "anchor": "426865P@1789548001005"
+        "anchor": "480094P@1789549055932"
       }
     },
     {
-      "at": 82348,
+      "at": 82342,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "play",
-        "positionMs": 427153,
-        "reqId": "oc4kwtlnJ_4-8"
+        "positionMs": 480348,
+        "reqId": "hYqH1UUPnPg-8"
       }
     },
     {
-      "at": 82350,
+      "at": 82345,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 14,
-        "when": 1789548007421,
+        "when": 1789549062346,
         "kind": "play",
-        "reqId": "oc4kwtlnJ_4-8",
-        "anchor": "426865-@1789548007421"
+        "reqId": "hYqH1UUPnPg-8",
+        "anchor": "480094-@1789549062346"
       }
     },
     {
-      "at": 87272,
+      "at": 87271,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "pause",
-        "positionMs": 431204,
-        "reqId": "oc4kwtlnJ_4-9"
+        "positionMs": 484459,
+        "reqId": "hYqH1UUPnPg-9"
       }
     },
     {
@@ -641,98 +625,98 @@
       "t": "ack",
       "detail": {
         "seq": 15,
-        "when": 1789548011844,
+        "when": 1789549066775,
         "kind": "pause",
-        "reqId": "oc4kwtlnJ_4-9",
-        "anchor": "431204P@1789548011844"
+        "reqId": "hYqH1UUPnPg-9",
+        "anchor": "484459P@1789549066775"
       }
     },
     {
-      "at": 93193,
+      "at": 93189,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 16,
-        "when": 1789548018263,
+        "when": 1789549073191,
         "kind": "play",
-        "anchor": "431204-@1789548018263"
+        "anchor": "484459-@1789549073191"
       }
     },
     {
-      "at": 98128,
+      "at": 98117,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 17,
-        "when": 1789548022699,
+        "when": 1789549077619,
         "kind": "pause",
-        "anchor": "435633P@1789548022699"
+        "anchor": "488882P@1789549077619"
       }
     },
     {
-      "at": 104033,
+      "at": 104024,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "play",
-        "positionMs": 435905,
-        "reqId": "oc4kwtlnJ_4-10"
+        "positionMs": 489048,
+        "reqId": "hYqH1UUPnPg-10"
       }
     },
     {
-      "at": 104035,
+      "at": 104026,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 18,
-        "when": 1789548029105,
+        "when": 1789549084027,
         "kind": "play",
-        "reqId": "oc4kwtlnJ_4-10",
-        "anchor": "435633-@1789548029105"
+        "reqId": "hYqH1UUPnPg-10",
+        "anchor": "488882-@1789549084027"
       }
     },
     {
-      "at": 108958,
+      "at": 108950,
       "dir": "tx",
       "t": "cmd",
       "detail": {
         "kind": "pause",
-        "positionMs": 440029,
-        "reqId": "oc4kwtlnJ_4-11"
+        "positionMs": 493225,
+        "reqId": "hYqH1UUPnPg-11"
       }
     },
     {
-      "at": 108959,
+      "at": 108951,
       "dir": "rx",
       "t": "ack",
       "detail": {
         "seq": 19,
-        "when": 1789548033530,
+        "when": 1789549088454,
         "kind": "pause",
-        "reqId": "oc4kwtlnJ_4-11",
-        "anchor": "440029P@1789548033530"
+        "reqId": "hYqH1UUPnPg-11",
+        "anchor": "493225P@1789549088454"
       }
     },
     {
-      "at": 114873,
+      "at": 114865,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 20,
-        "when": 1789548039943,
+        "when": 1789549094867,
         "kind": "play",
-        "anchor": "440029-@1789548039943"
+        "anchor": "493225-@1789549094867"
       }
     },
     {
-      "at": 119803,
+      "at": 119791,
       "dir": "rx",
       "t": "state",
       "detail": {
         "seq": 21,
-        "when": 1789548044373,
+        "when": 1789549099293,
         "kind": "pause",
-        "anchor": "444369P@1789548044373"
+        "anchor": "497561P@1789549099293"
       }
     }
   ]

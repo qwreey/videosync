@@ -435,6 +435,34 @@ describe('buffering', () => {
     assert.equal(hb.bufferedAheadS, 0);
     assert.equal(hb.suspended, false, 'buffering is not absence: the room may wait for us');
   });
+
+  it('holds back an unready report while the buffer is full, briefly', async () => {
+    // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
+    // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(1000);
+    h.tr.sent.length = 0;
+    h.player.readyState = 1;                      // mid-seek, buffer intact
+    await h.vt.advance(150);
+    h.player.readyState = 4;                      // seeked
+    await h.vt.advance(1500);
+    assert.ok(h.tr.sentOf('hb').every((f) => f.readyState === 4),
+      'a mid-seek readyState reached the server');
+    assert.ok(h.engine.stats.reportsDeferred >= 1);
+  });
+
+  it('still reports a player that stays unready with a full buffer', async () => {
+    // The deferral is bounded: a decoder that is genuinely stuck must still
+    // be able to hold the room.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(1000);
+    h.tr.sent.length = 0;
+    h.player.readyState = 1;
+    await h.vt.advance(2000);
+    assert.ok(h.tr.sentOf('hb').some((f) => f.readyState === 1), 'a stuck player was never reported');
+  });
 });
 
 describe('reconnect', () => {

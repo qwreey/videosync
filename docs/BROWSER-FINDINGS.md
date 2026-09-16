@@ -689,6 +689,18 @@ be a per-provider constant and is not worth it at this size.
 hold switched off): the presser is held, never steps back, and starts within
 100 ms of the other member.
 
+### The gate flicker, gone
+
+Every remaining gate frame in the runs above came from a report sent in the
+middle of an in-buffer seek the engine itself was applying:
+`ReadyState:1, BufferedAheadS:47`. The engine now holds back a report that says
+"not ready" while at least 1 s is buffered ahead, for at most 300 ms — a seek's
+worth — and sends whatever the player says after that, so a player that is
+genuinely stuck is still reported. A further ten trials on the rebuilt
+extension: **0 gate frames** on the wire (2–4 per run before), and the play
+numbers unchanged — presser 508–518 ms, other member 525–548 ms, no step back
+after the hold, median gap ~90 ms.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

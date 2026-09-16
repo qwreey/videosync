@@ -464,8 +464,9 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       await waitFor(() => a.engine.appliedSeq >= 1 && b.engine.appliedSeq >= 1, 4000, 'the seek');
       await sleep(500);
 
-      // `a` presses play on their own player.
+      // `a` presses play on their own player, and the element says so.
       await a.player.play();
+      a.player.emit('play');
       const t0 = performance.now();
       const samples: Array<[number, number, boolean, boolean]> = [];
       while (performance.now() - t0 < 2500) {
@@ -474,10 +475,14 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
         await sleep(10);
       }
 
-      assert.equal(a.engine.stats.playsHeld, 1, 'the press was not held');
+      // The hold may re-aim the presser at the moment of the press, while
+      // paused; what must not happen is a step back once they are moving.
+      const held = samples.findIndex((q) => q[2]);
       let worst = 0;
-      for (let i = 1; i < samples.length; i++) worst = Math.min(worst, samples[i]![1] - samples[i - 1]![1]);
-      assert.ok(worst > -0.1, `the presser's picture jumped back ${(-worst).toFixed(2)}s`);
+      for (let i = Math.max(1, held + 1); i < samples.length; i++) {
+        worst = Math.min(worst, samples[i]![1] - samples[i - 1]![1]);
+      }
+      assert.ok(worst > -0.1, `the presser's picture jumped back ${(-worst).toFixed(2)}s after being held`);
 
       // Both start together: the presser is not moving while the other waits.
       const startA = samples.findLast((q) => q[2])?.[0] ?? 0;
@@ -487,6 +492,7 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
         `presser started at ${startA.toFixed(0)} ms, the other at ${startB.toFixed(0)} ms`);
       const pa = a.player.readState().positionS, pb = b.player.readState().positionS;
       assert.ok(Math.abs(pa - pb) < 0.1, `presser at ${pa.toFixed(3)}s, other at ${pb.toFixed(3)}s`);
+      assert.equal(a.engine.stats.playsHeld, 1, 'the press was not held');
       assert.equal(a.engine.stats.correctionsSeek, 0);
       assert.equal(a.engine.stats.cmdsSent, 2, 'the hold leaked a command (seek + play expected)');
     } finally {
