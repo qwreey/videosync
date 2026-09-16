@@ -67,6 +67,14 @@ async function syncNow(): Promise<string[]> {
   const scripting = (chrome as { scripting?: typeof chrome.scripting }).scripting;
   if (scripting?.registerContentScripts) {
     const existing = await scripting.getRegisteredContentScripts({ ids: [SCRIPT_ID] }).catch(() => []);
+    // The worker starts often and resyncs every time; re-registering an
+    // unchanged script would open a window in which a loading page misses it.
+    const same = (a: readonly string[] = [], b: readonly string[] = []) =>
+      a.length === b.length && a.every((x, i) => x === b[i]);
+    if (existing.length === 1 && same(existing[0]!.matches, patterns) &&
+        same(existing[0]!.excludeMatches, builtin)) {
+      return patterns;
+    }
     if (existing.length) await scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });
     if (patterns.length) {
       await scripting.registerContentScripts([{
