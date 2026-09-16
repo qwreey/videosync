@@ -20,6 +20,11 @@ export interface MediaKeyRule {
   /** Returns the key body, or null to fall through to the generic rule. */
   key(u: URL): string | null;
   /**
+   * False for a provider whose identity is ONLY what `key` finds: where it
+   * finds nothing, the page names no media, and the path must not stand in.
+   */
+  readonly pathFallback?: boolean;
+  /**
    * Where the media with this key body can be opened. Only for a provider
    * whose identity is not simply its path; the generic rule is origin + path.
    */
@@ -48,6 +53,10 @@ const YOUTUBE: MediaKeyRule = {
     // reached the same video by different routes.
   },
   url: (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`,
+  // Search, a channel, a feed, `/watch` with no `v`: no media, even while the
+  // miniplayer keeps playing the room's video over them. Keyed on the path
+  // they took that member out of the room and offered to move the room there.
+  pathFallback: false,
 };
 
 /**
@@ -101,8 +110,9 @@ export function normalizeMediaKey(href: string): string | null {
   const id = providerId(u.hostname);
   const explicit = rule?.key(u) ?? null;
   if (explicit) return `${id}:${explicit}`;
+  if (rule?.pathFallback === false) return null;
 
-  // Generic: the path is the identity. Trailing slash and case in the host are
+  // Generic:the path is the identity. Trailing slash and case in the host are
   // noise; the path's own case is not (ids are often case-sensitive).
   const path = u.pathname.replace(/\/+$/, '');
   if (path === '' || path === '/') return null;

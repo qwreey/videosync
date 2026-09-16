@@ -59,6 +59,16 @@ describe('mediaKey normalization', () => {
   it('returns null where there is no media to key on', () => {
     for (const url of [
       'https://www.youtube.com/',
+      // YouTube's identity is the id and nothing else. A page with no id is
+      // not "the media at this path": keying it would take a member watching
+      // the room's video in the miniplayer out of the room the moment they
+      // open search, and offer to move the whole room onto the search page.
+      'https://www.youtube.com/results?search_query=x',
+      'https://www.youtube.com/watch',
+      'https://www.youtube.com/watch?list=PL1',
+      'https://www.youtube.com/@somechannel',
+      'https://www.youtube.com/feed/subscriptions',
+      'https://youtu.be/',
       'https://laftel.net',
       'about:blank',
       'javascript:alert(1)',
