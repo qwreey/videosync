@@ -178,14 +178,29 @@ describe('SeekDetector', () => {
   });
 
   test('a video sitting at its end is not a stall', () => {
-    const d = new SeekDetector(visible);
     // Frozen currentTime at the duration: the stall signature minus the reason.
     // Gating the room on this would hold it for a member who has finished.
-    const frames = Array.from({ length: 30 }, (_, i) => ({
-      positionS: 600, durationS: 600, paused: true, expectedS: 600 + i * 0.1,
-    }));
-    run(d, frames);
-    assert.equal(d.stallDetections, 0, 'the end of the video was reported as buffering');
+    //
+    // The frames have to be ones only the end-of-media guard can decide: a
+    // finished element reports readyState 2 with nothing buffered ahead, and
+    // may still read `paused: false`. A paused readyState-4 frame is not a
+    // stall with or without the guard, so it proves nothing about it.
+    for (const paused of [true, false]) {
+      const d = new SeekDetector(visible);
+      const frames = Array.from({ length: 30 }, (_, i) => ({
+        positionS: 600, durationS: 600, paused, readyState: 2, bufferedAheadS: 0,
+        expectedS: 600 + i * 0.1,
+      }));
+      run(d, frames);
+      assert.equal(d.stallDetections, 0, `paused=${paused}: the end of the video was reported as buffering`);
+    }
+    // Control: the same frames short of the end ARE a stall.
+    const d = new SeekDetector(visible);
+    run(d, Array.from({ length: 30 }, (_, i) => ({
+      positionS: 300, durationS: 600, paused: false, readyState: 2, bufferedAheadS: 0,
+      expectedS: 300 + i * 0.1,
+    })));
+    assert.ok(d.stallDetections > 0, 'control: a frozen, unready element mid-video is a stall');
   });
 
   test('slope measures the rate error and is immune to a constant offset', () => {
