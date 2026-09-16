@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/qwreey/videosync/server/internal/room"
 	vsync "github.com/qwreey/videosync/server/internal/sync"
@@ -493,6 +494,53 @@ func TestAJoinerIntoAnOpenRoomGetsNoGateFrame(t *testing.T) {
 	f.dial(id, secret, "a", "yt:abc")
 	c, _, _ := f.dial(id, secret, "c", "yt:abc")
 	c.quiet(300*time.Millisecond, "gate")
+}
+
+func TestNamesAndMediaKeysAreBounded(t *testing.T) {
+	// Both are repeated to every member -- the name in every roster and chat
+	// line, the key in every state, ack and welcome -- so, like chat text and
+	// mediaUrl, they need a bound of their own. MaxFrameBytes alone let one
+	// member make every later frame to everyone ~64 KiB.
+	huge := strings.Repeat("가", 10_000) // 30 000 bytes; two of them fit a hello
+	f := start(t, nil)
+
+	// A room created with an oversized key is not named by it (under the
+	// 4 KiB body cap, which would otherwise hide the question)...
+	id, secret := f.createRoom(strings.Repeat("k", 2000))
+	a, welcome, err := f.dial(id, secret, huge, huge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...and neither is it named by an oversized first hello.
+	if k, _ := welcome["mediaKey"].(string); len(k) > room.MaxMediaKey {
+		t.Fatalf("room took a %d-byte mediaKey", len(k))
+	}
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	for _, mem := range a.await("members")["members"].([]any) {
+		name, _ := mem.(map[string]any)["name"].(string)
+		if len(name) > f.hub.cfg.MaxNameLen {
+			t.Fatalf("roster carries a %d-byte name, cap %d", len(name), f.hub.cfg.MaxNameLen)
+		}
+		if !utf8.ValidString(name) {
+			t.Fatal("the truncated name is not valid UTF-8")
+		}
+	}
+	if f.hub.cfg.MaxNameLen <= 0 {
+		t.Fatal("no name cap configured by default")
+	}
+
+	// A media command naming an oversized key is refused, and takes no seq.
+	a.send(room.Cmd{ReqID: "m", Kind: "media", MediaKey: huge})
+	if e := a.await("error"); e["code"] != "bad_cmd" {
+		t.Fatalf("oversized media command answered %v", e)
+	}
+	b.quiet(200*time.Millisecond, "state")
+
+	// The control: a key of honest size still repoints the room.
+	a.send(room.Cmd{ReqID: "m2", Kind: "media", MediaKey: "yt:" + strings.Repeat("x", 100)})
+	if st := b.await("state"); st["kind"] != "media" {
+		t.Fatalf("media command of normal size did not go through: %v", st)
+	}
 }
 
 func TestOnlyPlayIsHeld(t *testing.T) {

@@ -186,7 +186,12 @@ func (r *Room) SetSink(s Sink)           { r.sink = s }
 // has committed to a media: changing it afterwards is a `media` command, which
 // takes a seq and re-anchors like every other transition.
 func (r *Room) SetMedia(key, url string) {
-	r.anchor.MediaKey, r.anchor.MediaURL = key, SanitizeMediaURL(url)
+	r.anchor.MediaKey, r.anchor.MediaURL = SanitizeMediaKey(key), SanitizeMediaURL(url)
+	if r.anchor.MediaKey == "" {
+		// A URL is only followable to the key it normalises to; without one it
+		// points nowhere a client will go.
+		r.anchor.MediaURL = ""
+	}
 }
 
 // IDs returns the member ids in a stable order.
@@ -318,6 +323,10 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 	case "media":
 		if m.MediaKey == "" {
 			r.send(id, Error{Code: "bad_cmd", Msg: "media command needs a mediaKey"})
+			return
+		}
+		if SanitizeMediaKey(m.MediaKey) == "" {
+			r.send(id, Error{Code: "bad_cmd", Msg: "mediaKey too long"})
 			return
 		}
 	default:

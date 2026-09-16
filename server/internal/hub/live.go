@@ -78,6 +78,9 @@ func (l *Live) join(c *conn, h room.Hello) (room.Welcome, []room.Msg, error) {
 	}
 	now := l.hub.clock.NowMs()
 	l.conns[c.id] = c
+	if n := l.hub.cfg.MaxNameLen; n > 0 && len(h.Name) > n {
+		h.Name = truncateUTF8(h.Name, n)
+	}
 	l.room.Join(now, c.id, h.Name)
 	if l.hub.cfg.Verbose {
 		log.Printf("[%s] join %s name=%q mediaKey=%q members=%d",
