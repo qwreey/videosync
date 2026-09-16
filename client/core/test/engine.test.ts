@@ -207,6 +207,28 @@ describe('scheduled transitions', () => {
     assert.equal(h.engine.stats.lateApplies, 1);
   });
 
+  it('re-times a pending transition when the clock estimate steps', async () => {
+    // The timer was converted through the old offset. A sleep that moved the
+    // server 1.5 s ahead of our estimate would otherwise fire this play 1.5 s
+    // after everybody else's.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join();
+    const when = h.vt.now + OFFSET + 2000;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: h.vt.now + OFFSET,
+      anchor: { positionMs: 10_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other', kind: 'play',
+    });
+    await h.vt.advance(100);
+    const t0 = h.vt.now;
+    h.tr.deliver({ t: 'time.reply', t0, tRecv: t0 + OFFSET + 1500, tSend: t0 + OFFSET + 1500 });
+    assert.equal(h.engine.clock.steps, 1);
+    await h.vt.advance(300);
+    assert.equal(h.player.paused, true, 'transitioned early');
+    await h.vt.advance(200);
+    assert.equal(h.player.paused, false, 'still waiting on the timer set through the old offset');
+  });
+
   it('discards a state at or below lastAppliedSeq', async () => {
     const h = harness({ paused: true, positionS: 0 });
     await h.join({}, 5);
@@ -947,6 +969,34 @@ describe('queued player work re-checks the session when it runs', () => {
     assert.ok(Math.abs(h.player.positionS - expected) < 0.5, `at ${h.player.positionS}s, room at ${expected}s`);
   });
 
+  it('a click to sync queued behind a slow seek does nothing once the link drops', async () => {
+    // Queued while the session was fine, run after it ended: aimed through a
+    // reset clock, it seeks to about -1.8e12 ms, which an element clamps to 0.
+    const h = harness({ paused: true, positionS: 0, autoplayBlocked: true });
+    await h.join({}, 0, 2);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 100_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'play',
+    });
+    await h.vt.advance(300);
+    assert.equal(h.engine.blocked, true);
+
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await flush();
+    assert.equal(parked.length, 1);
+    h.player.autoplayBlocked = false;
+    void h.engine.resumeAfterGesture();          // the user clicks; queued behind the seek
+    h.tr.drop('link blip');
+    parked[0]!.release();
+    await flush(); await flush();
+    assert.deepEqual(parked.slice(1).map((p) => p.pos), [], 'the click aimed with no clock');
+    assert.equal(h.player.paused, true);
+    assert.equal(h.engine.blocked, true, 'the click was spent on a session that had ended');
+  });
+
   /** A joined engine on a swappable adapter; `answerTime` false leaves the clock unsettled. */
   async function swapJoined(answerTime: boolean) {
     const vt = new VirtualTime();
@@ -1395,7 +1445,9 @@ describe('a local play waits for the room (holdLocalPlay)', () => {
     await h.vt.advance(100);
     await h.player.play();                       // ...and presses play before the ack
     h.player.emit('play');
-    await h.vt.advance(30);
+    // Long enough to play past `seekToleranceMs` but not past the hold's own
+    // tolerance: the ack below is a hold, and is aimed as tightly as one.
+    await h.vt.advance(150);
     const cmds = h.tr.sentOf('cmd');
     assert.deepEqual(cmds.map((c) => c.kind), ['seek', 'play']);
     assert.ok(seeks.every((s) => s >= 59), `pulled back to ${seeks.join(', ')}`);
@@ -1422,6 +1474,39 @@ describe('a local play waits for the room (holdLocalPlay)', () => {
     assert.equal(h.player.paused, false);
     assert.ok(seeks.every((s) => s >= 59), `pulled back to ${seeks.join(', ')}`);
     assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['seek', 'play']);
+  });
+
+  it('a seek of ours lost with the connection does not stop the next play being held', async () => {
+    // Nothing the old socket carried will come back. Still counted as on its
+    // way, it made the hold stand aside for an ack that could not arrive, and
+    // the presser played on ahead of the room.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    h.player.positionS = 60;                     // the user scrubs...
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['seek']);
+
+    h.tr.drop('link blip');                      // ...and the seek goes down with the link
+    await h.vt.advance(600);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 10_000, atServerMs: OFFSET, paused: true, mediaKey: 'yt:abc' },
+      members: [
+        { id: 'me-1', name: 'm0', suspended: false, ready: true },
+        { id: 'other-1', name: 'm1', suspended: false, ready: true },
+      ],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(400);
+
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(100);
+    assert.equal(h.player.paused, true, 'not held for the room');
+    assert.ok(Math.abs(h.player.positionS - 10) < 0.001, `held at ${h.player.positionS}`);
   });
 
   it('control: a play with no seek outstanding is still held at the anchor', async () => {
@@ -1468,6 +1553,34 @@ describe('the creator adopting a room', () => {
     assert.equal(pausedBetween, false);
     assert.equal(h.player.paused, false);
     assert.equal(h.engine.appliedSeq, 2);
+  });
+
+  it('a play of ours the server dropped does not shape a later ack', async () => {
+    // Acks come back in order, so a command older than the one acked that is
+    // still unanswered was dropped. Kept, a dropped play made the paused ack of
+    // a later seek look like the first half of an adoption, and alone in the
+    // room that ack was skipped: the member kept playing in a paused room.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 1);
+    await h.vt.advance(500);
+    await h.player.play();                       // the user presses play; it is dropped
+    h.player.emit('play');
+    await h.vt.advance(100);
+    h.player.positionS = 60;                     // then scrubs
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['play', 'seek']);
+
+    const t = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[1]!.reqId, seq: 1, when: t, emittedAt: t,
+      anchor: { positionMs: 60_000, atServerMs: t, paused: true, mediaKey: 'yt:abc' },
+      kind: 'seek',
+    });
+    await h.vt.advance(100);
+    assert.equal(h.player.paused, true, 'kept playing in a paused room');
+    assert.equal(h.engine.stats.reconciles, 0);
   });
 
   it('control: with somebody else in the room it waits for the play like any other press', async () => {
