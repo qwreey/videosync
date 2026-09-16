@@ -54,7 +54,7 @@ func registerAuthFlags() authFlags {
 		clientID:     flag.String("oidc-client-id", "", "for -auth oidc: this server's client id at the IdP"),
 		clientSecret: flag.String("oidc-client-secret-file", "", "for -auth oidc: a file holding the client secret"),
 		allow: flag.String("oidc-allow", "",
-			"for -auth oidc: who may sign in, comma list of sub:<id>, email:<addr>, group:<name> (empty: anyone the IdP accepts)"),
+			"for -auth oidc: who may sign in, comma list of sub:<id>, email:<addr> (only if the IdP marks it email_verified), group:<name> (empty: anyone the IdP accepts)"),
 	}
 }
 

@@ -113,7 +113,7 @@ whatever the server accepts, and each device signs in once.
 | `token` | `-auth-tokens-file keys.txt` | types a shared access key. One key per line, or `sha256:<hex>` of one. Make keys random: `openssl rand -base64 24` |
 | `password` | `-auth-users-file users.txt` | types a user name and password. Write each line with `videosyncd hash-password alice` (reads the password from stdin; PBKDF2-SHA256, so htpasswd/bcrypt files cannot be used) |
 | `proxy` | `-trusted-proxies 127.0.0.1` and optionally `-auth-user-header Remote-User` | signs in to your reverse proxy or gateway (Basic auth, tinyauth, Authelia, authentik, oauth2-proxy) in a browser tab |
-| `oidc` | `-oidc-issuer https://idp.example.com -oidc-client-id videosync -oidc-client-secret-file secret.txt -public-url https://sync.example.com`, optionally `-oidc-allow email:you@example.com,group:friends` | signs in to your identity provider in a browser tab. Register `https://sync.example.com/auth/oidc/callback` with it |
+| `oidc` | `-oidc-issuer https://idp.example.com -oidc-client-id videosync -oidc-client-secret-file secret.txt -public-url https://sync.example.com`, optionally `-oidc-allow email:you@example.com,group:friends` | signs in to your identity provider in a browser tab. Register `https://sync.example.com/auth/oidc/callback` with it. An `email:` entry matches only an address the IdP marks verified; for an IdP that does not say (Entra ID), allow by `sub:` or `group:` |
 
 ```bash
 ./videosyncd -addr :443 -tls-cert fullchain.pem -tls-key privkey.pem \

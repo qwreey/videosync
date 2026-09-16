@@ -330,6 +330,11 @@ func TestTheAllowlistDecidesWhoMayLogIn(t *testing.T) {
 		{allow: []string{"group:admins", "sub:user-2"}, ok: false},
 		// An address the IdP says it has not verified is anyone's to type.
 		{allow: []string{"email:alice@example.org"}, lie: func(c map[string]any) { c["email_verified"] = false }, ok: false},
+		// Nor one it says nothing about (nOAuth): some IdPs omit the claim and
+		// let users set any address. The sub still works.
+		{allow: []string{"email:alice@example.org"}, lie: func(c map[string]any) { delete(c, "email_verified") }, ok: false},
+		{allow: []string{"alice@example.org"}, lie: func(c map[string]any) { delete(c, "email_verified") }, ok: false},
+		{allow: []string{"user-1"}, lie: func(c map[string]any) { delete(c, "email_verified") }, ok: true},
 	} {
 		idp := newIdP(t)
 		idp.claims = tc.lie

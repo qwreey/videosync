@@ -291,14 +291,17 @@ func (rp *relyingParty) checkIDToken(tok, nonce, issuer string, now time.Time) (
 	return c, nil
 }
 
-// allowed applies -oidc-allow. An email counts only if the IdP has not said
-// it is unverified: anyone can type any address into an account profile.
+// allowed applies -oidc-allow. An email counts only if the IdP says it is
+// verified. Not merely "has not said it is unverified": some IdPs (Entra ID)
+// omit the claim while letting users set their own address, and an allowlist
+// entry matched by whoever typed that address is the nOAuth bug. Such an IdP
+// can still be allowlisted by `sub:` or `group:`.
 func (rp *relyingParty) allowed(c idClaims) bool {
 	if len(rp.cfg.Allow) == 0 {
 		return true
 	}
 	email := ""
-	if c.Email != "" && (c.EmailVerified == nil || *c.EmailVerified) {
+	if c.Email != "" && c.EmailVerified != nil && *c.EmailVerified {
 		email = strings.ToLower(c.Email)
 	}
 	for _, a := range rp.cfg.Allow {

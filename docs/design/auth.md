@@ -130,7 +130,7 @@ what it left open:
   `http.CrossOriginProtection`). The code is 8 characters from a 27-letter alphabet without
   lookalikes or vowels.
 - **`-oidc-allow`** entries are `sub:<id>`, `email:<addr>`, `group:<name>`, or bare (matched
-  against sub and email). An email counts only if the IdP does not say it is unverified. The
+  against sub and email). An email counts only if the IdP marks it `email_verified: true` *(integration: was "unless it says unverified"; an IdP that omits the claim, such as Entra ID, lets users type any address — the nOAuth class — so it is matched by `sub:` or `group:` instead)*. The
   `groups` scope is requested only when a `group:` entry exists, since some IdPs refuse scopes the
   client was not configured with. With no `-oidc-allow` the server logs that anyone the IdP accepts
   can use it. Discovery is fetched on first use and cached for an hour; the token call uses
