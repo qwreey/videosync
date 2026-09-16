@@ -62,6 +62,15 @@ describe('authFetch', () => {
     assert.equal(DEVICE_HEADER, 'X-VideoSync-Device', 'the name the server checks');
   });
 
+  it('takes a redirect for a gateway even when it lands on JSON', async () => {
+    // Something in front of the server sent us elsewhere; whatever answered
+    // there is not videosyncd, and a token in it is not ours to keep.
+    const r = rig(() => ({ status: 200, body: JSON.stringify({ token: 'ELSEWHERE' }), contentType: 'application/json', redirected: true }));
+    const out = await r.fetch(S, '/api/session', { method: 'POST', credentials: { key: 'k' } });
+    assert.equal(out.gateway, true);
+    assert.equal(await r.tokens.get(ORIGIN), '', 'kept a token from wherever the redirect went');
+  });
+
   it('sends a token only to the origin that issued it', async () => {
     const r = rig((c) => c.url.endsWith('/api/session')
       ? json(200, { token: 'DEVICE' }) : json(200, {}));

@@ -118,6 +118,36 @@ describe('a browser login', () => {
     assert.equal(out && !(out as { ok: boolean }).ok && (out as { why: string }).why, 'expired', 'polled past its own deadline');
   });
 
+  it('waits as long as a rate-limited poll is told to', async () => {
+    const r = await started();
+    r.server.override = (p) => (p === '/api/auth/poll' ? json(429, { error: 'rate_limited', retryMs: 7000 }) : undefined);
+    await r.vt.advance(POLL_MS);
+    assert.equal(r.server.to('/api/auth/poll').length, 1);
+    await r.vt.advance(POLL_MS * 2);
+    assert.equal(r.server.to('/api/auth/poll').length, 1, 'polled again before the server said to');
+    await r.vt.advance(7000 - POLL_MS * 2);
+    assert.equal(r.server.to('/api/auth/poll').length, 2, 'control: polls again once the wait is over');
+    r.auth.cancelBrowser();
+  });
+
+  it('is cancelled even when the cancel lands while its last poll is out', async () => {
+    const r = await started();
+    r.server.browserDone = true;
+    let release: () => void = () => {};
+    r.server.gate = new Promise((res) => { release = res; });
+    let out: Awaited<typeof r.done> | null = null;
+    void r.done.then((o) => { out = o; });
+    await r.vt.advance(POLL_MS); // the poll that will say "done" is on its way
+    r.auth.cancelBrowser();
+    release();
+    await flush();
+    await flush();
+    assert.ok(out, 'never settled');
+    assert.equal((out as { ok: boolean }).ok, false, 'a cancelled login still signed in');
+    assert.equal((out as { why?: string }).why, 'cancelled');
+    assert.equal(r.server.to('/api/auth/poll').length, 1, 'control: the poll did come back done');
+  });
+
   it('opens only a web page', async () => {
     for (const bad of ['javascript:alert(1)', 'chrome-extension://x/options.html', 'file:///etc/passwd']) {
       const r = rig(['oidc']);
