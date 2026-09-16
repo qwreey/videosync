@@ -179,13 +179,15 @@ files with one id: the first by file name is served and the other logged. At mos
 poll compares name, size and mtime (`-providers-poll`, default 5 s; a rewrite that keeps both
 needs `SIGHUP`). `SIGHUP` is only caught when `-providers` is given, and is registered before the
 listener starts. `GET /api/providers/<id>.json` sends `ETag: "<sha256>"` and answers
-`If-None-Match`. **Not done: gating the listing behind `-auth-scope`** — that flag belongs to the
-auth track (D6), which is not merged; the route is registered next to `/api/rooms` so it can take
-the same gate.
+`If-None-Match`. ~~Not done: gating the listing behind `-auth-scope`.~~ *Integration:* with access control on, the
+listing and its files need a device token, in every scope (PROTOCOL §8).
 
-**Extension.** The worker's `providers.fetch` only fetches `/api/providers` and
-`/api/providers/<id>.json` of the given server (it can reach addresses a page cannot, so it
-fetches nothing else a caller names). The content script learns the granted hosts from the worker
+**Extension.** ~~The worker's `providers.fetch`~~ *(integration:)* The provider index and files go
+through the same `auth` relay as every other HTTP call, on one path allowlist (`isAuthPath` in
+`authfetch.ts`: `/api/providers` and `/api/providers/<id>.json`, GET only), with the device token
+for a server that gates its listing; the userscript uses `GM_xmlhttpRequest` for them the same
+way. Auto-adopt (`autoUpdateStored`) reads the stored state before and after fetching and writes
+only the `adopted` key, so a change made on the options page meanwhile stands. The content script learns the granted hosts from the worker
 (`providers.granted`), since it has no `permissions` API. Added sites get the bundled
 `content.js` through `scripting.registerContentScripts` with the manifest's pages in
 `excludeMatches`, plus a double-injection guard in `content.ts`; the registration is redone on

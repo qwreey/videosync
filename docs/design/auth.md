@@ -151,8 +151,32 @@ what it left open:
   still needs its own browser login, which is the point.
 - **Login tabs** are opened by the extension's background (`tabs.create`, no permission needed)
   and by `GM_openInTab`, so no popup blocker is involved after the `begin` round trip.
-- **`/api/providers`** does not exist on this branch. `auth.Server.ConsumeTicket` and `Refuse`
-  are what the providers work should call to gate listing under `-auth-scope create`.
+- **`/api/providers`** did not exist on this branch. *(Integration, with D7 merged:)* the listing
+  and its files are gated whenever access control is on, like room creation, and admitted by a
+  device token (`auth.Server.Admits`) — not a ticket, since an index plus its files is several
+  requests. `authfetch.ts` therefore sends the device token to two things: `/api/ticket` and the
+  provider paths (GET only), still only to the origin that issued it; a 401 there does not drop
+  it. The provider paths are on the same allowlist (`isAuthPath`), so the extension worker has one
+  fetch path, not two.
+
+*Integration (review fixes):*
+
+- **The worker takes the server from the message.** The first build built the URL from the
+  settings store and refused a call whose `server` differed. That was not a boundary — every
+  extension context can write the store — and it broke every HTTP call from a tab whose store
+  cache was older than another tab's choice of server. The boundary is the path allowlist and the
+  per-origin tokens. The content script's store (`sharedstore.ts`) now follows
+  `chrome.storage.onChanged` besides.
+- **A gateway's page is never a sign-in**: `gateway` is checked before the status everywhere, and
+  success needs a stored token (`signedIn`). A late 401 forgets only the token it refused.
+- **The browser-login deadline is local** (`LOGIN_WAIT_MS` from `begin`), not the server's
+  `expiresMs` compared with this machine's clock.
+- **A ticket that never comes** fails the connect attempt after `TICKET_TIMEOUT_MS` (20 s) and takes
+  the normal backoff; `fetchHttp` has a 15 s deadline. Network failures fetching a ticket count in
+  `stats.ticketFailures`, not `connectFailures`.
+- **Rate-limit identity**: `X-Real-IP` and the `X-Forwarded-For` hop must agree when both arrive;
+  otherwise the proxy's own address is charged.
+- **`-public-url` must be an origin** (no path): the rest of the flow assumes the root.
 
 ## Open, to measure before documenting
 

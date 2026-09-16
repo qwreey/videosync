@@ -583,7 +583,8 @@ then re-share with the people you meant to include.
 ### Amendment: provider descriptors are served over HTTP (D7)
 
 Descriptors (`docs/design/providers.md`) never travel in a frame. A server started with
-`-providers DIR` offers them over two more endpoints, both with the same CORS as `/api/rooms`:
+`-providers DIR` offers them over two more endpoints, both with the same CORS as `/api/rooms`, and
+— with access control on — gated like room creation (§8: a device token admits):
 
 - `GET /api/providers` → `{"schema":1,"providers":[{"id","name","version","sha256","hosts"}]}`,
   sorted by id. A server without `-providers` answers `{"schema":1,"providers":[]}`. A client
@@ -654,7 +655,8 @@ Opt-in (`-auth`, default `none`: none of this exists and nothing is gated). Desi
 Whatever authenticates a person, the server hands out two credentials of its own:
 
 - a **device token** — `base64url(json).base64url(HMAC-SHA256)`, payload
-  `{"v":1,"sub","via","iat","exp"}` (ms). Stateless; kept by the client, sent only to `/api/ticket`.
+  `{"v":1,"sub","via","iat","exp"}` (ms). Stateless; kept by the client, sent only to `/api/ticket`
+  and to the provider listing (below), and only to the origin that issued it.
   Refused once expired, once the signing key changes, or once the method named in `via` is turned off.
 - a **ticket** — random, single-use, 60 s, in memory. Spent by `POST /api/rooms` (body `ticket`)
   and, with `-auth-scope all`, by `hello` (`ticket`).
@@ -666,6 +668,7 @@ Whatever authenticates a person, the server hands out two credentials of its own
 | `POST /api/ticket` | `Authorization: Bearer <device token>` — **only** that | `200 {"ticket","expiresMs"}`; `401 {"error":"auth_required","methods"}` |
 | `POST /api/auth/begin` | — | `200 {"loginUrl","pollId","code","expiresMs"}`; `404 {"error":"no_browser_login"}` without `oidc` or `proxy` |
 | `POST /api/auth/poll` | `{"pollId"}` | `200 {"pending":true}`; once: `200 {"token","expiresMs","sub"}` or `403 {"error":"login_denied","msg"}`; then `404 {"error":"login_expired"}` |
+| `GET /api/providers`, `GET /api/providers/<id>.json` | `Authorization: Bearer <device token>` | as in §7; without a valid device token `401 {"error":"auth_required","methods"}`, in every scope, like room creation. A device token rather than a ticket: an index and its files are several requests, and a ticket is single-use. The proxy's word does not count, as on `/api/ticket`. *(Integration.)* |
 | `GET /auth/login?flow=<id>` | a browser tab | the login page: shows `code`, offers the enabled browser methods, sets `vs_flow_<id>` (`Path=/auth/`, `HttpOnly`, `SameSite=Lax`) |
 | `POST /auth/login` | form `flow`, the flow cookie, through the trusted proxy | completes a `proxy` login. Cross-origin POSTs refused (`http.CrossOriginProtection`) |
 | `GET /auth/oidc/start?flow=<id>` | the flow cookie | `302` to the IdP: code flow, PKCE S256, `state`, `nonce` |
