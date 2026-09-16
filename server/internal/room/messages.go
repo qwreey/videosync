@@ -23,6 +23,10 @@ type Hello struct {
 	Name     string `json:"name"`
 	MediaKey string `json:"mediaKey"`
 	MediaURL string `json:"mediaUrl,omitempty"`
+	// Ticket is the server-access ticket (docs/design/auth.md), required only
+	// when the server gates joining. The room never reads it: the hub spends it
+	// before the room is even looked up.
+	Ticket string `json:"ticket,omitempty"`
 }
 
 // TimeReq is one clock-sync probe. The client does all the arithmetic; the
