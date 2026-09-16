@@ -1,15 +1,15 @@
 {
-  "when": "2026-09-16T09:26:02.029Z",
+  "when": "2026-09-16T14:37:02.136Z",
   "checks": [
     {
       "name": "joining by code takes the member to the room's video",
       "ok": true,
-      "detail": "https://www.youtube.com/watch?v=aqz-KE-bpKQ -> https://laftel.net/player/45462/93304 after 1632 ms"
+      "detail": "https://www.youtube.com/watch?v=aqz-KE-bpKQ -> https://laftel.net/player/45462/93304 after 1717 ms"
     },
     {
       "name": "and rejoins the same room there, unprompted",
       "ok": true,
-      "detail": "rejoined after 402 ms, 2 members"
+      "detail": "rejoined after 302 ms, 2 members"
     },
     {
       "name": "A still in the room after its own SPA navigation",
@@ -23,7 +23,7 @@
     {
       "name": "B follows the room to the new episode",
       "ok": true,
-      "detail": "after 1661 ms"
+      "detail": "after 1734 ms"
     },
     {
       "name": "and rejoins again",
@@ -54,5 +54,5 @@
     }
   ],
   "notes": [],
-  "roomId": "38oNj56-VcqYonVhRRoTLA"
+  "roomId": "Qvt9WJ9ljHWN60s2xnK30w"
 }
