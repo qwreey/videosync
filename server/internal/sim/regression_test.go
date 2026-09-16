@@ -3,6 +3,7 @@ package sim
 import (
 	"testing"
 
+	"github.com/qwreey/videosync/server/internal/room"
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
 
@@ -335,16 +336,23 @@ func TestSuspendedMemberDoesNotGateTheRoom(t *testing.T) {
 // residual is measured against that same stale anchor, it reports ~0 while
 // being arbitrarily out of position. The residual channel is blind to it; only
 // the lagging lastAppliedSeq shows it, and no corrector reads that field.
-func TestStaleAnchorAfterReconnect(t *testing.T) {
+//
+// The member here stays connected and simply never receives the frame. That is
+// the only way to produce a stale anchor at all: a reconnect is answered with a
+// welcome carrying the current seq and anchor (see the next test), and a
+// WebSocket does not lose frames on a live connection -- the hub closes a
+// connection whose outbox overflows rather than dropping into it. The resend is
+// a backstop, and this is the case it backs.
+func TestStaleAnchorAfterLostFrames(t *testing.T) {
 	tun := vsync.DefaultTunables()
 	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
 	mk := func(noResend bool) Scenario {
 		return Scenario{
-			Name: "reconnect", Seed: 31, DurationMs: 90000, NoStaleResend: noResend,
+			Name: "lost-frames", Seed: 31, DurationMs: 90000, NoStaleResend: noResend,
 			Clients: []ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
-				// b is offline across the seek, so it never learns the room moved.
-				{ID: "b", IntrinsicRate: 1.0, Link: good, Disconnects: [][2]int64{{25000, 40000}}},
+				// Nothing reaches b across the seek, so it never learns the room moved.
+				{ID: "b", IntrinsicRate: 1.0, Link: good, DropsDown: [][2]int64{{29000, 31000}}},
 				{ID: "c", IntrinsicRate: 1.0, Link: good},
 			},
 			Commands: []Command{{AtMs: 30000, ClientID: "a", Kind: "seek", PositionMs: 600000}},
@@ -354,8 +362,8 @@ func TestStaleAnchorAfterReconnect(t *testing.T) {
 	fixed := Run(mk(false), &vsync.ServoCorrector{}, tun)
 
 	// Max divergence is the wrong lens here: it captures the single instant
-	// right after reconnect, which is huge no matter how fast recovery is.
-	// Sustained error is what distinguishes "recovered" from "stranded".
+	// right after the frames resume, which is huge no matter how fast recovery
+	// is. Sustained error is what distinguishes "recovered" from "stranded".
 	if blind.MeanAnchorErrMs < 10000 {
 		t.Errorf("control: a member that missed a seek should stay far out of position without the "+
 			"resend, got mean %.0f ms -- scenario no longer reproduces", blind.MeanAnchorErrMs)
@@ -367,32 +375,101 @@ func TestStaleAnchorAfterReconnect(t *testing.T) {
 		t.Errorf("resend did not recover the member: mean %.0f ms with vs %.0f ms without",
 			fixed.MeanAnchorErrMs, blind.MeanAnchorErrMs)
 	}
-	t.Logf("mean anchor error: blind %.0f ms -> with resend %.0f ms (%d resends); "+
-		"max %.0f -> %.0f (the instant of reconnect, unavoidable)",
-		blind.MeanAnchorErrMs, fixed.MeanAnchorErrMs, fixed.StaleResends,
-		blind.MaxDivergenceMs, fixed.MaxDivergenceMs)
+	t.Logf("mean anchor error: blind %.0f ms -> with resend %.0f ms (%d resends)",
+		blind.MeanAnchorErrMs, fixed.MeanAnchorErrMs, fixed.StaleResends)
+}
+
+// A member that drops and reconnects is a new session: it leaves the room (the
+// corrector forgets it, the gate releases it), joins again, and its welcome
+// carries the room's current seq and anchor. It is never stale -- it is far out
+// of position against an anchor it holds correctly, which is exactly what the
+// residual channel can see and correct.
+func TestReconnectAdoptsTheRoomsAnchor(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	var resends, issued, errMs float64
+	for _, seed := range seeds {
+		sc := Scenario{
+			Name: "reconnect", Seed: seed, DurationMs: 90000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				// b is gone across the seek, and its video keeps playing.
+				{ID: "b", IntrinsicRate: 1.0, Link: good, Disconnects: [][2]int64{{25000, 40000}}},
+				{ID: "c", IntrinsicRate: 1.0, Link: good},
+			},
+			Commands: []Command{{AtMs: 30000, ClientID: "a", Kind: "seek", PositionMs: 600000}},
+		}
+		r := Run(sc, &vsync.ServoCorrector{}, tun)
+		resends += float64(r.StaleResends)
+		issued += float64(r.SeeksIssued)
+		errMs += r.MeanAnchorErrMs
+	}
+	n := float64(len(seeds))
+	resends, issued, errMs = resends/n, issued/n, errMs/n
+	if resends > 0 {
+		t.Errorf("a reconnected member drew %.2f stale resends per run; its welcome is current", resends)
+	}
+	// The recovery has to be a correction: nothing else can move b 560 s.
+	if issued < 1 {
+		t.Errorf("the room issued %.2f seeks per run to a member 560 s out of position", issued)
+	}
+	if errMs > 500 {
+		t.Errorf("reconnected member never recovered: mean anchor error %.0f ms", errMs)
+	}
+	t.Logf("mean over %d seeds: anchor err %.0f ms, %.2f seeks issued, %.2f resends", len(seeds), errMs, issued, resends)
+}
+
+// nopCorrector never corrects anything: the control for tests that claim a
+// correction happened.
+type nopCorrector struct{}
+
+func (nopCorrector) Name() string { return "nop" }
+func (nopCorrector) Decide(vsync.Report, vsync.Anchor, int64, vsync.Tunables) vsync.Decision {
+	return vsync.Decision{}
 }
 
 // A late joiner arrives with zero clock samples, so a confidence-gated
 // corrector refuses to act on the member that needs it most. Verify it does
 // converge, and record how long it takes.
+//
+// The joiner's player has not been running before it joined. An earlier
+// version let it play from t=0 while "offline", so it arrived already on the
+// anchor and a corrector that never corrects anything passed this test with a
+// better score than the servo.
 func TestLateJoinerConverges(t *testing.T) {
 	tun := vsync.DefaultTunables()
 	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
-	sc := Scenario{
-		Name: "late-join", Seed: 41, DurationMs: 90000,
-		Clients: []ClientProfile{
-			{ID: "a", IntrinsicRate: 1.0, Link: good},
-			{ID: "b", IntrinsicRate: 1.0, Link: good},
-			{ID: "c", IntrinsicRate: 1.0, Link: Link{UpMs: 80, DownMs: 80, JitterMs: 30}, JoinAtMs: 30000},
-		},
+	mk := func(seed int64) Scenario {
+		return Scenario{
+			Name: "late-join", Seed: seed, DurationMs: 90000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good},
+				{ID: "c", IntrinsicRate: 1.0, Link: Link{UpMs: 80, DownMs: 80, JitterMs: 30}, JoinAtMs: 30000},
+			},
+		}
 	}
-	r := Run(sc, &vsync.ServoCorrector{}, tun)
-	if r.MeanAnchorErrMs > 200 {
-		t.Errorf("late joiner never converged: mean anchor error %.0f ms", r.MeanAnchorErrMs)
+	var servoErr, nopErr, issued float64
+	for _, seed := range seeds {
+		r := Run(mk(seed), &vsync.ServoCorrector{}, tun)
+		servoErr += r.MeanAnchorErrMs
+		issued += float64(r.SeeksIssued + r.NudgesIssued)
+		nopErr += Run(mk(seed), nopCorrector{}, tun).MeanAnchorErrMs
 	}
-	t.Logf("with a joiner at t=30s: mean anchor err %.0f ms, p95 %.0f ms, in/out seeks %d/%d",
-		r.MeanAnchorErrMs, r.P95AnchorErrMs, r.InBufferSeeks, r.OutOfBufferSeeks)
+	n := float64(len(seeds))
+	servoErr, nopErr, issued = servoErr/n, nopErr/n, issued/n
+	if nopErr < 1000 {
+		t.Fatalf("control: a room that never corrects kept the joiner within %.0f ms -- "+
+			"the joiner is not arriving out of position", nopErr)
+	}
+	if issued < 1 {
+		t.Errorf("no correction was issued (%.2f per run)", issued)
+	}
+	if servoErr > 200 {
+		t.Errorf("late joiner never converged: mean anchor error %.0f ms (no correction: %.0f ms)",
+			servoErr, nopErr)
+	}
+	t.Logf("with a joiner at t=30s: mean anchor err %.0f ms (no correction: %.0f ms)", servoErr, nopErr)
 }
 
 // gateScenario: the room is paused, one member cannot buffer for 25 s, and
@@ -458,11 +535,48 @@ func TestGateTimeoutResumesARoomHeldByAMemberWhoNeverRecovers(t *testing.T) {
 	// buffering), not from when the play arrived at t=10 s. So the play is
 	// released at ~30 s and was held for ~20 s. Getting this backwards would
 	// mean a member could re-enter the gate and restart the clock forever.
-	if r.GateHoldMs < 12000 || r.GateHoldMs > 32000 {
-		t.Errorf("gate held for %d ms; want release ~20 s in (GATE_TIMEOUT 30 s "+
-			"measured from when the member started buffering at ~t=0)", r.GateHoldMs)
+	//
+	// The window has to exclude the wrong rule's answer, or the test does not
+	// test it: timed from the held command, the hold is GATE_TIMEOUT itself
+	// (~30 s). An earlier bound of 32 s accepted exactly that.
+	playAt := int64(10000)
+	want := room.GateTimeoutMs - playAt
+	if r.GateHoldMs < want-3000 || r.GateHoldMs > want+3000 {
+		t.Errorf("gate held for %d ms; want ~%d ms (GATE_TIMEOUT %d ms measured from when the "+
+			"member started buffering at ~t=0, not from the play at %d ms)",
+			r.GateHoldMs, want, room.GateTimeoutMs, playAt)
 	}
 	if r.GateHoldMs >= 79000 {
 		t.Error("the room was held for the rest of the run: the anti-hang timeout did not fire")
+	}
+}
+
+// A scripted pause is somebody pressing the button, and the engine sends where
+// their player is when they do: the room anchors a pause at that position
+// (POC-FINDINGS 40c). A scenario command that left PositionMs unset used to
+// reach the room as "pause at 0", so every scripted pause rewound everyone to
+// the start -- command-storm's pause at 60 s undid its seek to 300 s.
+func TestScriptedPauseStopsWhereThePauserIs(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	for _, seed := range seeds {
+		sc := Scenario{
+			Name: "pause-position", Seed: seed, DurationMs: 30000,
+			Clients: []ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good},
+				{ID: "b", IntrinsicRate: 1.0, Link: good},
+			},
+			Commands: []Command{
+				{AtMs: 5000, ClientID: "a", Kind: "seek", PositionMs: 300000},
+				{AtMs: 20000, ClientID: "a", Kind: "pause"},
+			},
+		}
+		r := Run(sc, &vsync.ServoCorrector{}, tun)
+		// The pauser had been playing from 300 s for ~15 s when it pressed.
+		a := r.FinalAnchor
+		if !a.Paused || a.PositionMs < 310000 || a.PositionMs > 320000 {
+			t.Fatalf("seed %d: the room paused at %d ms (paused=%v); the pauser was at ~315 s",
+				seed, a.PositionMs, a.Paused)
+		}
 	}
 }

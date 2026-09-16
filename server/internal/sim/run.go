@@ -94,6 +94,9 @@ type Result struct {
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
 	ConvergeMs []int64
+
+	// FinalAnchor is the room's anchor when the run ended.
+	FinalAnchor vsync.Anchor
 }
 
 // Run executes one scenario against one corrector. Deterministic: same seed,
@@ -113,12 +116,27 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	srv := NewServer(corr, tun, start)
 	srv.NoStaleResend = sc.NoStaleResend
 	srv.GateDisabled = sc.GateDisabled
-	for _, id := range order {
-		srv.Join(0, id, id)
-	}
-	for _, id := range order {
-		clients[id].anchor = start
-		clients[id].lastKnownPos = float64(sc.StartPos)
+	// Membership follows the shipped path: a member joins when it connects and
+	// leaves when the connection goes, and every session starts from a welcome.
+	// Joining everyone at t=0 regardless made a late joiner count toward the
+	// command delay before it existed, and a reconnect a session that never
+	// ended.
+	connected := map[string]bool{}
+	updateMembership := func(now int64) {
+		for _, id := range order {
+			c := clients[id]
+			online := !c.Offline(now)
+			switch {
+			case connected[id] && !online:
+				srv.Disconnect(now, net, id)
+				c.Disconnect()
+				connected[id] = false
+			case !connected[id] && online:
+				srv.Connect(now, net, id)
+				c.Welcome(srv.Seq(), srv.Anchor(), now)
+				connected[id] = true
+			}
+		}
 	}
 
 	var divergences []float64
@@ -131,6 +149,9 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 	converge := []int64{}
 
 	for now := int64(0); now <= sc.DurationMs; now += stepMs {
+		// 0. connections come and go
+		updateMembership(now)
+
 		// 1. deliver
 		for _, e := range net.Due(now) {
 			// A message in flight when the link drops is lost, in both
@@ -141,7 +162,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			if e.to == "server" {
 				srv.Deliver(e, net, now, clients)
 			} else if c, ok := clients[e.to]; ok {
-				if c.Offline(now) {
+				if c.Offline(now) || c.dropsDown(now) {
 					continue
 				}
 				c.Deliver(e.msg, now)
@@ -151,8 +172,16 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		// 2. scenario commands
 		for cmdIdx < len(sc.Commands) && sc.Commands[cmdIdx].AtMs <= now {
 			cm := sc.Commands[cmdIdx]
+			pos := cm.PositionMs
+			if cm.Kind == "pause" || cm.Kind == "play" {
+				// A pressed button carries where the presser's player is --
+				// the engine always sends it, and the room anchors a pause
+				// there. Left to the scenario it was 0, and every scripted
+				// pause rewound the room to the start.
+				pos = int64(clients[cm.ClientID].Pos())
+			}
 			net.Send(now, cm.ClientID, cm.ClientID, "server", true,
-				MsgCmd{ReqID: strconv.Itoa(cmdIdx), Kind: cm.Kind, PositionMs: cm.PositionMs})
+				MsgCmd{ReqID: strconv.Itoa(cmdIdx), Kind: cm.Kind, PositionMs: pos})
 			awaiting = append(awaiting, pendingConv{at: now})
 			lastCmdAt = now
 			cmdIdx++
@@ -164,8 +193,11 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			c := clients[id]
 			if c.Offline(now) {
 				// Still playing locally -- a dropped connection does not pause
-				// anyone's video, which is exactly why they drift apart.
-				c.Advance(now, stepMs)
+				// anyone's video, which is exactly why they drift apart. A
+				// member that has not joined yet has not started watching.
+				if c.Joined() {
+					c.Advance(now, stepMs)
+				}
 				continue
 			}
 			c.UpdateSuspension(now)
@@ -185,16 +217,16 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			if c.Offline(now) {
 				continue
 			}
-			if now%timeSyncEveryMs == 0 || (now < 250 && now%50 == 0) {
+			// Probe fast at the start of every session, not only the first:
+			// a reconnect starts from no clock at all.
+			since := now - c.connectedAt
+			if now%timeSyncEveryMs == 0 || (since < 250 && since%50 == 0) {
 				c.TimeSync(net, now)
 			}
+			// One look per tick. The heartbeat is not a second evaluation at
+			// the same instant -- it is this one, reported regardless.
 			if now%evalIntervalMs == 0 {
-				if r, ok := c.Evaluate(now, tun, false); ok {
-					net.Send(now, id, id, "server", true, MsgReport{Report: r})
-				}
-			}
-			if now%hbIntervalMs == 0 {
-				if r, ok := c.Evaluate(now, tun, true); ok {
+				if r, ok := c.Evaluate(now, tun, now%hbIntervalMs == 0); ok {
 					net.Send(now, id, id, "server", true, MsgReport{Report: r})
 				}
 			}
@@ -263,6 +295,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		GateHoldMs:             srv.GateHoldMs,
 		RoomPausedBySuspension: roomPausedBySuspension,
 		ConvergeMs:             converge,
+		FinalAnchor:            srv.Anchor(),
 	}
 	for _, id := range order {
 		c := clients[id]

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"strings"
 
@@ -103,8 +104,11 @@ func scenarios() []sim.Scenario {
 			},
 		},
 		{
-			// A member offline across a seek comes back holding a stale anchor
-			// and reports residual ~0 against it.
+			// A member offline across a seek. It leaves, rejoins with a welcome
+			// carrying the new anchor, and has to be corrected 560 s forward.
+			// (Until POC-FINDINGS 41 the harness kept it joined and dropped its
+			// frames, so it came back on a stale anchor -- a state a reconnect
+			// cannot produce.)
 			Name: "reconnect", Seed: 31, DurationMs: 90000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -201,20 +205,54 @@ func controlRun(tun vsync.Tunables) {
 	fmt.Println()
 }
 
-func main() {
-	tun := vsync.DefaultTunables()
-	correctors := []vsync.Corrector{
-		vsync.ThresholdCorrector{},                              // what all 9 references do
-		vsync.ThresholdCorrector{HardSeekMs: 2000},              // cytube/SyncTube-style wide deadband
-		vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}}, // ours, v3
-		&vsync.PLLCorrector{},                                   // phase-locked loop
-		&vsync.FLLCorrector{},                                   // frequency-locked loop (bias-immune)
-		&vsync.HybridCorrector{},                                // FLL-aided PLL
-		vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}},  // hybrid + confidence gating
-		&vsync.ServoCorrector{},                                 // synthesis of every finding
+// strategy is one row label in the table and the corrector it runs.
+type strategy struct {
+	name string
+	mk   func() vsync.Corrector
+}
+
+// strategies lists what the table compares, as constructors rather than
+// instances. Most correctors keep per-client state keyed by member id, every
+// scenario reuses the ids a/b/c, and nothing in a finished run tells the
+// corrector those members left. One instance shared across the table therefore
+// started each scenario with the previous scenario's integrators wound up, and
+// the published rows depended on the order the scenarios happened to be listed
+// in (POC-FINDINGS 41a). The real server builds one corrector per room.
+func strategies() []strategy {
+	return []strategy{
+		{"threshold-500", func() vsync.Corrector { return vsync.ThresholdCorrector{} }},                  // what all 9 references do
+		{"threshold-2000", func() vsync.Corrector { return vsync.ThresholdCorrector{HardSeekMs: 2000} }}, // cytube/SyncTube-style wide deadband
+		{"step-ramp+conf", func() vsync.Corrector { return vsync.ConfidenceGated{Inner: vsync.StepRampCorrector{}} }},
+		{"pll", func() vsync.Corrector { return &vsync.PLLCorrector{} }},       // phase-locked loop
+		{"fll", func() vsync.Corrector { return &vsync.FLLCorrector{} }},       // frequency-locked loop (bias-immune)
+		{"hybrid", func() vsync.Corrector { return &vsync.HybridCorrector{} }}, // FLL-aided PLL
+		{"hybrid+conf", func() vsync.Corrector { return vsync.ConfidenceGated{Inner: &vsync.HybridCorrector{}} }},
+		{"servo", func() vsync.Corrector { return &vsync.ServoCorrector{} }}, // synthesis of every finding
 	}
-	names := []string{"threshold-500", "threshold-2000", "step-ramp+conf",
-		"pll", "fll", "hybrid", "hybrid+conf", "servo"}
+}
+
+// table runs every strategy against every scenario, in order.
+func table(scs []sim.Scenario, tun vsync.Tunables) [][]sim.Result {
+	strats := strategies()
+	out := make([][]sim.Result, len(scs))
+	for i, sc := range scs {
+		for _, st := range strats {
+			out[i] = append(out[i], sim.Run(sc, st.mk(), tun))
+		}
+	}
+	return out
+}
+
+func main() {
+	seeds := flag.Int("seeds", 0, "instead of the table, average every row over seeds 1..N")
+	only := flag.String("strategy", "", "with -seeds: only this strategy")
+	flag.Parse()
+	tun := vsync.DefaultTunables()
+	if *seeds > 0 {
+		averaged(*seeds, *only, tun)
+		return
+	}
+	strats := strategies()
 
 	// anchorErr is the PRIMARY metric: error against the true server clock.
 	// meanDiv (inter-client spread) is kept for continuity but rewards
@@ -223,17 +261,20 @@ func main() {
 	// Seeks are split because they do not cost the same thing: an in-buffer
 	// seek is ~free at any network speed, an out-of-buffer seek costs a full
 	// segment fetch and rebuffers for it (docs/BROWSER-FINDINGS.md 2).
-	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %6s %5s\n",
+	// skipped is the other half of the score: anchorErr excludes a stalled
+	// member by construction, so a room that leaves somebody behind and yanks
+	// them forward later scores well on it. skipped is what that cost them.
+	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %8s %6s %5s\n",
 		"scenario", "strategy", "anchorErr", "p95Anchor",
-		"seek/in", "seek/OUT", "rateTime", "gates", "BAD")
-	fmt.Println(strings.Repeat("-", 104))
+		"seek/in", "seek/OUT", "rateTime", "skipped", "gates", "BAD")
+	fmt.Println(strings.Repeat("-", 113))
 
-	for _, sc := range scenarios() {
-		for i, c := range correctors {
-			r := sim.Run(sc, c, tun)
-			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %6d %5d\n",
-				sc.Name, names[i], r.MeanAnchorErrMs, r.P95AnchorErrMs,
-				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs,
+	scs := scenarios()
+	for i, rows := range table(scs, tun) {
+		for j, r := range rows {
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %8.0f %6d %5d\n",
+				scs[i].Name, strats[j].name, r.MeanAnchorErrMs, r.P95AnchorErrMs,
+				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs, r.SkippedMs,
 				r.GatesOpened, r.Misdetections+r.SpuriousCmds)
 			if len(r.ConvergeMs) > 0 {
 				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
@@ -242,4 +283,35 @@ func main() {
 		fmt.Println()
 	}
 	controlRun(tun)
+}
+
+// averaged prints every row as a mean over seeds 1..n. The table above is one
+// draw of the jitter, and a single seed is not evidence for a comparison
+// (POC-FINDINGS 39): a control-law change can win or lose on it by luck.
+func averaged(n int, only string, tun vsync.Tunables) {
+	fmt.Printf("mean over seeds 1..%d\n", n)
+	fmt.Printf("%-20s %-16s %9s %9s %8s %8s %8s %8s %8s\n",
+		"scenario", "strategy", "anchorErr", "p95Anchor",
+		"seek/in", "seek/OUT", "rateTime", "skipped", "resends")
+	fmt.Println(strings.Repeat("-", 104))
+	for _, sc := range scenarios() {
+		for _, st := range strategies() {
+			if only != "" && st.name != only {
+				continue
+			}
+			var m [7]float64
+			for s := 1; s <= n; s++ {
+				v := sc
+				v.Seed = int64(s)
+				r := sim.Run(v, st.mk(), tun)
+				for k, x := range []float64{r.MeanAnchorErrMs, r.P95AnchorErrMs,
+					float64(r.InBufferSeeks), float64(r.OutOfBufferSeeks), r.RateTimeMs,
+					r.SkippedMs, float64(r.StaleResends)} {
+					m[k] += x / float64(n)
+				}
+			}
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %8.2f %8.2f %8.0f %8.0f %8.2f\n",
+				sc.Name, st.name, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+		}
+	}
 }

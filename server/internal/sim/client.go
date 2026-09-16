@@ -2,6 +2,7 @@ package sim
 
 import (
 	"math"
+	"sort"
 
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
@@ -43,12 +44,23 @@ type ClientProfile struct {
 	// JoinAtMs is when this member joins. A late joiner arrives with zero clock
 	// samples, so every confidence-gated correction refuses to act -- the
 	// member most in need of correction is the one that cannot be corrected.
+	// Its player has not been running before then: it starts from StartPos
+	// when the member joins, wherever the room is.
 	JoinAtMs int64
-	// Disconnects are [start, end) windows where nothing reaches this member
-	// and nothing leaves. On reconnect it holds a stale anchor and, because its
-	// residual is measured AGAINST that stale anchor, reports ~0 while being
-	// arbitrarily out of position.
+	// Disconnects are [start, end) windows where the connection is gone. The
+	// member leaves the room at the start (the corrector forgets it, the gate
+	// releases it) and joins again at the end with a welcome carrying the
+	// room's current seq and anchor, a fresh clock and a fresh detector -- the
+	// path the engine and the hub actually take. Its video keeps playing
+	// throughout.
 	Disconnects [][2]int64
+	// DropsDown are [start, end) windows where the connection stays up and no
+	// frame reaches this member. That is the only way to end up holding a
+	// stale anchor -- which, because the residual is measured AGAINST that
+	// anchor, reports ~0 while arbitrarily out of position. A WebSocket does
+	// not do this on its own (the hub closes a connection whose outbox
+	// overflows); it is the case the stale-anchor resend is a backstop for.
+	DropsDown [][2]int64
 }
 
 // Client is a simulated player plus the client half of the sync protocol.
@@ -71,6 +83,10 @@ type Client struct {
 	bestRTT      int64
 	haveOffset   bool
 	clockSamples int
+
+	// --- session ---
+	joined      bool
+	connectedAt int64 // start of the current session; probes run fast after it
 
 	// --- sync state ---
 	anchor         vsync.Anchor
@@ -111,7 +127,10 @@ type Client struct {
 	// currentTime stops advancing while paused is still false.
 	stallSuspected bool
 	lastEvalPos    float64
+	lastEvalAt     int64
 	haveEvalPos    bool
+	lastReportAt   int64
+	haveReported   bool
 
 	// counters the harness reads
 	SeeksApplied  int
@@ -174,6 +193,26 @@ func (c *Client) inBuffer(posMs float64) bool {
 	return posMs/1000 >= backS && posMs/1000 <= c.bufEndS
 }
 
+// payForSeek charges the buffer model for moving the playhead to posMs and
+// reports whether that was the expensive kind. An out-of-buffer seek costs one
+// segment fetch and rebuffers for the same duration: the client is MORE out of
+// position before it is less.
+//
+// Every seek goes through here, scheduled or corrective. A scheduled seek used
+// to move the position and leave the buffer where it was, so a member sent from
+// 30 s to 300 s played on at 1.0x while its buffer end crawled up from 41 s at
+// net 3 s/s -- reporting readyState 2 and nothing buffered for a minute and a
+// half, which gated every corrector and disabled seek detection.
+func (c *Client) payForSeek(posMs float64, serverMs int64) bool {
+	if c.inBuffer(posMs) {
+		return false
+	}
+	c.OutOfBufferSeeks++
+	c.seekStallUntil = serverMs + c.segFetchMs()
+	c.bufEndS = posMs / 1000
+	return true
+}
+
 // Offline reports whether this member is unreachable right now.
 func (c *Client) Offline(serverMs int64) bool {
 	if serverMs < c.P.JoinAtMs {
@@ -185,6 +224,39 @@ func (c *Client) Offline(serverMs int64) bool {
 		}
 	}
 	return false
+}
+
+// dropsDown reports whether a frame to this member is lost right now.
+func (c *Client) dropsDown(serverMs int64) bool {
+	for _, w := range c.P.DropsDown {
+		if serverMs >= w[0] && serverMs < w[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// Joined reports whether this member has ever been in the room.
+func (c *Client) Joined() bool { return c.joined }
+
+// Welcome is the start of a session: the room's seq and anchor as the welcome
+// frame carries them. Like the engine, it does not move the player -- the
+// clock has not settled, and the first reports bring it in.
+func (c *Client) Welcome(seq uint64, a vsync.Anchor, serverMs int64) {
+	c.anchor = a
+	c.lastAppliedSeq = seq
+	c.connectedAt = serverMs
+	c.joined = true
+}
+
+// Disconnect is the end of a session, and throws away what the engine throws
+// away: queued transitions, the clock estimate (measured over a socket that no
+// longer exists) and the detector's history.
+func (c *Client) Disconnect() {
+	c.pending = nil
+	c.haveOffset, c.clockSamples, c.bestRTT, c.estOffsetMs = false, 0, 0, 0
+	c.haveEvalPos, c.stallSuspected = false, false
+	c.residualHist = nil
 }
 
 func (c *Client) inSuspendWindow(serverMs int64) bool {
@@ -331,46 +403,71 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	// That signature is what separates it from a user seek; without it the
 	// two-diff test misclassifies every stall as a backward seek and
 	// broadcasts it to the room.
-	wasStalled := c.stallSuspected
-	frozen := c.haveEvalPos && !c.paused && (c.posMs-c.lastEvalPos) < float64(evalIntervalMs)*0.5
-	c.stallSuspected = !c.P.NoStallInference && (c.readyState < t.MinReadyState || frozen)
-	c.lastEvalPos = c.posMs
-	c.haveEvalPos = true
-
-	// --- two-diff seek detection --------------------------------------------
-	playerDiff := math.Abs(c.posMs - c.lastKnownPos)
-	roomDiff := math.Abs(c.posMs - expected)
-	if c.stallSuspected {
-		// Frozen playback is not a seek. Hold the reference point so the gap
-		// does not accumulate into a false positive, and let the readiness
-		// gate deal with the divergence instead.
-		c.lastKnownPos = c.posMs
-	} else {
-		if wasStalled {
-			// Just resumed: re-baseline rather than judging the stall gap.
-			c.lastKnownPos = c.posMs
-		} else if !c.paused {
-			c.lastKnownPos += float64(evalIntervalMs) * c.P.IntrinsicRate * c.appliedRate
-		}
-		if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
-			c.SeekDetections++
-			if c.stalled(serverMs) {
-				c.Misdetections++ // ground truth, for the harness only
-			}
-			c.lastKnownPos = c.posMs
-		}
-	}
-
+	//
+	// Everything here runs on the time that actually ELAPSED since the last
+	// look, never on the loop's nominal interval (CLAUDE.md trap). Assuming a
+	// fixed 100 ms step made a second look at the same instant see a frozen
+	// player, and made every look off that cadence move the predicted playhead
+	// by the wrong amount.
 	res := c.posMs - expected
-	c.residualHist = append(c.residualHist, sample{t: est, res: res})
-	cut := est - slopeWindowMs
-	for len(c.residualHist) > 0 && c.residualHist[0].t < cut {
-		c.residualHist = c.residualHist[1:]
+	elapsed := serverMs - c.lastEvalAt
+	if !c.haveEvalPos {
+		// First look: nothing to compare against yet.
+		c.lastKnownPos = c.posMs
+		elapsed = 0
 	}
+	if !c.haveEvalPos || elapsed > 0 {
+		wasStalled := c.stallSuspected
+		frozen := c.haveEvalPos && !c.paused && (c.posMs-c.lastEvalPos) < float64(elapsed)*0.5
+		c.stallSuspected = !c.P.NoStallInference && (c.readyState < t.MinReadyState || frozen)
+		c.lastEvalPos = c.posMs
+		c.lastEvalAt = serverMs
+		c.haveEvalPos = true
 
-	if !force && math.Abs(res) < float64(t.ReportThreshold) {
+		// --- two-diff seek detection ----------------------------------------
+		predicted := c.lastKnownPos
+		if !c.paused {
+			predicted += float64(elapsed) * c.P.IntrinsicRate * c.appliedRate
+		}
+		playerDiff := math.Abs(c.posMs - predicted)
+		roomDiff := math.Abs(c.posMs - expected)
+		if c.stallSuspected {
+			// Frozen playback is not a seek. Hold the reference point so the gap
+			// does not accumulate into a false positive, and let the readiness
+			// gate deal with the divergence instead.
+			c.lastKnownPos = c.posMs
+		} else {
+			if wasStalled {
+				// Just resumed: re-baseline rather than judging the stall gap.
+				c.lastKnownPos = c.posMs
+			} else {
+				c.lastKnownPos = predicted
+			}
+			if playerDiff > float64(t.SeekThresholdMs) && roomDiff > float64(t.SeekThresholdMs) {
+				c.SeekDetections++
+				if c.stalled(serverMs) {
+					c.Misdetections++ // ground truth, for the harness only
+				}
+				c.lastKnownPos = c.posMs
+			}
+		}
+
+		c.residualHist = append(c.residualHist, sample{t: est, res: res})
+		cut := est - slopeWindowMs
+		for len(c.residualHist) > 0 && c.residualHist[0].t < cut {
+			c.residualHist = c.residualHist[1:]
+		}
+	}
+	// Nothing has happened since a look at this same instant, so there is
+	// nothing new for detection to judge -- but a heartbeat is still due.
+
+	// An anomaly is reported at once, but not more often than the engine
+	// allows (minReportIntervalMs); the heartbeat goes regardless.
+	if !force && (math.Abs(res) < float64(t.ReportThreshold) ||
+		(c.haveReported && serverMs-c.lastReportAt < minReportIntervalMs)) {
 		return vsync.Report{}, false
 	}
+	c.lastReportAt, c.haveReported = serverMs, true
 	return vsync.Report{
 		ClientID:        c.P.ID,
 		ResidualMs:      int64(res),
@@ -440,14 +537,8 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 		if v.Mode == "seek" {
 			// Re-derive at apply time from our own anchor and clock estimate.
 			target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
-			if c.inBuffer(target) {
+			if !c.payForSeek(target, serverMs) {
 				c.InBufferSeeks++ // ~free, measured at ~20 ms regardless of link
-			} else {
-				// Costs one segment fetch and rebuffers for the same duration:
-				// the client is MORE out of position before it is less.
-				c.OutOfBufferSeeks++
-				c.seekStallUntil = serverMs + c.segFetchMs()
-				c.bufEndS = target / 1000
 			}
 			// A forward correction is content this member never saw. That is
 			// the cost the readiness gate exists to prevent, and no other
@@ -474,13 +565,25 @@ func (c *Client) RunScheduled(serverMs int64) {
 		return
 	}
 	est := c.serverNowEst(serverMs)
+	// Due order is not seq order: `play` carries CMD_DELAY and `pause` carries
+	// none, so a pause pressed inside a play's lead is newer AND due sooner.
+	// Same two rules as the engine (engine.ts schedule/applyScheduled): walk
+	// in `when` order, and never let an older seq overwrite a newer one --
+	// applied in arrival order, the stale play landed last and the member
+	// played against a paused room with its lastAppliedSeq going backwards.
+	sort.SliceStable(c.pending, func(i, j int) bool { return c.pending[i].When < c.pending[j].When })
 	keep := c.pending[:0]
 	for _, p := range c.pending {
+		if p.Seq <= c.lastAppliedSeq {
+			continue // superseded while it waited
+		}
 		if est >= p.When {
 			c.anchor = p.Anchor
 			c.lastAppliedSeq = p.Seq
 			c.paused = p.Anchor.Paused
-			c.posMs = float64(p.Anchor.Expected(est))
+			target := float64(p.Anchor.Expected(est))
+			c.payForSeek(target, serverMs)
+			c.posMs = target
 			c.lastKnownPos = c.posMs
 			c.residualHist = nil
 			continue
