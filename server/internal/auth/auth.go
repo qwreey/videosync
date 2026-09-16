@@ -410,8 +410,13 @@ func (s *Server) handleTicket(w http.ResponseWriter, r *http.Request) {
 	if s.limited(w, r, s.limTicket) {
 		return
 	}
-	_, byProxy := s.proxyUser(r)
-	if _, ok := s.device(r); !ok && !byProxy {
+	// A device token only -- never the proxy's say-so, deliberately unlike the
+	// session endpoint. A client's ticket request carries its bearer token,
+	// which a Basic or cookie gateway in front would reject, so the proxy must
+	// let this path through ungated; if passing through the proxy counted as
+	// signed in here, that ungated path would sign in everybody. The proxy
+	// vouches where it gates: /api/session and /auth/login.
+	if _, ok := s.device(r); !ok {
 		s.Refuse(w)
 		return
 	}

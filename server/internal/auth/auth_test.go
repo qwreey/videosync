@@ -438,19 +438,16 @@ func proxyRig(t *testing.T, header string) *rig {
 func TestAProxyIsTrustedByAddressNeverByHeader(t *testing.T) {
 	g := proxyRig(t, "Remote-User")
 	hdr := map[string]string{"Remote-User": "alice"}
-	if r := g.do("POST", "/api/ticket", "10.0.0.2:5000", "", hdr); r.code != 200 {
-		t.Fatalf("through the proxy: %d %s", r.code, r.raw)
-	}
-	if r := g.do("POST", "/api/ticket", client, "", hdr); r.code != 401 {
-		t.Fatalf("a Remote-User header from anyone was believed: %d", r.code)
-	}
-	// The proxy passed the request but named nobody: not authenticated.
-	if r := g.do("POST", "/api/ticket", "10.0.0.2:5000", "", nil); r.code != 401 {
-		t.Fatalf("no user header: %d", r.code)
-	}
 	s := g.do("POST", "/api/session", "10.0.0.2:5000", "", hdr)
 	if s.code != 200 || s.body["sub"] != "alice" {
 		t.Fatalf("session through the proxy: %d %s", s.code, s.raw)
+	}
+	if r := g.do("POST", "/api/session", client, "", hdr); r.code != 401 {
+		t.Fatalf("a Remote-User header from anyone was believed: %d", r.code)
+	}
+	// The proxy passed the request but named nobody: not authenticated.
+	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", nil); r.code != 401 {
+		t.Fatalf("no user header: %d", r.code)
 	}
 	// And the device token it minted works from anywhere.
 	if r := g.ticket(s.body["token"].(string)); r.code != 200 {
@@ -460,11 +457,24 @@ func TestAProxyIsTrustedByAddressNeverByHeader(t *testing.T) {
 
 func TestAProxyWithoutAUserHeaderVouchesByAddressAlone(t *testing.T) {
 	g := proxyRig(t, "")
-	if r := g.do("POST", "/api/ticket", "10.0.0.2:5000", "", nil); r.code != 200 {
+	if r := g.do("POST", "/api/session", "10.0.0.2:5000", "", nil); r.code != 200 {
 		t.Fatalf("%d", r.code)
 	}
-	if r := g.do("POST", "/api/ticket", client, "", nil); r.code != 401 {
+	if r := g.do("POST", "/api/session", client, "", nil); r.code != 401 {
 		t.Fatalf("%d", r.code)
+	}
+}
+
+func TestTheProxyDoesNotVouchForTickets(t *testing.T) {
+	// The ticket path carries the client's bearer token, so a gateway has to
+	// leave it ungated -- and then "came through the proxy" would be true of
+	// every request, signed in or not.
+	for _, header := range []string{"", "Remote-User"} {
+		g := proxyRig(t, header)
+		hdr := map[string]string{"Remote-User": "alice"}
+		if r := g.do("POST", "/api/ticket", "10.0.0.2:5000", "", hdr); r.code != 401 {
+			t.Fatalf("header %q: a ticket without a device token: %d", header, r.code)
+		}
 	}
 }
 
