@@ -15,7 +15,12 @@ export const CODE = 'BCDF-2345';
 
 export interface Req { method: string; path: string; authorization: string; body: Record<string, unknown> }
 
-function json(status: number, body: unknown): HttpResult {
+/** A page from something in front of the server, with whatever status it chose. */
+export function gatewayPage(status: number): HttpResult {
+  return { status, body: '<html>sign in</html>', contentType: 'text/html', redirected: false };
+}
+
+export function json(status: number, body: unknown): HttpResult {
   return { status, body: JSON.stringify(body), contentType: 'application/json', redirected: false };
 }
 
@@ -33,6 +38,8 @@ export class FakeServer {
   readonly tickets = new Set<string>();
   private n = 0;
   readonly tokens: TokenStore = memoryTokens();
+  /** Answers something else for a path: a gateway page, a refusal. */
+  override: (path: string) => HttpResult | undefined = () => undefined;
   readonly fetch: AuthFetch;
 
   constructor() {
@@ -63,6 +70,8 @@ export class FakeServer {
     let body: Record<string, unknown> = {};
     try { body = init.body ? JSON.parse(init.body) as Record<string, unknown> : {}; } catch { /* not JSON */ }
     this.requests.push({ method: init.method, path: u.pathname, authorization: authz, body });
+    const o = this.override(u.pathname);
+    if (o) return o;
     const refuse = () => json(401, { error: 'auth_required', methods: this.methods });
     switch (u.pathname) {
       case '/healthz':

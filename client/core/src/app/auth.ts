@@ -37,12 +37,22 @@ export type SignInResult =
 export interface AuthTimers {
   setTimer(fn: () => void, ms: number): number;
   clearTimer(h: number): void;
+  /** This machine's clock, for the login deadline. Default `Date.now`. */
+  now?(): number;
 }
 
 const SCOPES_KEY = 'authScope';
 const RANK: Record<AuthScope, number> = { none: 0, create: 1, all: 2 };
 /** How often a browser login is asked about. */
 export const POLL_MS = 2000;
+/**
+ * How long a browser login is waited for, from when it began on this
+ * machine. The server's own flow lives 5 minutes and answers 404 after; this
+ * is the backstop for a server that never says so. Measured locally: the
+ * server's `expiresMs` is on its clock, and a client clock minutes ahead
+ * would have given up on the first poll.
+ */
+export const LOGIN_WAIT_MS = 5 * 60_000 + 30_000;
 
 function parse(r: AuthResponse): Record<string, unknown> {
   try {
@@ -142,14 +152,16 @@ export class ServerAuth {
       // A trusted network, or a gateway that already knows this browser:
       // the proxy's word is taken at /api/session, and costs no prompt.
       const s = await this.fetch(server, '/api/session', { method: 'POST' });
-      if (s.status === 200) r = await this.fetch(server, '/api/ticket', { method: 'POST' });
+      if (s.status === 200 && !s.gateway) r = await this.fetch(server, '/api/ticket', { method: 'POST' });
     }
+    // A gateway's page is not our answer, whatever its status: a 200 login
+    // page is a request to sign in, not a ticket.
+    if (r.status === 401 || r.gateway) throw new AuthRequiredError(info.methods);
     if (r.status === 200) {
       const t = parse(r)['ticket'];
       if (typeof t === 'string' && t) return t;
       throw new Error('서버가 이상한 티켓을 보냈어요');
     }
-    if (r.status === 401 || r.gateway) throw new AuthRequiredError(info.methods);
     if (r.status === 429) throw new Error('요청이 너무 많아요 — 잠시 후 다시 시도해주세요');
     throw new Error(`티켓을 받지 못했어요 (${r.error ?? r.status})`);
   }
@@ -176,12 +188,13 @@ export class ServerAuth {
 
   async signIn(server: string, credentials: Credentials): Promise<SignInResult> {
     const r = await this.fetch(server, '/api/session', { method: 'POST', credentials });
-    if (r.status === 200) return { ok: true, sub: String(parse(r)['sub'] ?? '') };
-    if (r.status === 429) return { ok: false, why: 'rate', text: '시도가 너무 많아요 — 잠시 후 다시 해주세요' };
-    if (r.status === 401) return { ok: false, why: 'wrong', text: '키나 비밀번호가 맞지 않아요' };
+    // Checked first: a gateway's 200 login page signed nobody in.
     if (r.gateway) {
       return { ok: false, why: 'unsupported', text: '서버 앞의 프록시가 막았어요 — 브라우저에서 로그인해주세요' };
     }
+    if (r.status === 200 && parse(r)['signedIn'] === true) return { ok: true, sub: String(parse(r)['sub'] ?? '') };
+    if (r.status === 429) return { ok: false, why: 'rate', text: '시도가 너무 많아요 — 잠시 후 다시 해주세요' };
+    if (r.status === 401) return { ok: false, why: 'wrong', text: '키나 비밀번호가 맞지 않아요' };
     return { ok: false, why: 'network', text: `서버에 연결하지 못했어요 (${r.error ?? r.status})` };
   }
 
@@ -205,7 +218,8 @@ export class ServerAuth {
     }
     onCode(String(body['code'] ?? ''));
     this.openTab(loginUrl);
-    const until = typeof body['expiresMs'] === 'number' ? body['expiresMs'] : Date.now() + 5 * 60_000;
+    const now = this.timers.now ?? Date.now;
+    const until = now() + LOGIN_WAIT_MS;
 
     let wait = POLL_MS;
     for (;;) {
@@ -215,14 +229,19 @@ export class ServerAuth {
       const p = await this.fetch(server, '/api/auth/poll', { method: 'POST', body: JSON.stringify({ pollId }) });
       if (gen !== this.browserGen) return { ok: false, why: 'cancelled', text: '' };
       const pb = parse(p);
-      if (p.status === 200 && pb['pending'] !== true) return { ok: true, sub: String(pb['sub'] ?? '') };
+      if (p.gateway) {
+        // /api/auth/ must be left open at the proxy (README); a gateway
+        // answering here will answer the same way until someone fixes that.
+        return { ok: false, why: 'unsupported', text: '서버 앞의 프록시가 로그인 확인을 막았어요 — 서버 관리자에게 알려주세요' };
+      }
+      if (p.status === 200 && pb['signedIn'] === true) return { ok: true, sub: String(pb['sub'] ?? '') };
       if (p.status === 403) {
         return { ok: false, why: 'denied', text: `로그인이 거절됐어요${pb['msg'] ? `: ${String(pb['msg'])}` : ''}` };
       }
       if (p.status === 404) return { ok: false, why: 'expired', text: '로그인 시간이 지났어요 — 다시 시도해주세요' };
       if (p.status === 429 && typeof pb['retryMs'] === 'number') wait = Math.max(POLL_MS, pb['retryMs']);
       // Anything else is a blip: the tab may still finish.
-      if (Date.now() > until) return { ok: false, why: 'expired', text: '로그인 시간이 지났어요 — 다시 시도해주세요' };
+      if (now() > until) return { ok: false, why: 'expired', text: '로그인 시간이 지났어요 — 다시 시도해주세요' };
     }
   }
 
