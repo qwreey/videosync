@@ -886,6 +886,24 @@ describe('provider descriptors on the page', () => {
     assert.equal(h.app.api.adapter.capabilities.supportsDirectSeek, true);
   });
 
+  it('hands the descriptor\'s seek timeout and landing tolerance to the element\'s adapter', async () => {
+    const reg = await userRegistry({ ...DESC, seek: { timeoutMs: 1000, landingToleranceS: 2 } });
+    const h = harness('https://video.example/watch/a', makeStore(), new Map(), { providers: { registry: reg } });
+    const v = await addVideo(h);
+    // Lands 1.5 s short: inside this provider's 2 s, outside the default 0.5 s.
+    let landed = '';
+    void h.app.api.adapter.seekTo(10).then(() => { landed = 'landed'; }, (e: Error) => { landed = e.message; });
+    v.currentTime = 8.5;
+    v.dispatchEvent({ type: 'seeked' });
+    await flush();
+    assert.equal(landed, 'landed');
+    // Never lands: refused after this provider's 1 s, not the default 10 s.
+    let out = '';
+    void h.app.api.adapter.seekTo(30).then(() => { out = 'landed'; }, (e: Error) => { out = e.message; });
+    await h.tick(1100);
+    assert.match(out, /within 1000ms/);
+  });
+
   it('drops an element the descriptor excludes', async () => {
     const reg = await userRegistry(DESC);
     const h = harness('https://video.example/watch/a', makeStore(), new Map(), { providers: { registry: reg } });
@@ -931,6 +949,26 @@ describe('provider descriptors on the page', () => {
     assert.match(said[0]!, /YouTube/);
     assert.match(said[0]!, /확장 프로그램 설정/);
     assert.equal(h.visibleButton('적용'), undefined, 'the decision is never offered in the page');
+  });
+
+  it('keeps only the update list of the server it joined last', async () => {
+    const answers = new Map<string, (v: Array<{ id: string; name: string }>) => void>();
+    const h = harness(ROOM_URL, makeStore(), new Map(), {
+      providers: {
+        registry: (await userRegistry()),
+        updatesFrom: (server) => new Promise((res) => { answers.set(server, res); }),
+      },
+    });
+    h.app.api.join('https://old.example', 'R', 'S', 'me');
+    h.app.api.leave();
+    h.join();
+    await flush();
+    answers.get(SERVER)!([{ id: 'laftel', name: 'Laftel' }]);
+    await flush();
+    // The old server answers last; its list is about a server nobody is on.
+    answers.get('https://old.example')!([{ id: 'yt', name: 'YouTube' }]);
+    await flush();
+    assert.deepEqual(JSON.parse(h.app.api.dump()).providerUpdates, ['laftel']);
   });
 
   it('does not mention an update for another provider', async () => {
