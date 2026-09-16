@@ -596,7 +596,13 @@ Descriptors (`docs/design/providers.md`) never travel in a frame. A server start
 
 Every file is validated the way a client validates it — unknown fields, the template grammar,
 the size and count limits, and its own `examples` — before it is listed; an invalid one is logged
-and left out. The directory is reread on `SIGHUP` and when a file's name, size or mtime changes
+and left out. *(Integration:)* "the way a client does" holds for the grammar, the
+limits and the shared vectors (`providers/testdata/descriptors.json`, which both ports run), but
+URL *parsing* is not shared: Go's `net/url` and the browser's WHATWG parser disagree on
+backslashes, tabs, dot segments and percent-encoded hosts. Where they disagree the server is the
+stricter one — it refuses a descriptor whose examples rely on those forms, which a client would
+accept — so the server never lists a file every client refuses; it may leave out one a client
+would take. An example's `"watch": null` asserts "no watch URL" in both ports. The directory is reread on `SIGHUP` and when a file's name, size or mtime changes
 (polled every `-providers-poll`, default 5 s). The server uses descriptors for nothing else: it
 does not judge `mediaKey`s against them, and a served descriptor is inert until a user adopts it.
 

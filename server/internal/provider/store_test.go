@@ -191,3 +191,43 @@ func TestStoreOnAMissingDirectory(t *testing.T) {
 		t.Errorf("empty index: %s", e.IndexJSON())
 	}
 }
+
+func TestADirectoryOffersAtMostMaxFiles(t *testing.T) {
+	var vec struct {
+		Base map[string]any `json:"base"`
+	}
+	raw, err := os.ReadFile(filepath.Join(testdata, "descriptors.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &vec); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	const files, limit = 258, 256 // the limit the design states
+	for i := range files {
+		d := map[string]any{}
+		for k, v := range vec.Base {
+			d[k] = v
+		}
+		d["id"] = fmt.Sprintf("p%03d", i)
+		d["keyPrefix"] = "example" // the base's examples name that prefix
+		b, _ := json.Marshal(d)
+		write(t, dir, fmt.Sprintf("p%03d.json", i), b)
+	}
+	logs := &logSink{}
+	s := Open(dir, logs.logf)
+	idx := index(t, s)
+	if len(idx.Providers) != limit {
+		t.Fatalf("%d offered from %d files", len(idx.Providers), files)
+	}
+	if _, ok := s.Get(fmt.Sprintf("p%03d", limit)); ok {
+		t.Fatal("a file past the limit was served")
+	}
+	if _, ok := s.Get(fmt.Sprintf("p%03d", limit-1)); !ok {
+		t.Fatal("the last file within the limit was not served")
+	}
+	if !logs.has("serving the first") {
+		t.Fatal("the operator was not told")
+	}
+}

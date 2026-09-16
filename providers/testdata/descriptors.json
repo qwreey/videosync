@@ -1,5 +1,5 @@
 {
-  "_comment": "Whole descriptors that both validators (client/core providers.test.ts, server/internal/provider) must accept or reject alike. Each case is `base` with `set` merged over it (a null value in `set` deletes the field) -- so every rejection differs from a valid descriptor by exactly the thing being tested.",
+  "_comment": "Whole descriptors that both validators (client/core providers.test.ts, server/internal/provider) must accept or reject alike. Each case is `base` with `set` merged over it (a null value in `set` deletes the field) -- so every rejection differs from a valid descriptor by exactly the thing being tested. A rejected case may carry `control`, merged over base+set the same way, that takes out only the offending thing; the runners require that to be ACCEPTED, so a case cannot pass because something else in it is also broken (the base's own examples, say).",
   "base": {
     "schema": 1,
     "id": "example",
@@ -79,29 +79,48 @@
     { "name": "pathFallback a string", "valid": false, "set": { "pathFallback": "false" } },
     { "name": "identity not a list", "valid": false, "set": { "identity": {} } },
     { "name": "a rule with a regex", "valid": false, "set": {
-      "identity": [{ "path": "/watch/(.*)", "key": "x", "watch": "https://video.example/x" }] } },
+      "identity": [{ "path": "/watch/(.*)", "key": "x", "watch": "https://video.example/x" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a rule host outside hosts", "valid": false, "set": {
-      "identity": [{ "hosts": ["other.example"], "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
+      "identity": [{ "hosts": ["other.example"], "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a key naming an uncaptured placeholder", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{other}", "watch": "https://video.example/watch/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{other}", "watch": "https://video.example/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a watch URL on http", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "http://video.example/watch/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "http://video.example/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a watch URL on another host", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://evil.example/watch/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://evil.example/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a placeholder in the watch host", "valid": false, "set": {
-      "identity": [{ "path": "/{id}", "key": "{id}", "watch": "https://{id}.video.example/" }] } },
+      "identity": [{ "path": "/{id}", "key": "{id}", "watch": "https://{id}.video.example/" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a watch URL with a port", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example:8443/watch/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example:8443/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a watch URL with credentials", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://u@video.example/watch/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://u@video.example/watch/{id}" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a watch URL with a fragment", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}#x" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}#x" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a placeholder naming a query parameter", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch?{id}=1" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}?{id}=1" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc", "watch": "https://video.example/watch/abc?abc=1" }] },
+      "control": {
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}?v={id}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc", "watch": "https://video.example/watch/abc?v=abc" }] } },
     { "name": "every path is media", "valid": false, "set": {
-      "identity": [{ "path": "/**", "key": "x", "watch": "https://video.example/" }] } },
+      "identity": [{ "path": "/**", "key": "x", "watch": "https://video.example/" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:x", "watch": "https://video.example/" }] },
+      "control": {
+      "identity": [{ "path": "/**", "query": { "v": "{id:any}" }, "key": "x", "watch": "https://video.example/?v=1" }],
+      "examples": [{ "url": "https://video.example/watch/abc?v=2", "key": "example:x", "watch": "https://video.example/?v=1" }] } },
     { "name": "a watch URL that names other media", "valid": false, "set": {
-      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/play/{id}" }] } },
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/play/{id}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] },
+      "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
     { "name": "a :has( selector", "valid": false, "set": { "video": { "include": ["div:HAS(video)"] } } },
     { "name": "an empty selector", "valid": false, "set": { "video": { "exclude": [""] } } },
     { "name": "outclassedFactor out of range", "valid": false, "set": { "video": { "outclassedFactor": 1 } } },
@@ -114,9 +133,11 @@
     { "name": "no examples", "valid": false, "set": { "examples": [] } },
     { "name": "only negative examples", "valid": false, "set": { "examples": [{ "url": "https://video.example/", "key": null }] } },
     { "name": "an example that fails", "valid": false, "set": {
-      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abd" }] } },
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abd" }] },
+      "control": { "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] } },
     { "name": "an example whose watch differs", "valid": false, "set": {
-      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc", "watch": "https://video.example/watch/abd" }] } },
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc", "watch": "https://video.example/watch/abd" }] },
+      "control": { "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] } },
     { "name": "an example missing key", "valid": false, "set": {
       "examples": [{ "url": "https://video.example/watch/abc" }, { "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] } },
     { "name": "a lookalike host that should not be claimed", "valid": false, "set": {
@@ -126,6 +147,14 @@
       "continues": [{ "from": "/watch/{id}", "to": "/watch/{id}" }],
       "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" },
                    { "from": "example:/watch/a", "to": "example:/watch/b", "continues": true }] } },
+    { "name": "an example asserting no watch URL for media", "valid": false, "set": {
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc", "watch": null }] },
+      "control": { "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] } },
+    { "name": "watch null where no media is named", "valid": true, "set": {
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" },
+                   { "url": "https://video.example/logout", "key": null, "watch": null }] } },
+    { "name": "a selector over 256 characters", "valid": false, "set": { "video": { "include": [".aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] } },
+      "control": { "video": { "include": [".aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] } } },
     { "name": "notes too long", "valid": false, "set": { "notes": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn" } },
     { "name": "not an object", "valid": false, "replace": [1, 2] }
   ]

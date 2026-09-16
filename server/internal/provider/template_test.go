@@ -166,6 +166,7 @@ type descriptorVectors struct {
 		Name    string         `json:"name"`
 		Valid   bool           `json:"valid"`
 		Set     map[string]any `json:"set"`
+		Control map[string]any `json:"control"`
 		Replace any            `json:"replace"`
 	} `json:"cases"`
 }
@@ -182,32 +183,49 @@ func TestDescriptorVectors(t *testing.T) {
 	if len(v.Cases) < 10 {
 		t.Fatal("vectors did not load")
 	}
-	for _, c := range v.Cases {
-		var doc any
-		if c.Replace != nil {
-			doc = c.Replace
-		} else {
-			d := map[string]any{}
-			for k, x := range v.Base {
-				d[k] = x
-			}
-			for k, x := range c.Set {
+	build := func(layers ...map[string]any) []byte {
+		d := map[string]any{}
+		for k, x := range v.Base {
+			d[k] = x
+		}
+		for _, l := range layers {
+			for k, x := range l {
 				if x == nil {
 					delete(d, k)
 				} else {
 					d[k] = x
 				}
 			}
-			doc = d
 		}
-		b, err := json.Marshal(doc)
+		b, err := json.Marshal(d)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = Parse(b)
+		return b
+	}
+	controls := 0
+	for _, c := range v.Cases {
+		var b []byte
+		if c.Replace != nil {
+			b, _ = json.Marshal(c.Replace)
+		} else {
+			b = build(c.Set)
+		}
+		_, err := Parse(b)
 		if (err == nil) != c.Valid {
 			t.Errorf("%s: valid=%v, got err=%v", c.Name, c.Valid, err)
 		}
+		if c.Control != nil {
+			// Rejected for the named reason alone: take it out and nothing
+			// else is wrong.
+			controls++
+			if _, err := Parse(build(c.Set, c.Control)); err != nil {
+				t.Errorf("%s: its control is rejected too: %v", c.Name, err)
+			}
+		}
+	}
+	if controls < 10 {
+		t.Fatal("the controls did not load")
 	}
 }
 

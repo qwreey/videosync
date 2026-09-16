@@ -104,21 +104,31 @@ describe('the template grammar (shared vectors)', () => {
 
 describe('descriptor validation (shared vectors)', () => {
   const v = readJson('providers/testdata/descriptors.json');
-  const build = (c: { set?: Record<string, unknown>; replace?: unknown }): unknown => {
+  const build = (c: { set?: Record<string, unknown>; replace?: unknown }, ...more: Array<Record<string, unknown>>): unknown => {
     if ('replace' in c) return c.replace;
     const d: Record<string, unknown> = structuredClone(v.base);
-    for (const [k, val] of Object.entries(c.set ?? {})) {
-      if (val === null) delete d[k];
-      else d[k] = val;
+    for (const layer of [c.set ?? {}, ...more]) {
+      for (const [k, val] of Object.entries(layer)) {
+        if (val === null) delete d[k];
+        else d[k] = val;
+      }
     }
     return d;
   };
 
   it('accepts and rejects exactly what the Go port does', () => {
+    let controls = 0;
     for (const c of v.cases) {
       const r = compileDescriptor(build(c));
       assert.equal(r.ok, c.valid, `${c.name}: ${r.ok ? 'accepted' : r.errors.join('; ')}`);
+      if (c.control) {
+        // Rejected for the named reason alone: take it out and nothing else is wrong.
+        controls++;
+        const fixed = compileDescriptor(build(c, c.control));
+        assert.ok(fixed.ok, `${c.name}: its control is rejected too: ${fixed.ok ? '' : fixed.errors.join('; ')}`);
+      }
     }
+    assert.ok(controls >= 10, 'the controls did not load');
   });
 
   it('refuses text over 16 KiB before parsing it', () => {

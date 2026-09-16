@@ -688,12 +688,20 @@ func (pr *Provider) runExamples() []string {
 			if e.Key != nil {
 				positive = true
 			}
+			// `"watch": null` asserts "no watch URL", which a *string cannot
+			// tell apart from an absent field. The client compares it, so
+			// this port must too, or the server lists what clients refuse.
+			var fields map[string]json.RawMessage
+			json.Unmarshal(raw, &fields)
+			watchNull := string(bytes.TrimSpace(fields["watch"])) == "null"
 			key, named, watch := pr.Evaluate(*e.URL)
 			switch {
 			case named != (e.Key != nil) || (named && key != *e.Key):
 				out = append(out, fmt.Sprintf("%s: %s gives key %q (media: %v), expected %v", w, *e.URL, key, named, strOrNull(e.Key)))
 			case named && watch == "":
 				out = append(out, fmt.Sprintf("%s: %s has no watch URL that names the same media", w, *e.URL))
+			case watchNull && watch != "":
+				out = append(out, fmt.Sprintf("%s: %s gives watch %q, expected null", w, *e.URL, watch))
 			case e.Watch != nil && watch != *e.Watch:
 				out = append(out, fmt.Sprintf("%s: %s gives watch %q, expected %q", w, *e.URL, watch, *e.Watch))
 			}
