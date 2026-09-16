@@ -739,6 +739,59 @@ describe('the element being replaced under us', () => {
   });
 });
 
+describe('a page that names no media', () => {
+  // The key comes from the URL, so an empty one is a search page, a channel
+  // page, a site's front page -- whose only <video> is often a hover preview
+  // or a trailer that has nothing to do with the room.
+
+  it('leaves the page\'s video alone and never steers the room from it', async () => {
+    const h = harness({ paused: false, positionS: 3 }, { mediaKey: '' });
+    await h.join({ positionMs: 500_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    assert.equal(h.engine.followingRoom, false);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 900_000, atServerMs: when, paused: true, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'pause',
+    });
+    await h.vt.advance(500);
+    assert.equal(h.player.seeks, 0, `seeked the preview to ${h.player.positionS}s`);
+    assert.equal(h.player.paused, false, 'paused the preview for the room');
+    assert.equal(h.engine.stats.skippedOffMedia, 1);
+
+    // The preview loops back to its start: a jump in both diffs, and not the
+    // room's business.
+    h.player.positionS = 0;
+    h.player.emit('seeked');
+    await h.vt.advance(5000);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+    assert.equal(h.player.paused, false, 'the reconciler paused the preview');
+    assert.equal(h.tr.sentOf('hb').at(-1)!.suspended, true, 'judged against a timeline it is not on');
+  });
+
+  it('is not the media of a room that names none either, and seeds nothing', async () => {
+    // A room created from such a page has an empty key too. Matching them
+    // made the creator adopt the preview into the room.
+    const h = harness({ paused: false, positionS: 42 }, { mediaKey: '', adoptLocalStateOnJoin: true });
+    await h.join({ mediaKey: '' }, 0, 1);
+    await h.vt.advance(5000);
+    assert.equal(h.engine.followingRoom, false);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'seeded the room from a page with no media');
+    assert.equal(h.player.seeks + h.player.pauses, 0);
+  });
+
+  it('control: once the member navigates onto the room\'s media it follows', async () => {
+    const h = harness({ paused: false, positionS: 3 }, { mediaKey: '' });
+    await h.join({ positionMs: 500_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    h.engine.setLocalMediaKey('yt:abc');
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await h.vt.advance(100);
+    assert.equal(h.engine.followingRoom, true);
+    const expected = h.engine.expectedMs()! / 1000;
+    assert.ok(Math.abs(h.player.positionS - expected) < 0.5, `at ${h.player.positionS}s, room at ${expected}s`);
+  });
+});
+
 describe('applying transitions is serialised', () => {
   it('a command arriving mid-seek cannot invert an earlier one', async () => {
     // A frame arriving while an earlier transition is parked in seekTo is
