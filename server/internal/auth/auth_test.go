@@ -149,6 +149,10 @@ func TestAMethodWithoutItsSettingsRefusesToStart(t *testing.T) {
 		"oidc over http": {Methods: []string{MethodOIDC}, PublicURL: "https://sync.example",
 			OIDC: OIDCConfig{Issuer: "http://idp", ClientID: "c", ClientSecret: "s"}},
 		"short key": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, Key: []byte("short")},
+		// Under a prefix every login would fail at the callback, where the
+		// flow cookie (Path=/auth/) is not sent.
+		"public url with a path": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, PublicURL: "https://host.example/videosync"},
+		"public url with a query": {Methods: []string{MethodToken}, Keys: [][32]byte{{1}}, PublicURL: "https://host.example/?x=1"},
 	} {
 		if cfg.Key == nil {
 			cfg.Key = base.Key

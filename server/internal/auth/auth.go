@@ -199,7 +199,14 @@ func New(cfg Config) (*Server, error) {
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return nil, fmt.Errorf("-public-url %q: want http(s)://host[:port]", cfg.PublicURL)
 		}
-		cfg.PublicURL = strings.TrimSuffix(u.Scheme+"://"+u.Host+u.Path, "/")
+		// Only the root. The login page's links, the flow cookie's Path=/auth/
+		// and the clients' own URLs all assume the server is at /, so a prefix
+		// would reach the IdP's redirect and nothing else: every login would
+		// end as "link expired". Refused rather than half-supported.
+		if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+			return nil, fmt.Errorf("-public-url %q: the server must be at the root of its origin (no path, query or credentials)", cfg.PublicURL)
+		}
+		cfg.PublicURL = u.Scheme + "://" + u.Host
 	}
 
 	var dh PasswordHash

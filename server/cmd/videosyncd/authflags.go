@@ -49,7 +49,7 @@ func registerAuthFlags() authFlags {
 		userHeader: flag.String("auth-user-header", "",
 			"for -auth proxy: the header the proxy names the user in (e.g. Remote-User); without it the proxy's address alone vouches"),
 		publicURL: flag.String("public-url", "",
-			"where browsers reach this server, e.g. https://sync.example.com. Required for -auth oidc"),
+			"where browsers reach this server, e.g. https://sync.example.com (an origin: the server must be at its root). Required for -auth oidc"),
 		issuer:       flag.String("oidc-issuer", "", "for -auth oidc: the issuer URL (https), exactly as the IdP names itself"),
 		clientID:     flag.String("oidc-client-id", "", "for -auth oidc: this server's client id at the IdP"),
 		clientSecret: flag.String("oidc-client-secret-file", "", "for -auth oidc: a file holding the client secret"),
