@@ -31,13 +31,18 @@ type Report struct {
 	// RTTMs is the client's best observed round trip. Unlike any offset-derived
 	// quantity it is bias-free, so the server can safely use it for scheduling.
 	RTTMs int64 `json:"rttMs"`
-	// ClockSamples counts accepted min-RTT samples. Corrections before the
-	// estimate has settled do more harm than good.
+	// ClockSamples counts COMPLETED time exchanges, not accepted ones
+	// (docs/PROTOCOL.md section 4). Corrections before the estimate has
+	// settled do more harm than good, but a min-RTT counter stops advancing
+	// once it converges, and gating on it froze corrections for whole
+	// sessions.
 	ClockSamples int `json:"clockSamples"`
 	// Suspended means the browser paused this member's element because its tab
-	// is hidden and muted. Such a member is ABSENT, not behind: the readiness
-	// gate must not hold the room for them, or the room waits forever for
-	// someone who is not watching.
+	// is hidden and its playback was never audible -- "never made a sound", not
+	// "currently muted"; a tab that was audible is exempt for its lifetime
+	// (docs/BROWSER-FINDINGS.md section 5). Such a member is ABSENT, not
+	// behind: the readiness gate must not hold the room for them, or the room
+	// waits forever for someone who is not watching.
 	Suspended bool `json:"suspended"`
 }
 
