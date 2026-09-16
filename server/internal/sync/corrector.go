@@ -266,3 +266,16 @@ func (c ConfidenceGated) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	}
 	return c.Inner.Decide(r, a, serverMs, t)
 }
+
+// forgetter is room.Forgetter, which this package cannot import.
+type forgetter interface{ Forget(clientID string) }
+
+// Forget passes a leave through to the wrapped law. The room only looks for
+// Forget on the corrector it holds, so without this every "+conf" strategy
+// kept a departed member's loop state and resumed from it on a reconnect --
+// against a clock estimate and a player that had both started over.
+func (c ConfidenceGated) Forget(clientID string) {
+	if f, ok := c.Inner.(forgetter); ok {
+		f.Forget(clientID)
+	}
+}

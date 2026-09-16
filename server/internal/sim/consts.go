@@ -7,6 +7,7 @@ const (
 	evalIntervalMs      = 100  // client local evaluation loop (~10 Hz)
 	hbIntervalMs        = 1000 // heartbeat
 	minReportIntervalMs = 250  // spacing of anomaly reports between heartbeats (engine.ts)
+	seekToleranceMs     = 250  // a transition this close to the playhead does not seek (engine.ts)
 	timeSyncEveryMs     = 5000 // clock resync
 	slopeWindowMs       = 3000 // least-squares window for d(residual)/dt
 	metricSampleMs      = 100  // divergence sampling

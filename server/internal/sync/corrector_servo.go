@@ -31,6 +31,14 @@ type servoState struct {
 	// phaseRate is the part of the last commanded rate that is NOT rateBias:
 	// the proportional phase nudge, after clamping. The slope the client
 	// reports includes it, so the frequency term has to take it back out.
+	//
+	// It assumes the client runs what it was told. Two cases break that and
+	// are accepted rather than guarded, because the report carries no rate
+	// to check against: a provider without supportsPlaybackRateNudge ignores
+	// every nudge, and there the phase nudge winds rateBias to its clamp --
+	// harmless, since the only thing rateBias gates besides the rate is the
+	// "settled" reset, and that member is corrected by seeks alone; and a
+	// member gone absent, whose engine resets the rate, which Decide handles.
 	phaseRate float64
 	lastAt    int64
 }
@@ -63,6 +71,16 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// A suspended member is absent, not behind. Gating on them holds the room
 	// for someone who is not watching (docs/BROWSER-FINDINGS.md 5).
 	if r.Suspended {
+		// And an absent member's engine hands back any rate it was running
+		// (engine.ts releaseRate), so what this loop last commanded is no
+		// longer in effect: the client is at exactly 1.0 again, which is what
+		// the settled branch records. Left as it was, the first report after
+		// the absence read the missing nudge as a frequency error and wound
+		// the bias to the clamp -- integrated over the whole absence, too.
+		if s, ok := c.st[r.ClientID]; ok {
+			s.phaseRate = -s.rateBias
+			s.lastAt = 0
+		}
 		return Decision{Action: ActionNone, Why: "suspended"}
 	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
@@ -97,6 +115,11 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	if gain == 0 {
 		gain = 0.35
 	}
+	// What the client is running now, less 1: the last command. Taken before
+	// this report touches the bias, because a seek below hands exactly this
+	// over, and the report that triggers a seek usually carries the step in
+	// its slope.
+	running := s.phaseRate + s.rateBias
 	if absF(r.SlopeMsPerS) <= t.RampMaxSlope {
 		freqErr := r.SlopeMsPerS/1000 - s.phaseRate
 		s.rateBias += -freqErr * gain * dt
@@ -126,7 +149,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// fetch and rebuffers for that whole time, leaving the client further out
 	// of position than it started.
 	if abs64(r.ResidualMs) > band && targetBuffered(r, a, serverMs) {
-		s.dropBias() // step is gone; do not keep a frequency correction for it
+		s.dropBias(running) // step is gone; do not keep a frequency correction for it
 		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "free seek"}
 	}
 	// An out-of-buffer seek is expensive, but not seeking is not free either:
@@ -136,7 +159,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// (The first version of this rule refused out-of-buffer seeks outright and
 	// left a member returning from a 15 s tab suspension nudging for 150 s.)
 	if abs64(r.ResidualMs) >= t.NudgeMaxResidual {
-		s.dropBias()
+		s.dropBias(running)
 		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "gap beyond what rate can close"}
 	}
 
@@ -153,10 +176,14 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 
 // dropBias forgets the learned frequency correction when a seek removes the
 // step it was learned against. A seek does not touch the client's rate, so
-// whatever it is still running at stops being bias and counts as commanded
-// offset until the next nudge replaces it.
-func (s *servoState) dropBias() {
-	s.phaseRate += s.rateBias
+// whatever it is still running at (running, less 1) stops being bias and
+// counts as commanded offset until the next nudge replaces it.
+//
+// It must be the rate last commanded, not the bias as this report left it:
+// the step's own slope, integrated on the way here, is in the latter. Handing
+// that over told a 0.99x decoder, which had learned its 1.0101, to run 0.998.
+func (s *servoState) dropBias(running float64) {
+	s.phaseRate = running
 	s.rateBias = 0
 }
 
