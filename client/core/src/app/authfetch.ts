@@ -144,9 +144,10 @@ export function makeAuthFetch(http: RawHttp, tokens: TokenStore): AuthFetch {
     // on, and admits the device token itself (a ticket is single-use, and an
     // index plus its files is several requests). Same origin that issued it,
     // like every token this code sends.
+    let sent = '';
     if (path === '/api/ticket' || listing) {
-      const t = await tokens.get(origin);
-      if (t) headers['Authorization'] = `Bearer ${t}`;
+      sent = await tokens.get(origin);
+      if (sent) headers['Authorization'] = `Bearer ${sent}`;
     }
 
     let r: HttpResult;
@@ -161,9 +162,12 @@ export function makeAuthFetch(http: RawHttp, tokens: TokenStore): AuthFetch {
       return { status: r.status, body: '', gateway: true };
     }
 
-    if (path === '/api/ticket' && r.status === 401) {
+    if (path === '/api/ticket' && r.status === 401 && sent && (await tokens.get(origin)) === sent) {
       // The server itself refused the token: expired, rotated key, method
       // switched off. Keeping it would make every connect fail the same way.
+      // Only the token that was refused, though: another tab may have signed
+      // in while this request was out (every tab reconnects at once after a
+      // restart), and a late 401 must not sign that fresh token out.
       await tokens.set(origin, '');
     }
     if (MINTS.includes(path) && r.status === 200) {
@@ -191,6 +195,8 @@ export function makeAuthFetch(http: RawHttp, tokens: TokenStore): AuthFetch {
  * nothing under /api reads them, and with `Allow-Origin: *` a credentialed
  * request would fail CORS outright.
  */
+export const HTTP_TIMEOUT_MS = 15_000;
+
 export const fetchHttp: RawHttp = async (url, init) => {
   const r = await fetch(url, {
     method: init.method,
@@ -199,6 +205,9 @@ export const fetchHttp: RawHttp = async (url, init) => {
     redirect: 'manual',
     credentials: 'omit',
     cache: 'no-store',
+    // A server that accepts the connection and never answers would otherwise
+    // hold the call forever (GM_xmlhttpRequest has its own 15 s).
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   const opaque = r.type === 'opaqueredirect';
   return {

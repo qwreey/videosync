@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { isAuthPath, isProvidersPath, makeAuthFetch, memoryTokens } from '../src/app/authfetch.ts';
+import { fetchHttp, HTTP_TIMEOUT_MS, isAuthPath, isProvidersPath, makeAuthFetch, memoryTokens } from '../src/app/authfetch.ts';
 import type { AuthPath, HttpResult, RawHttp } from '../src/app/authfetch.ts';
 
 interface Call { url: string; method: string; headers: Record<string, string>; body?: string }
@@ -139,6 +139,36 @@ describe('authFetch', () => {
     assert.equal(await r.tokens.get(ORIGIN), '', 'a refused token would fail every connect the same way');
   });
 
+  it('forgets nothing on any other 401: a missing ticket is not a bad token', async () => {
+    const r = rig((c) => c.url.endsWith('/api/session') ? json(200, { token: 'DEVICE' })
+      : json(401, { error: 'auth_required' }));
+    await r.fetch(S, '/api/session', { method: 'POST', credentials: { key: 'k' } });
+    for (const p of ['/api/rooms', '/healthz', '/api/auth/begin', '/api/auth/poll', '/api/providers'] as const) {
+      await r.fetch(S, p, { method: p === '/api/providers' || p === '/healthz' ? 'GET' : 'POST', body: '{}' });
+      assert.equal(await r.tokens.get(ORIGIN), 'DEVICE', `a 401 on ${p} signed the device out`);
+    }
+  });
+
+  it('does not let a late refusal of an old token sign out a fresh one', async () => {
+    let release: () => void = () => {};
+    const r = rig(async (c) => {
+      if (c.url.endsWith('/api/session')) return json(200, { token: c.headers['Authorization'] === 'Bearer new' ? 'NEW' : 'OLD' });
+      // The ticket request with the old token is slow, and refused.
+      await new Promise<void>((res) => { release = res; });
+      return json(401, { error: 'auth_required' });
+    });
+    await r.fetch(S, '/api/session', { method: 'POST', credentials: { key: 'old' } });
+    const late = r.fetch(S, '/api/ticket', { method: 'POST' });
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(r.calls.at(-1)!.headers['Authorization'], 'Bearer OLD');
+    // Another tab signs in meanwhile.
+    await r.fetch(S, '/api/session', { method: 'POST', credentials: { key: 'new' } });
+    assert.equal(await r.tokens.get(ORIGIN), 'NEW');
+    release();
+    assert.equal((await late).status, 401);
+    assert.equal(await r.tokens.get(ORIGIN), 'NEW', 'the refusal of OLD signed NEW out');
+  });
+
   it('signs out without a request', async () => {
     const r = rig(() => json(200, { token: 'DEVICE' }));
     await r.fetch(S, '/api/auth/poll', { method: 'POST', body: '{}' });
@@ -154,5 +184,44 @@ describe('authFetch', () => {
     const out = await r.fetch(S, '/healthz', { method: 'GET' });
     assert.equal(out.status, 0);
     assert.match(out.error ?? '', /Failed to fetch/);
+  });
+});
+
+describe('fetchHttp', () => {
+  /** The global fetch, replaced for one call; returns what it was asked. */
+  async function withFetch(answer: () => Response | Promise<Response>, run: () => Promise<unknown>) {
+    const seen: Array<{ url: string; init: RequestInit }> = [];
+    const real = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => { seen.push({ url, init }); return answer(); }) as typeof fetch;
+    try {
+      return { out: await run(), seen };
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  it('sends no cookies, follows no redirect, caches nothing, and gives up in time', async () => {
+    const { seen } = await withFetch(
+      () => new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }),
+      () => fetchHttp('https://sync.example/api/ticket', { method: 'POST', headers: { a: 'b' } }));
+    const init = seen[0]!.init;
+    assert.equal(init.credentials, 'omit', 'a gateway cookie would ride along');
+    assert.equal(init.redirect, 'manual', 'a login redirect would be followed into a CORS failure');
+    assert.equal(init.cache, 'no-store');
+    assert.ok(init.signal instanceof AbortSignal, 'no deadline: a stalled server holds the call forever');
+    assert.ok(HTTP_TIMEOUT_MS > 0 && HTTP_TIMEOUT_MS <= 30_000);
+  });
+
+  it('reports a refused redirect as one, and a 3xx as redirected', async () => {
+    const opaque = Object.defineProperty(new Response(null, { status: 200 }), 'type', { value: 'opaqueredirect' });
+    Object.defineProperty(opaque, 'status', { value: 0 });
+    const a = await withFetch(() => opaque, () => fetchHttp('https://sync.example/api/ticket', { method: 'POST', headers: {} }));
+    assert.deepEqual(a.out, { status: 0, body: '', contentType: '', redirected: true });
+    const b = await withFetch(() => new Response('', { status: 302, headers: { location: '/login' } }),
+      () => fetchHttp('https://sync.example/api/ticket', { method: 'POST', headers: {} }));
+    assert.equal((b.out as { redirected: boolean }).redirected, true);
+    const c = await withFetch(() => new Response('{}', { status: 401, headers: { 'content-type': 'application/json' } }),
+      () => fetchHttp('https://sync.example/api/ticket', { method: 'POST', headers: {} }));
+    assert.deepEqual(c.out, { status: 401, body: '{}', contentType: 'application/json', redirected: false });
   });
 });
