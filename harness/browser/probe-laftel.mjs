@@ -182,7 +182,7 @@ async function main() {
 main().then(() => {
   const failed = results.checks.filter((c) => !c.ok).length;
   console.log(`\n${results.checks.length - failed}/${results.checks.length} passed`);
-  process.exit(0);
+  process.exit(failed ? 1 : 0);
 }).catch((e) => {
   results.notes.push(`aborted: ${e.message}`);
   flush();
