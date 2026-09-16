@@ -304,12 +304,16 @@ export class Panel {
     log.scrollTop = log.scrollHeight;
   }
 
-  /** Offer to move the room to what this member is watching. */
-  setMediaAction(notice: string, label: string, action: MediaAction): void {
+  /**
+   * Offer to move the room to what this member is watching. With no action,
+   * only the notice: a button that can do nothing must not be shown.
+   */
+  setMediaAction(notice: string, label?: string, action?: MediaAction): void {
     this.el.mediaNotice!.textContent = notice;
     const btn = this.el.mediaBtn as HTMLButtonElement;
-    btn.textContent = label;
-    btn.onclick = action;
+    btn.textContent = label ?? '';
+    btn.onclick = action ?? null;
+    btn.style.display = action ? '' : 'none';
     this.el.mediaWrap!.style.display = '';
   }
 

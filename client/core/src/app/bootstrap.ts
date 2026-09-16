@@ -93,25 +93,47 @@ interface Rejoin {
   /** The media we were sent to. Arriving anywhere else joins nothing. */
   key: string;
   until: number;
+  /** A page it was not meant for has already said the move failed. */
+  warned?: boolean;
 }
 
+/**
+ * The pending rejoin, if one is live. Whether to consume it is decided at
+ * startup, not here: the store is shared by every tab in the profile, so
+ * reading it proves nothing about who it was written for.
+ */
 function readRejoin(store: Store): Rejoin | null {
   const raw = store.load('rejoin', '');
   if (!raw) return null;
-  store.save('rejoin', '');           // one use, whatever happens next
   try {
     const r = JSON.parse(raw) as Rejoin;
-    return typeof r.until === 'number' && Date.now() < r.until ? r : null;
-  } catch {
-    return null;
-  }
+    if (typeof r.until === 'number' && Date.now() < r.until) return r;
+  } catch { /* unreadable: drop it below */ }
+  store.save('rejoin', '');
+  return null;
 }
 
 /** `#videosync=<room>.<secret>` -- how an invite link is shared. */
 function readInviteHash(hash: string): { roomId: string; secret: string } | null {
   const m = /[#&]videosync=([^.&]+)\.([^&]+)/.exec(hash);
   if (!m || !m[1] || !m[2]) return null;
-  return { roomId: decodeURIComponent(m[1]), secret: decodeURIComponent(m[2]) };
+  // A truncated or hand-edited link is not worth failing to start over: this
+  // runs before the panel exists, so a throw here leaves no panel and no word
+  // of why, on every reload of the same URL.
+  try {
+    return { roomId: decodeURIComponent(m[1]), secret: decodeURIComponent(m[2]) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `href` with an invite's secret taken out. `dump()` output is made to be
+ * pasted into an issue, and a page reached by invite link keeps
+ * `#videosync=<room>.<secret>` in its URL for as long as it is open.
+ */
+export function redactInvite(href: string): string {
+  return href.replace(/([#&]videosync=[^.&]*\.)[^&]*/g, '$1<redacted>');
 }
 
 export function start(p: Platform): App {
@@ -122,8 +144,26 @@ export function start(p: Platform): App {
   let roomMediaKey = '';
   let roomMediaUrl = '';
   let followTimer = 0;
+  /**
+   * Bumped by `cancelFollow`. A follow that has started is awaiting a store
+   * write, and anything that cancels it -- leaving, the room moving again, a
+   * local navigation, the connection dropping -- has to reach it there too.
+   */
+  let followGen = 0;
   /** A room media this member chose not to be taken to. */
   let stayedAwayFrom = '';
+  /** What the media action on screen is doing for this member, if anything. */
+  let mediaUi: 'follow' | 'offer' | null = null;
+  /**
+   * What was on screen when the connection dropped. Taken down meanwhile --
+   * a command sent now is dropped by a closed socket, and a follow cannot carry
+   * a session that is not joined -- and put back by the next welcome, which
+   * names the same room media and so would otherwise act on nothing.
+   */
+  let resumeMedia: 'follow' | 'offer' | null = null;
+  /** Whether the last status was 'joined', so leaving it is seen once. */
+  let wasJoined = false;
+  let lastStatus: EngineStatus = 'idle';
   let session: { server: string; roomId: string; secret: string; name: string } | null = null;
   let waitingOn: readonly string[] = [];
   let members: readonly MemberInfo[] = [];
@@ -175,16 +215,33 @@ export function start(p: Platform): App {
    */
   function onMediaChanged(): void {
     cancelFollow();
-    if (!engine || engine.state !== 'joined') return;
+    if (!engine) return;
+    if (engine.state !== 'joined') {
+      // Decided when the connection is back, against the room as it is then.
+      resumeMedia = 'offer';
+      return;
+    }
     if (!mediaKey || mediaKey === roomMediaKey) {
-      panel.clearMediaAction();
+      clearMediaAction();
       return;
     }
     offerMoveRoom();
   }
 
+  function clearMediaAction(): void {
+    panel.clearMediaAction();
+    mediaUi = null;
+  }
+
   function offerMoveRoom(): void {
+    mediaUi = 'offer';
     if (!mediaKey) {
+      // A button that cannot take the member anywhere redraws itself on every
+      // press and looks broken; say where the room is instead.
+      if (!followableUrl(roomMediaUrl, roomMediaKey, location.href)) {
+        panel.setMediaAction(`방은 다른 영상을 보고 있어요 (방: ${roomMediaKey}) — 여기서는 열 수 없어요`);
+        return;
+      }
       panel.setMediaAction(`방은 다른 영상을 보고 있어요 (방: ${roomMediaKey})`, '방 영상 열기', () => {
         stayedAwayFrom = '';
         followRoom(0);
@@ -195,8 +252,10 @@ export function start(p: Platform): App {
       `이 영상은 방과 달라요 (방: ${roomMediaKey || '없음'})`,
       '이 영상으로 방 옮기기',
       () => {
-        engine?.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000), mediaUrl);
-        panel.clearMediaAction();
+        // The transport drops a frame it cannot send, silently.
+        if (!engine || engine.state !== 'joined') return;
+        engine.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000), mediaUrl);
+        clearMediaAction();
       },
     );
   }
@@ -204,6 +263,19 @@ export function start(p: Platform): App {
   function cancelFollow(): void {
     if (followTimer) clearTimeout(followTimer);
     followTimer = 0;
+    followGen++;
+  }
+
+  /** The connection is gone for now; see `resumeMedia`. */
+  function suspendMedia(): void {
+    if (mediaUi) resumeMedia = mediaUi;
+    cancelFollow();
+    clearMediaAction();
+    // Gate changes are only ever broadcast, so one that happened while we were
+    // away is never reported, and the welcome carries no gate state. A tag
+    // kept from before would stay until some unrelated gate transition.
+    waitingOn = [];
+    panel.setMembers(members, engine?.id ?? '', waitingOn);
   }
 
   /**
@@ -216,7 +288,7 @@ export function start(p: Platform): App {
     cancelFollow();
     if (!engine || engine.state !== 'joined' || !session) return;
     if (!roomMediaKey || roomMediaKey === mediaKey) {
-      panel.clearMediaAction();
+      clearMediaAction();
       return;
     }
     const target = followableUrl(roomMediaUrl, roomMediaKey, location.href);
@@ -224,18 +296,30 @@ export function start(p: Platform): App {
       offerMoveRoom();
       return;
     }
-    const s = session;
     const go = async () => {
       followTimer = 0;
-      if (!engine || engine.state !== 'joined') return;
-      const rejoin: Rejoin = { ...s, key: roomMediaKey, until: Date.now() + REJOIN_TTL_MS };
-      p.store.save('rejoin', JSON.stringify(rejoin));
+      const gen = followGen;
+      const e = engine;
+      // Read now, not when the follow was scheduled: a secret rotated in
+      // between is the only one the server still accepts.
+      if (!e || e.state !== 'joined' || !session) return;
+      const record = JSON.stringify({ ...session, key: roomMediaKey, until: Date.now() + REJOIN_TTL_MS } satisfies Rejoin);
+      p.store.save('rejoin', record);
+      // Past this point "stay here" can no longer stop anything; leaving can.
+      panel.clearMediaAction();
       panel.setStatus('방이 보는 영상으로 이동하는 중…');
       // The write is what carries the session to the next page; an async store
       // that is still writing when the document unloads would drop it.
       await p.store.flush?.();
+      if (gen !== followGen || engine !== e || e.state !== 'joined') {
+        // Cancelled while writing. Whatever cancelled it decides what happens
+        // next; a record left behind would pull a later page into this room.
+        if (p.store.load('rejoin', '') === record) p.store.save('rejoin', '');
+        return;
+      }
       location.assign(target);
     };
+    mediaUi = 'follow';
     if (delayMs <= 0) { void go(); return; }
     panel.setMediaAction('방이 보는 영상으로 곧 이동해요', '여기 있기', () => {
       cancelFollow();
@@ -320,6 +404,14 @@ export function start(p: Platform): App {
       onStatus: (s: EngineStatus, detail?: string) => {
         panel.setConnection(s);
         panel.setJoined(s === 'joined');
+        if (wasJoined && s !== 'joined') suspendMedia();
+        wasJoined = s === 'joined';
+        const prev = lastStatus;
+        lastStatus = s;
+        // The server closes the socket right after refusing, and the close is
+        // not news: "connection lost" in place of "check the room ID or
+        // secret" sends the user off to debug their network.
+        if (prev === 'refused' && s === 'closed') return;
         const text: Record<EngineStatus, string> = {
           idle: '', connecting: '연결하는 중…', joining: '방에 들어가는 중…',
           joined: '연결됨', refused: '참가가 거절됐어요 (방 ID나 비밀키를 확인해주세요)',
@@ -354,9 +446,16 @@ export function start(p: Platform): App {
       },
       onAnchor: (a) => {
         roomMediaUrl = a.mediaUrl ?? '';
+        const resume = resumeMedia;
+        resumeMedia = null;
         if (a.mediaKey !== roomMediaKey) {
           roomMediaKey = a.mediaKey;
           followRoom();
+        } else if (resume === 'follow') {
+          followRoom();
+        } else if (resume === 'offer') {
+          if (mediaKey !== roomMediaKey) offerMoveRoom();
+          else clearMediaAction();
         }
       },
       onAutoplayBlocked: () => panel.showGesturePrompt(document),
@@ -365,6 +464,8 @@ export function start(p: Platform): App {
           panel.setStatus('너무 빠릅니다 — 잠시 후 다시 시도해주세요.', 'warn');
           return;
         }
+        // Already said by `onStatus`, in words that tell the user what to check.
+        if (code === 'join_refused' || code === 'room_full') return;
         // bad_frame means WE sent something malformed. It is our bug, and the
         // symptom is a mechanism quietly not working, so it must be visible.
         panel.setStatus(`오류 ${code}${msg ? `: ${msg}` : ''}`, 'err');
@@ -375,6 +476,11 @@ export function start(p: Platform): App {
 
   function leave(): void {
     cancelFollow();
+    // A follow may already be on its way to the next page. The navigation
+    // cannot be taken back, but arriving must not rejoin a room left on
+    // purpose. Only with a session: `join` calls this too, and a record the
+    // page is still to act on is not this page's to drop.
+    if (session) p.store.save('rejoin', '');
     engine?.stop();
     engine = null;
     session = null;
@@ -383,9 +489,12 @@ export function start(p: Platform): App {
     roomMediaKey = '';
     roomMediaUrl = '';
     stayedAwayFrom = '';
+    resumeMedia = null;
+    wasJoined = false;
+    lastStatus = 'idle';
     panel.setJoined(false);
     panel.setMembers([], '', []);
-    panel.clearMediaAction();
+    clearMediaAction();
     panel.hideGesturePrompt();
   }
 
@@ -398,12 +507,20 @@ export function start(p: Platform): App {
 
   // Arriving from `followRoom`: pick the session back up, but only on the page
   // we were sent to. A redirect to a login page joins nothing.
+  //
+  // Only that page consumes it. The store is shared by every tab in the
+  // profile, and any other tab loading meanwhile used to take the record and
+  // leave the member who followed arriving out of the room, with no word.
+  // A page it was not meant for says so once and leaves it for the TTL --
+  // which also lets a login redirect that comes back in time still rejoin.
   const rejoin = readRejoin(p.store);
   if (rejoin) {
     if (rejoin.key === mediaKey) {
+      p.store.save('rejoin', '');
       panel.setFields({ roomId: rejoin.roomId, secret: rejoin.secret });
       join(rejoin.server, rejoin.roomId, rejoin.secret, rejoin.name);
-    } else {
+    } else if (!rejoin.warned) {
+      p.store.save('rejoin', JSON.stringify({ ...rejoin, warned: true }));
       panel.setStatus('방 영상으로 이동하지 못했어요. 로그인이 필요한지 확인한 뒤 다시 참가해주세요.', 'warn');
     }
   }
@@ -419,7 +536,7 @@ export function start(p: Platform): App {
       const s = adapter.readState();
       return JSON.stringify({
         at: new Date().toISOString(),
-        url: location.href,
+        url: redactInvite(location.href),
         mediaKey,
         mediaUrl,
         roomMediaKey,
