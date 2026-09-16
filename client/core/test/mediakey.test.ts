@@ -85,13 +85,50 @@ describe('mediaKey normalization', () => {
 
 describe('picking the element the user is watching', () => {
   const v = (o: Partial<VideoLike>): VideoLike => ({
-    videoWidth: 0, videoHeight: 0, duration: 0, paused: true, readyState: 0, ...o,
+    videoWidth: 0, videoHeight: 0, duration: 0, paused: true, readyState: 0, muted: false, volume: 1, ...o,
   });
 
-  it('prefers what is playing over what is merely bigger', () => {
-    const preview = v({ videoWidth: 320, videoHeight: 180, paused: false, readyState: 4 });
+  it('prefers what is audibly playing over what is merely bigger', () => {
+    const smaller = v({ videoWidth: 320, videoHeight: 180, paused: false, readyState: 4, muted: false });
+    const bigger = v({ videoWidth: 1920, videoHeight: 1080, paused: true, readyState: 4 });
+    assert.equal(pickVideo([bigger, smaller]), smaller);
+  });
+
+  it('never lets a muted autoplaying preview beat the paused feature', () => {
+    // A paused room leaves the feature paused. A muted preview that plays on
+    // its own is not the user choosing something else -- and picking it moves
+    // the room's state onto the preview.
     const feature = v({ videoWidth: 1920, videoHeight: 1080, paused: true, readyState: 4 });
-    assert.equal(pickVideo([feature, preview]), preview);
+    for (const size of [[320, 180], [1920, 1080]] as const) {
+      const preview = v({ videoWidth: size[0], videoHeight: size[1], paused: false, readyState: 4, muted: true });
+      assert.equal(pickVideo([feature, preview], feature), feature, `${size.join('x')} preview, feature current`);
+      if (size[0] < 1920) {
+        assert.equal(pickVideo([preview, feature], null), feature, `${size.join('x')} preview, nothing current`);
+      }
+    }
+    // Nor one that is merely silent.
+    const quiet = v({ videoWidth: 320, videoHeight: 180, paused: false, readyState: 4, volume: 0 });
+    assert.equal(pickVideo([feature, quiet], feature), feature);
+    assert.equal(pickVideo([quiet, feature], null), feature);
+  });
+
+  it('keeps the current element through its own seek', () => {
+    // A seek drops readyState to 1 while the position loads. Losing the
+    // element then resets the detector and swallows the user's seek.
+    const feature = v({ videoWidth: 1920, videoHeight: 1080, paused: false, readyState: 1 });
+    const other = v({ videoWidth: 1920, videoHeight: 1080, paused: false, readyState: 4, muted: false });
+    assert.equal(pickVideo([other, feature], feature), feature);
+  });
+
+  it('leaves the current element for one the user started, or when it lost its media', () => {
+    const old = v({ videoWidth: 1920, videoHeight: 1080, paused: true, readyState: 4 });
+    const next = v({ videoWidth: 1280, videoHeight: 720, paused: false, readyState: 4, muted: false });
+    assert.equal(pickVideo([old, next], old), next, 'another element is audibly playing');
+    const emptied = v({ paused: true, readyState: 0 });
+    const loaded = v({ videoWidth: 1280, videoHeight: 720, paused: true, readyState: 4 });
+    assert.equal(pickVideo([emptied, loaded], emptied), loaded, 'the current element has no media any more');
+    const gone = v({ videoWidth: 3840, videoHeight: 2160, paused: false, readyState: 4 });
+    assert.equal(pickVideo([loaded], gone), loaded, 'the current element left the document');
   });
 
   it('prefers the largest picture among elements that are all paused', () => {
