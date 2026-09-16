@@ -2,21 +2,25 @@
   "manifest_version": 3,
   "name": "VideoSync",
   "version": "0.1.0",
-  "description": "Watch the same video together on your own accounts. Only the URL, position, play state and chat cross the wire \u2014 never the video itself.",
+  "description": "Watch the same video together on your own accounts. Only the URL, position, play state and chat cross the wire — never the video itself.",
   "permissions": [
-    "storage"
+    "storage",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
   ],
   "background": {
     "service_worker": "sw.js",
     "type": "module"
   },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "content_scripts": [
     {
-      "matches": [
-        "https://www.youtube.com/*",
-        "https://m.youtube.com/*",
-        "https://laftel.net/*"
-      ],
+      "matches": [],
       "js": [
         "content.js"
       ],

@@ -132,6 +132,7 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 	if cfg.Auth != nil {
 		cfg.Auth.Register(mux, api)
 	}
+	h.providerRoutes(mux, cfg)
 	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
 		h.serveWS(w, r, cfg)
 	})

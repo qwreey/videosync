@@ -15,8 +15,9 @@
  */
 import { fetchHttp, makeAuthFetch, serverOrigin } from '@videosync/core/app/authfetch.ts';
 
-import { PORT_NAME, SERVER_KEY } from './relay.ts';
-import type { FromWorker, ToWorker, WorkerRequest } from './relay.ts';
+import { grantedOrigins, syncContentScripts } from './dynamic.ts';
+import { PORT_NAME, providersPath, SERVER_KEY } from './relay.ts';
+import type { FetchReply, FromWorker, SyncReply, ToWorker, WorkerRequest } from './relay.ts';
 import { idbTokens } from './tokens.ts';
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -109,6 +110,9 @@ chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
   // Only our own content scripts; a page cannot message an extension that
   // declares no `externally_connectable`, and this makes that explicit.
   if (sender.id !== chrome.runtime.id) return false;
+  const reply = (p: Promise<unknown>) => {
+    p.then(respond, (e) => respond({ ok: false, status: 0, body: '', error: String(e) } satisfies FetchReply));
+  };
   switch (msg?.t) {
     case 'auth': {
       storedServer()
@@ -134,7 +138,42 @@ chrome.runtime.onMessage.addListener((msg: WorkerRequest, sender, respond) => {
       }
       return false;
     }
+    case 'providers.fetch': {
+      let url: URL;
+      try {
+        url = new URL(msg.path, msg.server);
+      } catch {
+        respond({ ok: false, status: 0, body: '', error: 'bad server URL' } satisfies FetchReply);
+        return false;
+      }
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !providersPath(url.pathname) || url.search) {
+        respond({ ok: false, status: 0, body: '', error: 'not a provider path' } satisfies FetchReply);
+        return false;
+      }
+      reply(fetch(url, { cache: 'no-cache' })
+        .then(async (r): Promise<FetchReply> => ({ ok: r.ok, status: r.status, body: await r.text() })));
+      return true;
+    }
+    case 'providers.granted':
+      reply(grantedOrigins().then((origins) => ({ origins })));
+      return true;
+    case 'providers.sync':
+      reply(syncContentScripts().then(
+        (patterns): SyncReply => ({ patterns }),
+        (e): SyncReply => ({ patterns: [], error: String(e) })));
+      return true;
     default:
       return false;
   }
 });
+
+// The registration follows the stored descriptors and the granted hosts,
+// whichever changed and from wherever. Firefox's MV2 registration also has to
+// be redone every time this background starts.
+const resync = () => { syncContentScripts().catch(() => { /* the options page reports its own sync */ }); };
+chrome.permissions?.onAdded?.addListener(resync);
+chrome.permissions?.onRemoved?.addListener(resync);
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && Object.keys(changes).some((k) => k.startsWith('videosync.providers.'))) resync();
+});
+resync();

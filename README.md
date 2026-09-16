@@ -39,10 +39,55 @@ somebody moves it to another video.
 > with a real certificate (`videosyncd -tls-cert … -tls-key …`, or a reverse
 > proxy or tunnel that gives you one). See `docs/BROWSER-FINDINGS.md` §8.
 
-Adding a provider is one line — a `@match` in the userscript's metadata block or
-a `content_scripts.matches` entry in the extension manifest. There is no
-per-site code: the client finds the largest playing `<video>`, names the media
-from the URL, and syncs position and play state.
+There is no per-site code: the client finds the largest playing `<video>`,
+names the media from the URL, and syncs position and play state. What little a
+site needs said about it — which URLs are videos, what the canonical watch page
+is, which `<video>` is the player — is a **provider descriptor**, a JSON file
+(see below).
+
+## Providers
+
+The sites the bundles support out of the box are the files in `providers/`
+(`youtube.json`, `laftel.json`). They are compiled into both builds, and the
+extension's `content_scripts.matches` and the userscript's `@match` lines are
+generated from them, so adding a built-in provider is adding a file there and
+rebuilding. Every descriptor carries `examples` that are run as tests.
+
+A descriptor is **data**, never code: path templates such as
+`/player/{series:int}/{episode:int}`, host names, CSS selectors and a few
+numbers. There are no regular expressions. See `docs/design/providers.md`.
+
+A server can offer more, and a user can write their own:
+
+```bash
+./videosyncd -addr :8787 -providers /srv/videosync/providers
+```
+
+| flag | meaning |
+|---|---|
+| `-providers DIR` | offer every valid `*.json` in `DIR` at `GET /api/providers`. Invalid files are logged and skipped. |
+| `-providers-poll 5s` | how often to look for changed files; `0` means only on `SIGHUP`. |
+
+`kill -HUP <pid>` rereads the directory at once. Nothing a server offers is
+used until a user **adopts** it in the extension's options page, which pins the
+file's hash; a changed file is announced, never applied silently, and a change
+that would let a descriptor claim more sites or pages always asks again. A
+server descriptor can make a site followable only once the user has granted the
+extension that site.
+
+With Docker (the image builds from `server/Dockerfile`):
+
+```bash
+cp -r deploy ~/videosync && cp providers/*.json ~/videosync/providers/
+cd ~/videosync && docker compose up -d        # mounts ./providers read-only
+docker compose kill -s HUP videosyncd         # reload after editing
+```
+
+In the extension, **Options** lists the descriptors in force (built-in, server,
+yours), imports, edits and deletes your own, and shows what the configured
+server offers. In the userscript, the Tampermonkey menu has the same commands;
+a userscript cannot add sites to itself, so it tells you which `@match` line to
+add.
 
 ## Closing your server
 

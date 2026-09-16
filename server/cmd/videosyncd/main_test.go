@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -428,4 +429,76 @@ func writeSelfSigned(t *testing.T, dir string) (certPath, keyPath string, pool *
 	pool = x509.NewCertPool()
 	pool.AppendCertsFromPEM(certPEM)
 	return certPath, keyPath, pool
+}
+
+func TestBinaryServesProvidersAndReloadsOnSIGHUP(t *testing.T) {
+	// The flag, the route and the signal are wired in main(), which no
+	// handler-level test reaches.
+	repo := filepath.Join("..", "..", "..", "providers")
+	laftel, err := os.ReadFile(filepath.Join(repo, "laftel.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	youtube, err := os.ReadFile(filepath.Join(repo, "youtube.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "laftel.json"), laftel, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := build(t)
+	port := freePort(t)
+	var logs syncBuffer
+	// No polling: only the signal can make the second file appear.
+	cmd := exec.Command(bin, "-addr", fmt.Sprintf("127.0.0.1:%d", port), "-providers", dir, "-providers-poll", "0")
+	cmd.Stderr = &logs
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{exited: make(chan struct{})}
+	go func() { s.err = cmd.Wait(); close(s.exited) }()
+	t.Cleanup(func() { cmd.Process.Kill(); <-s.exited })
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	waitHealthy(t, http.DefaultClient, base+"/healthz", s)
+
+	fetch := func(path string) (int, []byte) {
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b
+	}
+	if code, b := fetch("/api/providers/laftel.json"); code != 200 || !bytes.Equal(b, laftel) {
+		t.Fatalf("laftel: %d", code)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "youtube.json"), youtube, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := fetch("/api/providers/yt.json"); code != 404 {
+		t.Fatalf("served before any reload: %d", code)
+	}
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if code, b := fetch("/api/providers/yt.json"); code == 200 && bytes.Equal(b, youtube) {
+			break
+		}
+		select {
+		case <-s.exited:
+			t.Fatalf("SIGHUP killed the server: %v\n%s", s.err, logs.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("SIGHUP did not reload\n%s", logs.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), "serving 2 from") {
+		t.Errorf("no reload log line:\n%s", logs.String())
+	}
 }

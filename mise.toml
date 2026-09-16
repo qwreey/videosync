@@ -24,7 +24,7 @@ dir = "{{config_root}}/server"
 run = "go run ./cmd/simharness"
 
 [tasks.test]
-description = "Run all tests (Go + TS client core + the harness's media server) and typecheck both shims"
+description = "Run all tests (Go + TS client core + the harness's media server + the generated manifests) and typecheck both shims"
 run = [
   "cd {{config_root}}/server && go test ./...",
   "cd {{config_root}}/client/core && npm test",
@@ -32,6 +32,9 @@ run = [
   "cd {{config_root}}/harness/browser && node --test local-media.test.mjs",
   "cd {{config_root}}/client/userscript && npx tsc --noEmit",
   "cd {{config_root}}/client/extension && npx tsc --noEmit",
+  # The generated manifests and @match lines, from providers/*.json. No browser.
+  "cd {{config_root}}/client/extension && node --test manifest.test.mjs",
+  "cd {{config_root}}/client/userscript && node --test meta.test.mjs",
 ]
 
 [tasks.test-e2e]

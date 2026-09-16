@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "id": "laftel",
+  "keyPrefix": "laftel",
+  "name": "Laftel",
+  "version": "1.0.0",
+  "adapter": "html5",
+  "hosts": ["laftel.net", "*.laftel.net"],
+  "pageHosts": ["laftel.net"],
+  "canonicalHost": "laftel.net",
+  "identity": [
+    {
+      "path": "/player/{series:int}/{episode:int}",
+      "key": "/player/{series}/{episode}",
+      "watch": "https://laftel.net/player/{series}/{episode}"
+    }
+  ],
+  "pathFallback": false,
+  "continues": [
+    { "from": "/player/{series:int}/{episode:int}", "to": "/player/{series:int}/{next:int}" }
+  ],
+  "navigation": { "spa": true, "volatileElement": true },
+  "seek": { "typicalInBufferMs": 100 },
+  "examples": [
+    { "url": "https://laftel.net/player/45462/93304?utm_source=x&token=secret#videosync=room.key",
+      "key": "laftel:/player/45462/93304", "watch": "https://laftel.net/player/45462/93304" },
+    { "url": "https://laftel.net/player/45462/93304/", "key": "laftel:/player/45462/93304" },
+    { "url": "https://www.laftel.net/player/1/2", "key": "laftel:/player/1/2",
+      "watch": "https://laftel.net/player/1/2" },
+    { "url": "https://laftel.net./player/1/2", "key": "laftel:/player/1/2" },
+    { "url": "https://laftel.net/", "key": null },
+    { "url": "https://laftel.net/logout", "key": null },
+    { "url": "https://laftel.net/item/45462", "key": null },
+    { "url": "https://laftel.net/player/45462", "key": null },
+    { "url": "https://laftel.net/player/x/1", "key": null },
+    { "url": "https://laftel.net.evil.example/player/1/2", "key": null },
+    { "url": "https://evillaftel.net/player/1/2", "key": null },
+    { "from": "laftel:/player/45462/93304", "to": "laftel:/player/45462/93305", "continues": true },
+    { "from": "laftel:/player/45462/93304", "to": "laftel:/player/45462/90000", "continues": true },
+    { "from": "laftel:/player/45462/93304", "to": "laftel:/player/11111/93305", "continues": false },
+    { "from": "laftel:/player/45462/93304", "to": "laftel:/player/45462/93304", "continues": false },
+    { "from": "laftel:/player/45462/93304", "to": "yt:abc", "continues": false }
+  ],
+  "notes": "Only /player/<series>/<episode> names media (BROWSER-FINDINGS 14 saw no other player route), which closes F20 here: a media command can no longer name /logout. continues says the next episode of the same series carries on from the last one; D8 consumes it."
+}

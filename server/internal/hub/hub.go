@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qwreey/videosync/server/internal/provider"
 	"github.com/qwreey/videosync/server/internal/room"
 	vsync "github.com/qwreey/videosync/server/internal/sync"
 )
@@ -50,6 +51,9 @@ type Config struct {
 	// ambiguity cost a whole round of guessing once already. The client half of
 	// the same picture is `VideoSync.dump()`.
 	Verbose bool
+
+	// Providers is what GET /api/providers offers (D7); nil offers nothing.
+	Providers *provider.Store
 }
 
 func DefaultConfig() Config {

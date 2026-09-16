@@ -1,0 +1,27 @@
+# An example deployment: videosyncd offering the provider descriptors in
+# ./providers (D7). Copy this directory, put descriptor files in providers/,
+# and `docker compose up -d`.
+#
+# Descriptors are validated when loaded -- an invalid file is logged and left
+# out -- and reloaded when a file changes (polled every -providers-poll) or on
+# `docker compose kill -s HUP videosyncd`. Clients only use a served descriptor
+# after a user adopts it in the extension's options page.
+#
+# A userscript needs this server on a public name with a real certificate
+# (docs/BROWSER-FINDINGS.md §8): put a TLS-terminating reverse proxy in front,
+# or pass -tls-cert/-tls-key with the certificate mounted too.
+services:
+  videosyncd:
+    build: ../server
+    image: videosyncd
+    restart: unless-stopped
+    command:
+      - -addr=:8787
+      - -providers=/providers
+      - -providers-poll=10s
+    ports:
+      - "8787:8787"
+    volumes:
+      # Read-only: the server never writes descriptors. To start from the
+      # built-ins, copy the repository's providers/*.json here.
+      - ./providers:/providers:ro

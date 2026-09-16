@@ -14,7 +14,10 @@ import { start } from '@videosync/core/app/bootstrap.ts';
 import type { Platform, Store } from '@videosync/core/app/bootstrap.ts';
 import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
 
+import { STORE_KEYS } from '@videosync/core/providers/adoption.ts';
+
 import { PortTransport } from './porttransport.ts';
+import { providerHooks } from './providers.ts';
 import type { WorkerRequest } from './relay.ts';
 
 const PREFIX = 'videosync.';
@@ -22,7 +25,7 @@ const PREFIX = 'videosync.';
 // that is saved but not listed is written and then never seen again -- which is
 // exactly how following the room to its video first lost the session.
 // (No device token among them: that lives in the worker, see tokens.ts.)
-const KEYS = ['server', 'room', 'secret', 'name', 'rejoin', 'authScope'] as const;
+const KEYS = ['server', 'room', 'secret', 'name', 'rejoin', 'authScope', ...Object.values(STORE_KEYS)] as const;
 
 /**
  * `chrome.storage` is async and the panel is built before anything can await,
@@ -62,10 +65,10 @@ function wsUrl(serverUrl: string): string {
  */
 const OPEN_PANEL = ['videosync-panel:closed'][0] === 'videosync-panel:open';
 
-async function platform(): Promise<Platform> {
-  const store = await hydrate();
+async function platform(store: Store): Promise<Platform> {
   return {
     store,
+    providers: await providerHooks(store),
     openPanel: OPEN_PANEL,
     makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
     /**
@@ -113,7 +116,19 @@ async function platform(): Promise<Platform> {
   };
 }
 
-void (async () => {
-  const app = start(await platform());
-  window.VideoSync = app.api;
-})();
+declare global {
+  // eslint-disable-next-line no-var
+  var __videosyncLoaded: boolean | undefined;
+}
+
+// A site the user added with a wildcard can overlap a built-in page; the
+// registration excludes those, and this is the backstop -- two copies would
+// mount two panels and join the room twice. The flag lives in this
+// extension's isolated world, which every injection of it shares.
+if (!globalThis.__videosyncLoaded) {
+  globalThis.__videosyncLoaded = true;
+  void (async () => {
+    const app = start(await platform(await hydrate()));
+    window.VideoSync = app.api;
+  })();
+}

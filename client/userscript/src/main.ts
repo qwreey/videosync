@@ -12,6 +12,7 @@ import type { Platform } from '@videosync/core/app/bootstrap.ts';
 import { WebSocketTransport } from '@videosync/core/engine/transport.ts';
 
 import { gmHttp, gmTokens, load, openTab, save } from './gm.ts';
+import { providerHooks, registerMenu } from './providers.ts';
 import { unreachable } from './reach.ts';
 
 function wsUrl(serverUrl: string): string {
@@ -20,8 +21,11 @@ function wsUrl(serverUrl: string): string {
   return u.toString();
 }
 
+const store = { load, save };
+
 const platform: Platform = {
-  store: { load, save },
+  store,
+  providers: providerHooks(store),
   makeTransport: (serverUrl) => new WebSocketTransport(wsUrl(serverUrl)),
   // The device token is kept in GM storage and added by this, never handed to
   // the app (see authfetch.ts).
@@ -30,5 +34,6 @@ const platform: Platform = {
   unreachable: (serverUrl) => unreachable(serverUrl, location, navigator.userAgent),
 };
 
+registerMenu(store);
 const app = start(platform);
 window.VideoSync = app.api;

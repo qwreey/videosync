@@ -7,6 +7,7 @@
  *  - single-page routers replace the element, or navigate without a reload, so
  *    a cached reference goes stale silently. YouTube does both.
  */
+import type { VideoHints } from '../providers/descriptor.ts';
 
 /** The subset of `<video>` that picking depends on. Kept narrow so the choice
  *  is testable without a DOM. */
@@ -40,7 +41,7 @@ const area = (v: VideoLike): number => (v.videoWidth || 0) * (v.videoHeight || 0
  * A 320x180 banner against a 720p feature is 16x. The cost of the margin: a
  * feature still on a 360p start-up rendition loses to a paused 1080p element.
  */
-const OUTCLASSED = 4;
+export const OUTCLASSED = 4;
 
 /**
  * Choose the element the user is watching.
@@ -63,7 +64,9 @@ const OUTCLASSED = 4;
  * the detector, so the play is never reported and the room's paused state is
  * applied over it.
  */
-export function pickVideo<T extends VideoLike>(videos: readonly T[], current: T | null = null): T | null {
+export function pickVideo<T extends VideoLike>(
+  videos: readonly T[], current: T | null = null, outclassed = OUTCLASSED,
+): T | null {
   let best: T | null = null;
   let bestScore = -1;
   for (const v of videos) {
@@ -77,10 +80,66 @@ export function pickVideo<T extends VideoLike>(videos: readonly T[], current: T 
     // `videos` comes from the live document, so membership means "still on
     // the page". readyState 0 means its media was taken away.
     if (audiblyPlaying(current) || !best) return current;
-    if (audiblyPlaying(best) || area(best) > OUTCLASSED * area(current)) return best;
+    if (audiblyPlaying(best) || area(best) > outclassed * area(current)) return best;
     return current;
   }
   return best;
+}
+
+/** What `closest` needs; a real element has it, a test double may not. */
+interface Selectable {
+  closest?(selector: string): unknown;
+}
+
+function matchesAny(el: Selectable, selectors: readonly string[]): boolean {
+  for (const sel of selectors) {
+    try {
+      // `closest` includes the element itself, so a selector may name the
+      // video or the player around it.
+      if (el.closest?.(sel)) return true;
+    } catch {
+      // A selector this browser does not parse matches nothing. The
+      // descriptor was validated for shape, not against every engine's CSS.
+    }
+  }
+  return false;
+}
+
+/**
+ * The elements a provider's hints leave in the running. An `include` that
+ * finds nothing is ignored rather than obeyed: a site redesign that renames a
+ * class must degrade to the generic choice, not to "no video on this page".
+ */
+export function filterCandidates<T extends VideoLike & Selectable>(
+  all: readonly T[], hints: VideoHints | undefined,
+): { candidates: T[]; staleInclude: boolean } {
+  if (!hints) return { candidates: [...all], staleInclude: false };
+  const min = hints.minIntrinsicArea ?? 0;
+  let out = all.filter((v) => {
+    if (hints.exclude?.length && matchesAny(v, hints.exclude)) return false;
+    // Only a known size is held against an element: the feature itself has
+    // none until its metadata loads.
+    const a = area(v);
+    return !(min > 0 && a > 0 && a < min);
+  });
+  let staleInclude = false;
+  if (hints.include?.length) {
+    const inc = out.filter((v) => matchesAny(v, hints.include!));
+    if (inc.length) out = inc;
+    else staleInclude = out.length > 0;
+  }
+  return { candidates: out, staleInclude };
+}
+
+/** Every `<video>` in `root`, and in open shadow roots below it when asked. */
+function collectVideos(root: ParentNode, pierce: boolean, depth = 0): HTMLVideoElement[] {
+  const found = Array.from(root.querySelectorAll('video'));
+  if (!pierce || depth >= 8) return found;
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    const sr = (el as Element).shadowRoot;
+    if (sr) found.push(...collectVideos(sr, true, depth + 1));
+  }
+  return found;
 }
 
 export interface PageWatcherDeps {
@@ -92,6 +151,8 @@ export interface PageWatcherDeps {
   intervalMs?: number;
   setTimer(fn: () => void, ms: number): number;
   clearTimer(h: number): void;
+  /** The provider's hints for the page at `href`, if its descriptor has any. */
+  hints?(href: string): VideoHints | undefined;
 }
 
 /**
@@ -110,6 +171,7 @@ export class PageWatcher {
   private lastEl: HTMLVideoElement | null = null;
   private lastHref = '';
   private started = false;
+  private stale = false;
 
   constructor(deps: PageWatcherDeps) {
     this.d = deps;
@@ -142,8 +204,12 @@ export class PageWatcher {
   };
 
   readonly check = (): void => {
-    const el = pickVideo(Array.from(this.d.doc.querySelectorAll('video')), this.lastEl);
     const href = this.d.win.location.href;
+    const hints = this.d.hints?.(href);
+    const { candidates, staleInclude } = filterCandidates(
+      collectVideos(this.d.doc, hints?.pierceShadow === true), hints);
+    this.stale = staleInclude;
+    const el = pickVideo(candidates, this.lastEl, hints?.outclassedFactor ?? OUTCLASSED);
     if (el === this.lastEl && href === this.lastHref) return;
     this.lastEl = el;
     this.lastHref = href;
@@ -151,4 +217,7 @@ export class PageWatcher {
   };
 
   get current(): HTMLVideoElement | null { return this.lastEl; }
+
+  /** The provider's `include` found nothing at the last check, so it was ignored. */
+  get staleInclude(): boolean { return this.stale; }
 }

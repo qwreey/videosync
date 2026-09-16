@@ -1,0 +1,193 @@
+package provider
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+type logSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *logSink) logf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, strings.TrimSpace(fmt.Sprintf(format, args...)))
+}
+
+func (l *logSink) has(sub string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, s := range l.lines {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+func builtin(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(testdata, "..", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func write(t *testing.T, dir, name string, body []byte) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func index(t *testing.T, s *Store) Index {
+	t.Helper()
+	var idx Index
+	if err := json.Unmarshal(s.IndexJSON(), &idx); err != nil {
+		t.Fatal(err)
+	}
+	return idx
+}
+
+func TestStoreServesValidFilesAndSkipsTheRest(t *testing.T) {
+	dir := t.TempDir()
+	laftel := builtin(t, "laftel.json")
+	write(t, dir, "laftel.json", laftel)
+	write(t, dir, "youtube.json", builtin(t, "youtube.json"))
+	write(t, dir, "broken.json", []byte(`{"schema":1,"id":"broken"}`))
+	write(t, dir, "copy-of-laftel.json", laftel) // same id, sorts first
+	write(t, dir, "notes.txt", []byte("not a descriptor"))
+	write(t, dir, "huge.json", []byte(`{"notes":"`+strings.Repeat("x", MaxBytes)+`"}`))
+	if err := os.Mkdir(filepath.Join(dir, "sub.json"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var log logSink
+	s := Open(dir, log.logf)
+
+	idx := index(t, s)
+	if idx.Schema != 1 || len(idx.Providers) != 2 {
+		t.Fatalf("index: %+v", idx)
+	}
+	for _, want := range []string{"skipping broken.json", "skipping huge.json", "already served by copy-of-laftel.json"} {
+		if !log.has(want) {
+			t.Errorf("no log line %q in %q", want, log.lines)
+		}
+	}
+	e, ok := s.Get("laftel")
+	if !ok {
+		t.Fatal("laftel not served")
+	}
+	sum := sha256.Sum256(laftel)
+	if string(e.Body) != string(laftel) || e.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Error("the served bytes or their hash differ from the file")
+	}
+	var row IndexEntry
+	for _, r := range idx.Providers {
+		if r.ID == "laftel" {
+			row = r
+		}
+	}
+	if row.SHA256 != e.SHA256 || row.Name != "Laftel" || row.Version != "1.0.0" || len(row.Hosts) != 2 {
+		t.Errorf("index row: %+v", row)
+	}
+	if _, ok := s.Get("broken"); ok {
+		t.Error("an invalid descriptor is served")
+	}
+}
+
+func TestStoreReloadsOnChange(t *testing.T) {
+	dir := t.TempDir()
+	var log logSink
+	s := Open(dir, log.logf)
+	if n := len(index(t, s).Providers); n != 0 {
+		t.Fatalf("empty dir serves %d", n)
+	}
+	if s.ReloadIfChanged() {
+		t.Error("reloaded with nothing changed")
+	}
+	write(t, dir, "laftel.json", builtin(t, "laftel.json"))
+	if !s.ReloadIfChanged() {
+		t.Fatal("a new file was not noticed")
+	}
+	if _, ok := s.Get("laftel"); !ok {
+		t.Fatal("new file not served")
+	}
+	before, _ := s.Get("laftel")
+
+	// An edit that keeps the file valid replaces it; one that breaks it
+	// withdraws it rather than serving the stale copy under a new mtime.
+	changed := strings.Replace(string(builtin(t, "laftel.json")), `"version": "1.0.0"`, `"version": "1.0.1"`, 1)
+	write(t, dir, "laftel.json", []byte(changed))
+	future := time.Now().Add(time.Minute)
+	os.Chtimes(filepath.Join(dir, "laftel.json"), future, future)
+	if !s.ReloadIfChanged() {
+		t.Fatal("an edit was not noticed")
+	}
+	after, _ := s.Get("laftel")
+	if after.SHA256 == before.SHA256 || after.Version != "1.0.1" {
+		t.Errorf("edit not served: %+v", after)
+	}
+	write(t, dir, "laftel.json", []byte(`{}`))
+	if !s.ReloadIfChanged() {
+		t.Fatal("a breaking edit was not noticed")
+	}
+	if _, ok := s.Get("laftel"); ok {
+		t.Error("a now-invalid file is still served")
+	}
+
+	os.Remove(filepath.Join(dir, "laftel.json"))
+	s.ReloadIfChanged()
+	if n := len(index(t, s).Providers); n != 0 {
+		t.Errorf("removed file still indexed")
+	}
+}
+
+func TestStoreWatchPolls(t *testing.T) {
+	dir := t.TempDir()
+	s := Open(dir, nil)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { s.Watch(10*time.Millisecond, stop); close(done) }()
+	write(t, dir, "youtube.json", builtin(t, "youtube.json"))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := s.Get("yt"); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the poll never picked the file up")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(stop)
+	<-done
+}
+
+func TestStoreOnAMissingDirectory(t *testing.T) {
+	var log logSink
+	s := Open(filepath.Join(t.TempDir(), "nope"), log.logf)
+	if n := len(index(t, s).Providers); n != 0 {
+		t.Errorf("serves %d", n)
+	}
+	if !log.has("cannot read") {
+		t.Errorf("no log line: %q", log.lines)
+	}
+	if s.ReloadIfChanged() {
+		t.Error("a directory that is still missing triggered a reload on every poll")
+	}
+	e := Empty()
+	if string(e.IndexJSON()) != `{"schema":1,"providers":[]}` {
+		t.Errorf("empty index: %s", e.IndexJSON())
+	}
+}

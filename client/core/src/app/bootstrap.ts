@@ -12,6 +12,8 @@ import { Html5Adapter } from '../adapter/html5.ts';
 import { followableUrl, normalizeMediaKey, watchUrl } from '../adapter/mediakey.ts';
 import { PageWatcher } from '../adapter/resolve.ts';
 import { SwappableAdapter } from '../adapter/swappable.ts';
+import { builtinRegistry } from '../providers/registry.ts';
+import type { Entry, ProviderRegistry } from '../providers/registry.ts';
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../engine/engine.ts';
 import type { EngineStatus } from '../engine/engine.ts';
 import type { MemberInfo } from '../engine/protocol.ts';
@@ -34,8 +36,24 @@ export interface Store {
   flush?(): Promise<void>;
 }
 
+/** Provider descriptors (D7), as far as the page needs them. */
+export interface ProviderHooks {
+  /** The descriptors in force: built-ins plus whatever the user took on. */
+  registry: ProviderRegistry;
+  /**
+   * Descriptors the user pinned whose copy on `serverUrl` has changed. Asked
+   * once per join. The page only mentions them; deciding happens where a page
+   * cannot reach (the extension's own page, the userscript's menu).
+   */
+  updatesFrom?(serverUrl: string): Promise<ReadonlyArray<{ id: string; name: string }>>;
+  /** Where the user goes to decide, for the notice: "확장 프로그램 설정" etc. */
+  decideWhere?: string;
+}
+
 export interface Platform {
   store: Store;
+  /** Without it, the built-in descriptors only. */
+  providers?: ProviderHooks;
   /** How this shim reaches the server. The extension relays through its
    *  service worker; the userscript opens the socket directly. */
   makeTransport(serverUrl: string): Transport;
@@ -198,11 +216,21 @@ function readTabId(): string {
   }
 }
 
+/** The descriptor in force for `href`'s host, and whoever tied for it. */
+function providerAt(reg: ProviderRegistry, href: string): { entry: Entry | null; conflict: readonly Entry[] } {
+  try {
+    return reg.lookup(new URL(href).hostname);
+  } catch {
+    return { entry: null, conflict: [] };
+  }
+}
+
 export function start(p: Platform): App {
+  const reg = p.providers?.registry ?? builtinRegistry();
   const adapter = new SwappableAdapter();
   let engine: SyncEngine | null = null;
-  let mediaKey = normalizeMediaKey(location.href) ?? '';
-  let mediaUrl = watchUrl(location.href) ?? '';
+  let mediaKey = normalizeMediaKey(location.href, reg) ?? '';
+  let mediaUrl = watchUrl(location.href, reg) ?? '';
   let roomMediaKey = '';
   let roomMediaUrl = '';
   let followTimer = 0;
@@ -248,6 +276,12 @@ export function start(p: Platform): App {
   let authRetried = false;
   let waitingOn: readonly string[] = [];
   let members: readonly MemberInfo[] = [];
+  /** Pinned descriptors the joined server has another copy of, by id. */
+  let updates = new Map<string, string>();
+  /** Which of those the member has been told about this session. */
+  const toldUpdates = new Set<string>();
+  /** Bumped per join, so a late answer about a previous server is dropped. */
+  let updatesGen = 0;
 
   const tabId = readTabId();
   const invite = readInviteHash(location.hash);
@@ -284,9 +318,10 @@ export function start(p: Platform): App {
     win: window,
     setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
     clearTimer: (h) => { clearTimeout(h); },
+    hints: (href) => providerAt(reg, href).entry?.provider.d.video,
     onChange: (el, href) => {
-      const key = normalizeMediaKey(href) ?? '';
-      mediaUrl = watchUrl(href) ?? '';
+      const key = normalizeMediaKey(href, reg) ?? '';
+      mediaUrl = watchUrl(href, reg) ?? '';
       const mediaChanged = key !== mediaKey;
       if (mediaChanged) {
         mediaKey = key;
@@ -296,12 +331,50 @@ export function start(p: Platform): App {
         // media puts the new video at the old one's timestamp.
         engine?.setLocalMediaKey(key, mediaUrl);
       }
-      adapter.setTarget(el ? new Html5Adapter(el, 'html5') : null);
+      const d = providerAt(reg, href).entry?.provider.d;
+      adapter.setTarget(el ? new Html5Adapter(el, 'html5', {
+        ...(d?.capabilities ? { capabilities: d.capabilities } : {}),
+        ...(d?.seek ? { seek: d.seek } : {}),
+      }) : null);
       if (mediaChanged) onMediaChanged();
       refreshStatus();
     },
   });
   watcher.start();
+
+  {
+    const { conflict } = providerAt(reg, location.href);
+    if (conflict.length) {
+      // Neither applies, so this page is keyed by the generic rule; a member
+      // whose other copy is not in conflict computes a different key.
+      panel.addChat('', `이 사이트를 설명하는 제공자 설명이 여럿이라 어느 것도 쓰지 않았어요: ${
+        conflict.map((e) => e.provider.d.name).join(', ')}`, true);
+    }
+  }
+
+  /**
+   * "The server has an update for <name>", said when the member presses play
+   * on that provider -- the moment it matters -- and once. Only said: a page
+   * can overlay the panel, so the decision is never offered here.
+   */
+  const offUpdateNotice = adapter.on('play', () => {
+    const id = providerAt(reg, location.href).entry?.provider.id;
+    if (!id || !updates.has(id) || toldUpdates.has(id)) return;
+    toldUpdates.add(id);
+    panel.addChat('', `서버에 ${updates.get(id)} 제공자 설명의 새 버전이 있어요. 적용할지는 ${
+      p.providers?.decideWhere ?? '설정'}에서 정할 수 있어요 (지금은 쓰던 버전 그대로예요).`, true);
+  });
+
+  function checkUpdates(serverUrl: string): void {
+    const gen = ++updatesGen;
+    updates = new Map();
+    const ask = p.providers?.updatesFrom;
+    if (!ask) return;
+    ask(serverUrl).then((list) => {
+      if (gen !== updatesGen) return;
+      updates = new Map(list.map((u) => [u.id, u.name]));
+    }, () => { /* no index is not worth a word: nothing changes either way */ });
+  }
 
   /**
    * Navigating to another video does NOT move the room.
@@ -353,7 +426,7 @@ export function start(p: Platform): App {
     if (!mediaKey) {
       // A button that cannot take the member anywhere redraws itself on every
       // press and looks broken; say where the room is instead.
-      if (!followableUrl(roomMediaUrl, roomMediaKey, location.href)) {
+      if (!followableUrl(roomMediaUrl, roomMediaKey, location.href, reg)) {
         panel.setMediaAction(`방은 다른 영상을 보고 있어요 (방: ${roomMediaKey}) — 여기서는 열 수 없어요`);
         return;
       }
@@ -422,7 +495,7 @@ export function start(p: Platform): App {
       offerMoveRoom();
       return;
     }
-    const target = followableUrl(roomMediaUrl, roomMediaKey, location.href);
+    const target = followableUrl(roomMediaUrl, roomMediaKey, location.href, reg);
     if (!target || stayedAwayFrom === roomMediaKey) {
       offerMoveRoom();
       return;
@@ -667,6 +740,7 @@ export function start(p: Platform): App {
     sessionAdopts = adopt;
     // A join the member asked for gets its own retry.
     if (!internal) authRetried = false;
+    checkUpdates(serverUrl);
 
     engine = new SyncEngine({
       adapter,
@@ -839,11 +913,23 @@ export function start(p: Platform): App {
     panelRoot: () => panel.tree,
     dump() {
       const s = adapter.readState();
+      const here = providerAt(reg, location.href);
+      const e = here.entry;
       return JSON.stringify({
         at: new Date().toISOString(),
         url: redactInvite(location.href),
         mediaKey,
         mediaUrl,
+        // Which descriptor decided the key, the element and the capabilities.
+        // A field bug is one-shot; this is the question asked afterwards.
+        provider: e ? {
+          id: e.provider.id, name: e.provider.d.name, version: e.provider.d.version,
+          sha256: e.sha256, tier: e.tier,
+        } : { id: null, tier: 'generic' },
+        providerConflict: here.conflict.map((c) => ({ id: c.provider.id, tier: c.tier, sha256: c.sha256 })),
+        providerNotes: reg.notes,
+        providerUpdates: [...updates.keys()],
+        staleInclude: watcher.staleInclude,
         roomMediaKey,
         roomMediaUrl,
         // Never a token or a ticket: this code never holds the one, and the
@@ -905,6 +991,7 @@ export function start(p: Platform): App {
     api,
     destroy() {
       leave();
+      offUpdateNotice();
       watcher.stop();
       adapter.destroy();
       panel.destroy();

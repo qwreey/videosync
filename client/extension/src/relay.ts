@@ -36,7 +36,13 @@ export type FromWorker =
  */
 export type WorkerRequest =
   | { t: 'auth'; server: string; path: AuthPath; req: AuthRequest }
-  | { t: 'openTab'; url: string };
+  | { t: 'openTab'; url: string }
+  /** GET under `/api/providers` of `server`, and nothing else. */
+  | { t: 'providers.fetch'; server: string; path: string }
+  /** The granted host permissions (a content script has no `permissions` API). */
+  | { t: 'providers.granted' }
+  /** Re-register the content script after the user changed descriptors. */
+  | { t: 'providers.sync' };
 
 export type WorkerAuthReply = AuthResponse;
 
@@ -44,3 +50,30 @@ export const PORT_NAME = 'videosync';
 
 /** The settings store's key for the server URL (`content.ts` PREFIX + 'server'). */
 export const SERVER_KEY = 'videosync.server';
+
+export interface FetchReply { ok: boolean; status: number; body: string; error?: string }
+export interface GrantedReply { origins: string[] }
+export interface SyncReply { patterns: string[]; error?: string }
+
+/** The path a `providers.fetch` may ask for: the index or one file. */
+export function providersPath(path: string): boolean {
+  return path === '/api/providers' || /^\/api\/providers\/[a-z0-9-]{2,32}\.json$/.test(path);
+}
+
+/**
+ * A `runtime.sendMessage` that resolves with the reply, or with `fallback`
+ * (given the browser's reason, when it is a function) when there is none.
+ */
+export function ask<T>(msg: WorkerRequest, fallback: T | ((why: string) => T)): Promise<T> {
+  const fail = (why: string): T => (typeof fallback === 'function' ? (fallback as (w: string) => T)(why) : fallback);
+  return new Promise<T>((res) => {
+    try {
+      chrome.runtime.sendMessage(msg, (out: T | undefined) => {
+        const err = chrome.runtime.lastError;
+        res(err || out === undefined ? fail(String(err?.message ?? 'no reply')) : out);
+      });
+    } catch (e) {
+      res(fail(String(e)));
+    }
+  });
+}
