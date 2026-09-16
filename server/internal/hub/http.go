@@ -18,8 +18,9 @@ type HTTPConfig struct {
 	// `hello` frame, not in a cookie, so this is not CSRF protection -- but a
 	// self-hoster who knows their extension's origin should be able to say so.
 	AllowedOrigins []string
-	// HandshakeTimeout bounds the wait for `hello` after the upgrade. A socket
-	// that never identifies itself holds a goroutine and an fd.
+	// HandshakeTimeout bounds the whole wait for `hello` after the upgrade,
+	// however many frames the peer sends meanwhile. A socket that never
+	// identifies itself holds a goroutine and an fd.
 	HandshakeTimeout time.Duration
 	PingInterval     time.Duration
 	ReadTimeout      time.Duration
@@ -154,7 +155,13 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 		return
 	}
 	sock.MaxMessageSize = cfg.MaxFrameBytes
+	// An absolute bound, not just a per-frame one: ReadTimeout is refreshed by
+	// every ping and every unfinished fragment, so on its own it let a peer
+	// that never says hello keep the socket for as long as it kept talking.
 	sock.ReadTimeout = cfg.HandshakeTimeout
+	if cfg.HandshakeTimeout > 0 {
+		sock.ReadBefore = time.Now().Add(cfg.HandshakeTimeout)
+	}
 
 	// The first frame must be `hello`; nothing else is a valid opening move.
 	op, data, err := sock.ReadMessage()
@@ -178,7 +185,7 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request, cfg HTTPConfig) {
 		return
 	}
 
-	sock.ReadTimeout = cfg.ReadTimeout
+	sock.ReadTimeout, sock.ReadBefore = cfg.ReadTimeout, time.Time{}
 	c := newConn(newClientID(), live, sock)
 	welcome, extra, err := live.join(c, m)
 	if err != nil {

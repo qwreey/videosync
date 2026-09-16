@@ -328,6 +328,41 @@ func TestReadDeadlineFiresOnASilentPeer(t *testing.T) {
 	}
 }
 
+func TestReadBeforeIsNotExtendedByControlFramesOrFragments(t *testing.T) {
+	// ReadTimeout is per frame, so a peer that pings, or dribbles out an
+	// unfinished message, never lets it fire. ReadBefore is the absolute bound
+	// the pre-hello wait needs.
+	for name, dribble := range map[string]func(*testing.T, *testClient){
+		"pings":     func(t *testing.T, tc *testClient) { tc.write(t, true, OpPing, true, nil) },
+		"fragments": func(t *testing.T, tc *testClient) { tc.write(t, false, OpContinuation, true, []byte("x")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, errc := echoServer(t, func(c *Conn) {
+				c.ReadTimeout = 200 * time.Millisecond
+				c.ReadBefore = time.Now().Add(300 * time.Millisecond)
+			})
+			tc := dial(t, srv)
+			if name == "fragments" {
+				tc.write(t, false, OpText, true, []byte("x"))
+			}
+			began := time.Now()
+			for time.Since(began) < 3*time.Second {
+				select {
+				case err := <-errc:
+					var ne net.Error
+					if !errors.As(err, &ne) || !ne.Timeout() {
+						t.Fatalf("error %v, want a timeout", err)
+					}
+					return
+				case <-time.After(50 * time.Millisecond):
+					dribble(t, tc)
+				}
+			}
+			t.Fatal("a peer that keeps sending frames outlived ReadBefore by seconds")
+		})
+	}
+}
+
 func TestConcurrentWritesDoNotInterleave(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := Upgrade(w, r)

@@ -67,6 +67,49 @@ func TestJoinRefusalsNameTheRightReason(t *testing.T) {
 	}
 }
 
+// HandshakeTimeout is the only thing that bounds a socket that has not said
+// hello -- it holds a goroutine and an fd and has shown no credential. It
+// used to be a per-frame timeout, so a peer that pinged a little more often
+// than that held the socket forever.
+func TestHandshakeTimeoutBoundsAPeerThatPingsInsteadOfSayingHello(t *testing.T) {
+	h := New(DefaultConfig(), NewClock())
+	hcfg := DefaultHTTPConfig()
+	hcfg.HandshakeTimeout = 300 * time.Millisecond
+	srv := httptest.NewServer(h.Handler(hcfg))
+	t.Cleanup(func() { srv.Close(); h.Close() })
+
+	sock, err := ws.Dial(srv.URL+"/ws", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sock.Close(ws.CloseNormal, "")
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		// Pongs are consumed inside ReadMessage; it returns only when the
+		// server hangs up.
+		sock.ReadTimeout = 10 * time.Second
+		sock.ReadMessage()
+	}()
+	began := time.Now()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-closed:
+			if d := time.Since(began); d > 2*time.Second {
+				t.Fatalf("closed only after %v", d)
+			}
+			return
+		case <-tick.C:
+			if time.Since(began) > 3*time.Second {
+				t.Fatal("a socket that never said hello is still open after 10x HandshakeTimeout")
+			}
+			sock.Ping()
+		}
+	}
+}
+
 // A peer that resets its TCP connection mid-broadcast fails the reader and the
 // writer at the same moment, and both call kill. kill runs on goroutines no
 // lock serialises, and a panic there is not recovered by net/http: it takes
