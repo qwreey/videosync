@@ -32,12 +32,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const CDP = process.env.CDP || 'http://127.0.0.1:9222';
 const SERVER = process.env.SERVER || 'http://127.0.0.1:8787';
 const TRIALS = +(process.env.TRIALS || 6);
+// How a member "presses": through the extension's adapter, or through the
+// site's own handlers -- a click on the video, or Space (see press()).
+// The site path is the one users take, and the site has its own idea of
+// whether it is playing, which the hold contradicts.
+const PRESS = process.env.PRESS || 'adapter';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const results = { when: new Date().toISOString(), server: SERVER, trials: [], summary: {}, notes: [] };
+const results = { when: new Date().toISOString(), server: SERVER, press: PRESS, trials: [], summary: {}, notes: [] };
 function flush() {
   mkdirSync(join(HERE, 'results'), { recursive: true });
-  writeFileSync(join(HERE, 'results/laftel-room.json'), JSON.stringify(results, null, 2));
+  const name = PRESS === 'adapter' ? 'laftel-room.json' : `laftel-room-${PRESS}.json`;
+  writeFileSync(join(HERE, 'results', name), JSON.stringify(results, null, 2));
 }
 
 async function attachAll() {
@@ -57,6 +63,36 @@ async function attachAll() {
 }
 
 const iso = (m, body) => m.s.evalIsolated(`(async () => { ${body} })()`);
+const NOW_EXPR = 'performance.timeOrigin + performance.now()';
+
+/**
+ * Press play or pause on member `m`; returns the page-clock instant of the press.
+ *
+ * The site paths dispatch the events from inside the page rather than with
+ * CDP `Input.*`: on a Wayland desktop a window that is not on screen gets no
+ * frame callbacks, and CDP input waits for a frame -- measured, clicks landed
+ * 3-6 s late. Synthetic events reach the same site handlers (React does not
+ * check `isTrusted`); what they lack is user activation, which this profile
+ * does not need (`--autoplay-policy=no-user-gesture-required`).
+ */
+async function press(m, want) {
+  if (PRESS === 'adapter') {
+    return iso(m, `const t = ${NOW_EXPR}; await VideoSync.adapter.${want}(); return t`);
+  }
+  const body = PRESS === 'space'
+    ? `for (const type of ['keydown', 'keyup']) document.activeElement.dispatchEvent(
+         new KeyboardEvent(type, { key: ' ', code: 'Space', keyCode: 32, which: 32, bubbles: true, cancelable: true }));`
+    : `const b = document.querySelector('video').getBoundingClientRect();
+       const x = b.left + b.width / 2, y = b.top + b.height / 2, el = document.elementFromPoint(x, y);
+       const o = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, pointerId: 1, isPrimary: true, pointerType: 'mouse' };
+       el.dispatchEvent(new PointerEvent('pointerdown', o)); el.dispatchEvent(new MouseEvent('mousedown', o));
+       el.dispatchEvent(new PointerEvent('pointerup', o)); el.dispatchEvent(new MouseEvent('mouseup', o));
+       el.dispatchEvent(new MouseEvent('click', o));`;
+  // Toggles, so only press when the element is not already where we want it.
+  return m.s.eval(`(() => { const t = ${NOW_EXPR};
+    if (document.querySelector('video').paused !== ${want === 'play'}) return t;
+    ${body} return t; })()`);
+}
 
 // A sampler that runs inside the tab, so the CDP round trip is not in the data.
 const START_SAMPLER = (ms) => `
@@ -70,7 +106,6 @@ const START_SAMPLER = (ms) => `
   }, 10);
   return true;`;
 const TAKE = 'return window.__vsSamples';
-const NOW = 'return performance.timeOrigin + performance.now()';
 
 /**
  * The picture's movement relative to where it would have been had nobody
@@ -134,7 +169,7 @@ async function main() {
     // --- play ---
     for (const m of [p, o]) await iso(m, START_SAMPLER(4500));
     await sleep(300);
-    const tPlay = await iso(p, `const t = ${'performance.timeOrigin + performance.now()'}; await VideoSync.adapter.play(); return t`);
+    const tPlay = await press(p, 'play');
     await sleep(4600);
     let sp = await iso(p, TAKE), so = await iso(o, TAKE);
     const p0 = posAt(sp, tPlay);
@@ -145,6 +180,8 @@ async function main() {
     trial.play = {
       presserJumps: jumps(sp, tPlay),
       presserHeld: !!lastPausedP,
+      // More than play -> pause -> play means something (the site?) fought the hold.
+      presserFlips: sp.filter((q, i) => i > 0 && q[0] >= tPlay && q[2] !== sp[i - 1][2]).length,
       presserStartsAfterMs: lastPausedP ? Math.round(lastPausedP[0] - tPlay) : 0,
       otherStartsAfterMs: firstMoving(so, tPlay),
       // Where the presser ended vs. where an untouched player would be.
@@ -155,7 +192,7 @@ async function main() {
     // --- pause ---
     for (const m of [p, o]) await iso(m, START_SAMPLER(3000));
     await sleep(300);
-    const tPause = await iso(p, `const t = ${'performance.timeOrigin + performance.now()'}; await VideoSync.adapter.pause(); return t`);
+    const tPause = await press(p, 'pause');
     await sleep(3100);
     sp = await iso(p, TAKE); so = await iso(o, TAKE);
     const e2 = sp.at(-1)[0];

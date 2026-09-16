@@ -689,6 +689,30 @@ be a per-provider constant and is not worth it at this size.
 hold switched off): the presser is held, never steps back, and starts within
 100 ms of the other member.
 
+### Through the site's own controls (`PRESS=click`, `PRESS=space`)
+
+Every run above pressed through `VideoSync.adapter`, which bypasses Laftel's UI.
+A user presses Laftel's own controls, and the site keeps its own idea of whether
+it is playing — which the hold contradicts half a second later. Ten trials each,
+pressing by clicking the video and by Space
+(`results/laftel-room-click.json`, `-space.json`):
+
+- the presser's element changed state **exactly three times in all 20 plays**
+  (play → held → play): Laftel never re-asserted playback against the hold;
+- no extra commands (two per trial, play and pause), no correction seeks, no
+  reconciles, **0 gate frames**;
+- presser starts 517–538 ms after the press, the other member 528–554 ms
+  (one trial 696 / 717 ms);
+- Laftel's control bar follows the element: ▶ during the hold, ‖ after the
+  landing (checked by screenshot).
+
+The presses are synthetic events dispatched inside the page. CDP
+`Input.dispatchMouseEvent` was tried first and its clicks landed **3–6 s late**:
+on a Wayland desktop a window that is not on screen gets no frame callbacks and
+CDP input waits for a frame. Synthetic events reach the same React handlers but
+carry no user activation — irrelevant here only because the profile runs with
+`--autoplay-policy=no-user-gesture-required`.
+
 ### The gate flicker, gone
 
 Every remaining gate frame in the runs above came from a report sent in the

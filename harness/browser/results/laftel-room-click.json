@@ -1,0 +1,771 @@
+{
+  "when": "2026-09-16T09:02:05.070Z",
+  "server": "http://127.0.0.1:8787",
+  "press": "click",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 206,
+            "jumpMs": -91
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 696,
+        "otherStartsAfterMs": 717,
+        "presserNetMs": -784,
+        "gapAtEndMs": 16
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -35
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "playsHeld": 1,
+        "reportsDeferred": 1,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 537,
+        "otherStartsAfterMs": 549,
+        "presserNetMs": -537,
+        "gapAtEndMs": 46
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 38,
+        "gapAtEndMs": 31
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "playsHeld": 1,
+        "reportsDeferred": 4,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 538,
+        "presserNetMs": -561,
+        "gapAtEndMs": -190
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -218
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "playsHeld": 2,
+        "reportsDeferred": 4,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 29,
+            "jumpMs": -219
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 538,
+        "presserNetMs": -758,
+        "gapAtEndMs": -135
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 41,
+        "gapAtEndMs": -172
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "playsHeld": 2,
+        "reportsDeferred": 7,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 39,
+            "jumpMs": -172
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 538,
+        "otherStartsAfterMs": 554,
+        "presserNetMs": -721,
+        "gapAtEndMs": -50
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 38,
+        "gapAtEndMs": -93
+      },
+      "presserStats": {
+        "cmdsSent": 7,
+        "playsHeld": 3,
+        "reportsDeferred": 8,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 29,
+            "jumpMs": -93
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 547,
+        "presserNetMs": -685,
+        "gapAtEndMs": -95
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 42,
+        "gapAtEndMs": -123
+      },
+      "presserStats": {
+        "cmdsSent": 6,
+        "playsHeld": 3,
+        "reportsDeferred": 10,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 36,
+            "jumpMs": -122
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 538,
+        "otherStartsAfterMs": 550,
+        "presserNetMs": -703,
+        "gapAtEndMs": -91
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 35,
+        "gapAtEndMs": -116
+      },
+      "presserStats": {
+        "cmdsSent": 9,
+        "playsHeld": 4,
+        "reportsDeferred": 11,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 30,
+            "jumpMs": -117
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 546,
+        "presserNetMs": -668,
+        "gapAtEndMs": -143
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 40,
+        "gapAtEndMs": -165
+      },
+      "presserStats": {
+        "cmdsSent": 8,
+        "playsHeld": 4,
+        "reportsDeferred": 12,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 32,
+            "jumpMs": -166
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 537,
+        "otherStartsAfterMs": 553,
+        "presserNetMs": -684,
+        "gapAtEndMs": -84
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 30,
+        "gapAtEndMs": -106
+      },
+      "presserStats": {
+        "cmdsSent": 11,
+        "playsHeld": 5,
+        "reportsDeferred": 14,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 28,
+            "jumpMs": -106
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 527,
+        "otherStartsAfterMs": 542,
+        "presserNetMs": -697,
+        "gapAtEndMs": -76
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 37,
+        "gapAtEndMs": -95
+      },
+      "presserStats": {
+        "cmdsSent": 10,
+        "playsHeld": 5,
+        "reportsDeferred": 15,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      -91,
+      0,
+      0,
+      -219,
+      -172,
+      -93,
+      -122,
+      -117,
+      -166,
+      -106
+    ],
+    "playGapAtEndMs": [
+      16,
+      46,
+      -190,
+      -135,
+      -50,
+      -95,
+      -91,
+      -143,
+      -84,
+      -76
+    ],
+    "playPresserStartsAfterMs": [
+      696,
+      537,
+      527,
+      527,
+      538,
+      527,
+      538,
+      527,
+      537,
+      527
+    ],
+    "playOtherStartsAfterMs": [
+      717,
+      549,
+      538,
+      538,
+      554,
+      547,
+      550,
+      546,
+      553,
+      542
+    ],
+    "playPresserNetMs": [
+      -784,
+      -537,
+      -561,
+      -758,
+      -721,
+      -685,
+      -703,
+      -668,
+      -684,
+      -697
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      -35,
+      31,
+      -218,
+      -172,
+      -93,
+      -123,
+      -116,
+      -165,
+      -106,
+      -95
+    ]
+  },
+  "notes": [],
+  "roomId": "tfPVilGtXzlOmemoXAKOpg",
+  "clock": {
+    "a": {
+      "rttMs": 0.5,
+      "uncertaintyMs": 0.25
+    },
+    "b": {
+      "rttMs": 1,
+      "uncertaintyMs": 0.5
+    }
+  },
+  "traceA": [
+    {
+      "at": 346320,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "seek",
+        "positionMs": 514234,
+        "reqId": "tsQY6rO5bwU-1"
+      }
+    },
+    {
+      "at": 346322,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 1,
+        "when": 1789549325824,
+        "kind": "seek",
+        "reqId": "tsQY6rO5bwU-1",
+        "anchor": "514234P@1789549325824"
+      }
+    },
+    {
+      "at": 350835,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 514315,
+        "reqId": "tsQY6rO5bwU-2"
+      }
+    },
+    {
+      "at": 350837,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789549330839,
+        "kind": "play",
+        "reqId": "tsQY6rO5bwU-2",
+        "anchor": "514234-@1789549330839"
+      }
+    },
+    {
+      "at": 351338,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 2,
+        "when": 1789549330840,
+        "kind": "resync",
+        "anchor": "514234-@1789549330839"
+      }
+    },
+    {
+      "at": 355598,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 518399,
+        "reqId": "tsQY6rO5bwU-3"
+      }
+    },
+    {
+      "at": 355600,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789549335102,
+        "kind": "pause",
+        "reqId": "tsQY6rO5bwU-3",
+        "anchor": "518399P@1789549335102"
+      }
+    },
+    {
+      "at": 361544,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789549341546,
+        "kind": "play",
+        "anchor": "518399-@1789549341546"
+      }
+    },
+    {
+      "at": 366480,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789549345983,
+        "kind": "pause",
+        "anchor": "522862P@1789549345983"
+      }
+    },
+    {
+      "at": 372412,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 522948,
+        "reqId": "tsQY6rO5bwU-4"
+      }
+    },
+    {
+      "at": 372413,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789549352415,
+        "kind": "play",
+        "reqId": "tsQY6rO5bwU-4",
+        "anchor": "522862-@1789549352415"
+      }
+    },
+    {
+      "at": 377332,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 527208,
+        "reqId": "tsQY6rO5bwU-5"
+      }
+    },
+    {
+      "at": 377335,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789549356835,
+        "kind": "pause",
+        "reqId": "tsQY6rO5bwU-5",
+        "anchor": "527208P@1789549356835"
+      }
+    },
+    {
+      "at": 377335,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 7,
+        "when": 1789549356836,
+        "kind": "resync",
+        "anchor": "527208P@1789549356835"
+      }
+    },
+    {
+      "at": 383267,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789549363270,
+        "kind": "play",
+        "anchor": "527208-@1789549363270"
+      }
+    },
+    {
+      "at": 388205,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789549367707,
+        "kind": "pause",
+        "anchor": "531607P@1789549367707"
+      }
+    },
+    {
+      "at": 394147,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 531897,
+        "reqId": "tsQY6rO5bwU-6"
+      }
+    },
+    {
+      "at": 394150,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 10,
+        "when": 1789549374151,
+        "kind": "play",
+        "reqId": "tsQY6rO5bwU-6",
+        "anchor": "531607-@1789549374151"
+      }
+    },
+    {
+      "at": 399079,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 536011,
+        "reqId": "tsQY6rO5bwU-7"
+      }
+    },
+    {
+      "at": 399082,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 11,
+        "when": 1789549378582,
+        "kind": "pause",
+        "reqId": "tsQY6rO5bwU-7",
+        "anchor": "536011P@1789549378582"
+      }
+    },
+    {
+      "at": 405011,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 12,
+        "when": 1789549385013,
+        "kind": "play",
+        "anchor": "536011-@1789549385013"
+      }
+    },
+    {
+      "at": 409938,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 13,
+        "when": 1789549389441,
+        "kind": "pause",
+        "anchor": "540368P@1789549389441"
+      }
+    },
+    {
+      "at": 415876,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 540562,
+        "reqId": "tsQY6rO5bwU-8"
+      }
+    },
+    {
+      "at": 415878,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 14,
+        "when": 1789549395879,
+        "kind": "play",
+        "reqId": "tsQY6rO5bwU-8",
+        "anchor": "540368-@1789549395879"
+      }
+    },
+    {
+      "at": 420798,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 544721,
+        "reqId": "tsQY6rO5bwU-9"
+      }
+    },
+    {
+      "at": 420799,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 15,
+        "when": 1789549400301,
+        "kind": "pause",
+        "reqId": "tsQY6rO5bwU-9",
+        "anchor": "544721P@1789549400301"
+      }
+    },
+    {
+      "at": 426726,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 16,
+        "when": 1789549406728,
+        "kind": "play",
+        "anchor": "544721-@1789549406728"
+      }
+    },
+    {
+      "at": 431663,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 17,
+        "when": 1789549411165,
+        "kind": "pause",
+        "anchor": "549126P@1789549411165"
+      }
+    },
+    {
+      "at": 437599,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 549348,
+        "reqId": "tsQY6rO5bwU-10"
+      }
+    },
+    {
+      "at": 437602,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 18,
+        "when": 1789549417603,
+        "kind": "play",
+        "reqId": "tsQY6rO5bwU-10",
+        "anchor": "549126-@1789549417603"
+      }
+    },
+    {
+      "at": 442521,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 553540,
+        "reqId": "tsQY6rO5bwU-11"
+      }
+    },
+    {
+      "at": 442524,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 19,
+        "when": 1789549422025,
+        "kind": "pause",
+        "reqId": "tsQY6rO5bwU-11",
+        "anchor": "553540P@1789549422025"
+      }
+    },
+    {
+      "at": 448454,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 20,
+        "when": 1789549428457,
+        "kind": "play",
+        "anchor": "553540-@1789549428457"
+      }
+    },
+    {
+      "at": 453377,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 21,
+        "when": 1789549432880,
+        "kind": "pause",
+        "anchor": "557893P@1789549432880"
+      }
+    }
+  ]
+}
