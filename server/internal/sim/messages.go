@@ -14,4 +14,5 @@ type (
 	MsgReport    = room.Report
 	MsgCorrect   = room.Correct
 	MsgGate      = room.Gate
+	MsgError     = room.Error
 )

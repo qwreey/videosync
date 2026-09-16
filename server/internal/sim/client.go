@@ -40,6 +40,10 @@ type ClientProfile struct {
 	// were user intent -- what a client written without the measurement does.
 	// Control for TestSuspendGuardIsLoadBearing.
 	NoSuspendGuard bool
+	// SuspendedReportEveryMs throttles this member's heartbeat while it is
+	// suspended, as Chrome's intensive throttling does to a background tab
+	// (timers a minute apart). 0: not throttled.
+	SuspendedReportEveryMs int64
 
 	// JoinAtMs is when this member joins. A late joiner arrives with zero clock
 	// samples, so every confidence-gated correction refuses to act -- the
@@ -75,9 +79,34 @@ type ClientProfile struct {
 	// TestAcquireGuardIsLoadBearing. With the guard, the member reports itself
 	// acquiring until its player is loaded, and then conforms to the room.
 	NoAcquireGuard bool
+
+	// The next episode (D8, docs/design/acquire.md item 11). At EndAtMs the
+	// member's player reaches the end of the room's media: it stops, and it
+	// is finished, which is absent -- not a pause. ContinueAfterMs later its
+	// site moves on to NextKey by itself (the countdown), and the member
+	// sends the continuation: `media` with the condition that the room is
+	// still on what it finished. The new episode takes LoadMs to load; once
+	// it has, and the room is on it, the member is conformed, and a member
+	// whose continuation won then starts the room with `play`.
+	EndAtMs         int64
+	ContinueAfterMs int64
+	LoadMs          int64
+	NextKey         string
+	// NoMediaCAS sends the continuation unconditionally: every member whose
+	// site moved on restarts the room under the one before. Control.
+	NoMediaCAS bool
+	// NoTransitGuard does not report "on its way" for a member that finished
+	// the media the room just left and has not arrived yet: it is absent, as
+	// any member on other media is, and the room starts without it. Control.
+	NoTransitGuard bool
 }
 
 func (p ClientProfile) hasSite() bool { return p.SiteAfterMs > 0 }
+
+func (p ClientProfile) hasEpisode() bool { return p.EndAtMs > 0 && p.NextKey != "" }
+
+// continuationWindowMs mirrors engine.ts CONTINUATION_WINDOW_MS.
+const continuationWindowMs = 20000
 
 // Client is a simulated player plus the client half of the sync protocol.
 type Client struct {
@@ -143,6 +172,27 @@ type Client struct {
 	SiteMovesAbsorbed int
 	siteDone          bool
 	reportedAcquiring bool
+	reportedSuspended bool
+
+	// --- media (the next episode) ---
+	// media is what this member's page shows; "" until the first welcome,
+	// which is the room's media for a member that joined on it.
+	media         string
+	ended         bool
+	endedAt       int64
+	finishedKey   string
+	navAt         int64
+	loading       bool
+	continuing    bool
+	inTransit     bool
+	inTransitTill int64
+	// ContinuationsSent counts `media` commands this member's site caused;
+	// MediaStaleSeen the refusals it got for them.
+	ContinuationsSent int
+	MediaStaleSeen    int
+	// ArrivedLateMs is how far into the new media the room already was when
+	// this member was conformed to it -- the part it never saw.
+	ArrivedLateMs float64
 
 	// stall inference -- the client cannot call stalled(); it must work this
 	// out from what a real <video> exposes: readyState, and the fact that
@@ -265,6 +315,9 @@ func (c *Client) Joined() bool { return c.joined }
 // frame carries them. Like the engine, it does not move the player -- the
 // clock has not settled, and the first reports bring it in.
 func (c *Client) Welcome(seq uint64, a vsync.Anchor, serverMs int64) {
+	if c.media == "" {
+		c.media = a.MediaKey
+	}
 	c.anchor = a
 	c.lastAppliedSeq = seq
 	c.connectedAt = serverMs
@@ -377,9 +430,80 @@ func (c *Client) UpdateSite(serverMs int64) {
 }
 
 // acquiring reports whether this member is still loading the media it joined
-// on: present, not ready (docs/design/acquire.md).
-func (c *Client) acquiring() bool {
-	return !c.P.NoAcquireGuard && c.P.hasSite() && c.joined && !c.siteDone
+// on, or is on its way to the media the room just moved to: present, not ready
+// (docs/design/acquire.md).
+func (c *Client) acquiring(serverMs int64) bool {
+	if !c.P.NoAcquireGuard && c.P.hasSite() && c.joined && !c.siteDone {
+		return true
+	}
+	if c.onRoomMedia() {
+		return c.loading
+	}
+	return !c.P.NoTransitGuard && c.inTransit && serverMs <= c.inTransitTill
+}
+
+// onRoomMedia is engine.ts onRoomMedia: nothing is never the room's media.
+func (c *Client) onRoomMedia() bool { return c.media != "" && c.media == c.anchor.MediaKey }
+
+// finished is what the engine reports as `finished`: ended, on the room's media.
+func (c *Client) finished() bool { return c.ended && c.onRoomMedia() }
+
+// UpdateEpisode models the end of the media, the site moving on, and the new
+// episode loading. See ClientProfile.EndAtMs.
+func (c *Client) UpdateEpisode(serverMs int64) {
+	p := c.P
+	if !p.hasEpisode() || !c.joined {
+		return
+	}
+	if c.finishedKey == "" && serverMs >= p.EndAtMs && c.onRoomMedia() {
+		// The end is nobody's pause: nothing is sent.
+		c.ended, c.paused = true, true
+		c.finishedKey, c.endedAt = c.media, serverMs
+	}
+	if c.ended && c.navAt == 0 && serverMs >= c.endedAt+p.ContinueAfterMs {
+		prev := c.media
+		c.navAt = serverMs
+		c.media, c.ended, c.loading = p.NextKey, false, true
+		c.posMs, c.paused, c.bufEndS = 0, true, 0
+		c.inTransit = false
+		c.haveEvalPos, c.residualHist = false, nil
+		if prev == c.anchor.MediaKey && serverMs-c.endedAt <= continuationWindowMs {
+			cmd := MsgCmd{Kind: "media", MediaKey: p.NextKey, PositionMs: 0}
+			if !p.NoMediaCAS {
+				cond := prev
+				cmd.IfMediaKey = &cond
+			}
+			c.outbox = append(c.outbox, cmd)
+			c.continuing = !c.anchor.Paused
+			c.ContinuationsSent++
+		}
+	}
+	if c.loading && serverMs >= c.navAt+p.LoadMs && c.haveOffset && c.onRoomMedia() {
+		c.loading = false
+		target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
+		if target > c.posMs+seekToleranceMs {
+			c.ArrivedLateMs += target - c.posMs
+			c.SkippedMs += target - c.posMs
+		}
+		if math.Abs(target-c.posMs) > seekToleranceMs {
+			c.payForSeek(target, serverMs)
+			c.posMs = target
+		}
+		c.paused = c.anchor.Paused
+		c.lastKnownPos, c.residualHist = c.posMs, nil
+		if c.continuing {
+			c.continuing = false
+			if c.anchor.Paused {
+				c.outbox = append(c.outbox, MsgCmd{Kind: "play", PositionMs: int64(c.posMs)})
+			}
+		}
+	}
+}
+
+// holdsPlayer: a player the room's transitions and corrections must not move
+// -- other media, one still loading, or one that has ended.
+func (c *Client) holdsPlayer() bool {
+	return c.P.hasEpisode() && (!c.onRoomMedia() || c.loading || c.ended)
 }
 
 func (c *Client) stalled(serverMs int64) bool {
@@ -440,6 +564,9 @@ func (c *Client) Advance(serverMs, dt int64) {
 	c.readyState = 4
 	if c.bufferedS < 0.3 {
 		c.readyState = 2
+	}
+	if c.loading {
+		c.readyState = 1 // metadata at most: nothing to play yet
 	}
 }
 
@@ -541,9 +668,15 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	// An anomaly is reported at once, but not more often than the engine
 	// allows (minReportIntervalMs); the heartbeat goes regardless. So does a
 	// change in acquiring, which is what holds and releases a play (engine.ts).
-	acq := c.acquiring()
-	if acq != c.reportedAcquiring {
+	acq := c.acquiring(serverMs)
+	if acq != c.reportedAcquiring || c.suspended != c.reportedSuspended {
 		force = true
+	}
+	// Going into the background is reported at once (the visibility change
+	// runs before throttling does); only the reports after it are throttled.
+	if c.suspended && c.reportedSuspended && c.P.SuspendedReportEveryMs > 0 &&
+		serverMs-c.lastReportAt < c.P.SuspendedReportEveryMs {
+		return vsync.Report{}, false
 	}
 	if !force && (math.Abs(res) < float64(t.ReportThreshold) ||
 		(c.haveReported && serverMs-c.lastReportAt < minReportIntervalMs)) {
@@ -551,16 +684,20 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	}
 	c.lastReportAt, c.haveReported = serverMs, true
 	c.reportedAcquiring = acq
+	c.reportedSuspended = c.suspended
 	return vsync.Report{
-		Acquiring:       acq,
-		ClientID:        c.P.ID,
-		ResidualMs:      int64(res),
-		SlopeMsPerS:     c.slope(),
-		PositionMs:      int64(c.posMs),
-		Paused:          c.paused,
-		ReadyState:      c.readyState,
-		BufferedAheadS:  c.bufferedS,
-		Suspended:       c.suspended,
+		Acquiring:      acq,
+		ClientID:       c.P.ID,
+		ResidualMs:     int64(res),
+		SlopeMsPerS:    c.slope(),
+		PositionMs:     int64(c.posMs),
+		Paused:         c.paused,
+		ReadyState:     c.readyState,
+		BufferedAheadS: c.bufferedS,
+		// Other media, or a finished element, is absent like a suspended
+		// tab -- unless it is on its way (acquiring).
+		Suspended:       c.suspended || (c.P.hasEpisode() && !acq && (!c.onRoomMedia() || c.finished())),
+		Finished:        c.P.hasEpisode() && c.finished(),
 		BufferedBehindS: math.Min(10, c.posMs/1000),
 		LastAppliedSeq:  c.lastAppliedSeq,
 		AtServerMs:      est,
@@ -617,7 +754,16 @@ func (c *Client) Deliver(m Msg, serverMs int64) {
 				Seq: v.Seq, When: v.When, EmittedAt: v.EmittedAt,
 				Anchor: v.Anchor, By: c.P.ID, Kind: v.Kind})
 		}
+	case MsgError:
+		if v.Code == "media_stale" {
+			// Our continuation lost the race: follow the room.
+			c.continuing = false
+			c.MediaStaleSeen++
+		}
 	case MsgCorrect:
+		if c.holdsPlayer() {
+			return
+		}
 		if v.Mode == "seek" {
 			// Re-derive at apply time from our own anchor and clock estimate.
 			target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
@@ -662,8 +808,19 @@ func (c *Client) RunScheduled(serverMs int64) {
 			continue // superseded while it waited
 		}
 		if est >= p.When {
+			left := c.anchor.MediaKey
 			c.anchor = p.Anchor
 			c.lastAppliedSeq = p.Seq
+			if left != p.Anchor.MediaKey && c.P.hasEpisode() {
+				// engine.ts roomMediaChanged.
+				c.inTransit = c.finishedKey == left && !c.onRoomMedia() &&
+					serverMs-c.endedAt <= continuationWindowMs
+				c.inTransitTill = serverMs + continuationWindowMs
+			}
+			if c.holdsPlayer() {
+				// Tracked, not applied: the conform step reads the anchor.
+				continue
+			}
 			c.paused = p.Anchor.Paused
 			// Like the engine's applyTransition, only a target further than
 			// seekToleranceMs away moves the playhead. Seeking on every

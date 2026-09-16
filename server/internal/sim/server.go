@@ -11,6 +11,8 @@ import (
 type Server struct {
 	*room.Room
 	sink *netSink
+	// MediaApplied counts `media` commands the room took (a seq each).
+	MediaApplied int
 }
 
 // netSink turns room output into simulated downlink traffic. `now` and `net`
@@ -48,7 +50,11 @@ func (s *Server) Deliver(e envelope, net *Network, now int64, clients map[string
 	case MsgTimeReq:
 		s.OnTime(now, e.from, v)
 	case MsgCmd:
+		before := s.Seq()
 		s.OnCmd(now, e.from, v)
+		if v.Kind == "media" && s.Seq() > before {
+			s.MediaApplied++
+		}
 	case MsgReport:
 		s.OnReport(now, e.from, v)
 	}

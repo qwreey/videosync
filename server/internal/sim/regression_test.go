@@ -641,3 +641,89 @@ func TestScriptedPauseStopsWhereThePauserIs(t *testing.T) {
 		}
 	}
 }
+
+// nextEpisodeScenario is D8's continuation, end to end through room.Room: a
+// playing room reaches the end of "m" at 60 s. a's site moves on after 5 s
+// with the next episode already loaded, so its `play` follows its `media` at
+// once -- before anyone else has reported on the new seq -- and b's site
+// moves on 60 ms after a's, before b has heard of a's. c's machine takes 9 s,
+// so it is still on the end screen when the room moves on. d is in a
+// throttled background tab the whole time, reporting once a minute, and never
+// finished.
+func nextEpisodeScenario(seed int64, tune func(*ClientProfile)) Scenario {
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	meh := Link{UpMs: 80, DownMs: 80, JitterMs: 30}
+	ep := func(id string, link Link, after, load int64) ClientProfile {
+		return ClientProfile{ID: id, IntrinsicRate: 1.0, Link: link,
+			EndAtMs: 60000, ContinueAfterMs: after, LoadMs: load, NextKey: "m2"}
+	}
+	cs := []ClientProfile{
+		ep("a", good, 5000, 100),
+		ep("b", meh, 5060, 2500),
+		ep("c", meh, 9000, 3000),
+		{ID: "d", IntrinsicRate: 1.0, Link: good, Suspends: [][2]int64{{30000, 200000}},
+			SuspendedReportEveryMs: 60000},
+	}
+	if tune != nil {
+		for i := range cs {
+			tune(&cs[i])
+		}
+	}
+	return Scenario{Name: "next-episode", Seed: seed, DurationMs: 120000, StartPos: 0, Clients: cs}
+}
+
+// The server half of D8 had no simulated coverage: nothing sent `media` or
+// reported `finished`. Here the compare-and-set lets exactly one continuation
+// move the room, the member still on its way holds the room's start, and the
+// backgrounded member does not.
+func TestNextEpisodeMovesTheRoomOnceAndWaitsForTheMemberOnItsWay(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	const seeds = 8
+	var on, noCAS, noTransit struct {
+		applied, stale, sent, held int
+		late, holdMs               float64
+		playing                    int
+	}
+	add := func(acc *struct {
+		applied, stale, sent, held int
+		late, holdMs               float64
+		playing                    int
+	}, r Result) {
+		acc.applied += r.MediaApplied
+		acc.stale += r.MediaStale
+		acc.sent += r.ContinuationsSent
+		acc.held += r.CmdsHeld
+		acc.late += r.ArrivedLateMs / seeds
+		acc.holdMs += float64(r.GateHoldMs) / seeds
+		if r.FinalAnchor.MediaKey == "m2" && !r.FinalAnchor.Paused {
+			acc.playing++
+		}
+	}
+	for seed := int64(1); seed <= seeds; seed++ {
+		add(&on, Run(nextEpisodeScenario(seed, nil), &vsync.ServoCorrector{}, tun))
+		add(&noCAS, Run(nextEpisodeScenario(seed, func(p *ClientProfile) { p.NoMediaCAS = true }), &vsync.ServoCorrector{}, tun))
+		add(&noTransit, Run(nextEpisodeScenario(seed, func(p *ClientProfile) { p.NoTransitGuard = true }), &vsync.ServoCorrector{}, tun))
+	}
+	t.Logf("on %+v\nnoCAS %+v\nnoTransit %+v", on, noCAS, noTransit)
+	if on.sent < 2*seeds {
+		t.Fatalf("%d continuations over %d seeds: the race the scenario is about did not happen", on.sent, seeds)
+	}
+	// Structural: one move per run, the rest refused.
+	if on.applied != seeds || on.stale != on.sent-seeds {
+		t.Errorf("with the condition: %d media applied, %d refused, of %d sent over %d seeds", on.applied, on.stale, on.sent, seeds)
+	}
+	if noCAS.applied <= seeds {
+		t.Errorf("control: without the condition only %d media applied -- the scenario no longer races", noCAS.applied)
+	}
+	if on.playing != seeds {
+		t.Errorf("the room was left playing the next episode in %d of %d runs", on.playing, seeds)
+	}
+	// c, still on the end screen, is waited for; the backgrounded d is not,
+	// so the hold is c's few seconds and never GATE_TIMEOUT.
+	if on.held < seeds || on.holdMs >= gateTimeoutMs/2 {
+		t.Errorf("with the guard: %d plays held, %.0f ms on average", on.held, on.holdMs)
+	}
+	if !(on.late < 500 && noTransit.late > 3000) {
+		t.Errorf("media arrived late for: %.0f ms with the guard, %.0f ms without (control)", on.late, noTransit.late)
+	}
+}

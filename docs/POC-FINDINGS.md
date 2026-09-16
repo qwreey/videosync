@@ -1466,3 +1466,48 @@ Also new on the server side and covered in `room_test.go` rather than here:
 `acquiring` reports are gated and not judged, `finished` is absent, a
 conditional `media` command refuses without a seq, and after any `media`
 command every member is unready until it reports on the new seq.
+
+## 44. Round 15 — the next episode, through the room (D8, integration review)
+
+A review found §43's last paragraph doing more work than it could: nothing in
+the simulation sent a `media` command or reported `finished`, so the
+compare-and-set, the pre-gate every `media` arms, the integration's exemption
+for a backgrounded member, and in-transit gating were never simulated, and
+"the pre-gate change does not alter any sim row" was true of a pre-gate no row
+reached. The sim client now models the end of the media (stopped, `finished`,
+absent — never a `pause`), the site moving on after its countdown and sending
+`media` with `ifMediaKey`, the new episode loading (`readyState` 1, acquiring),
+the conform, the winner's `play`, `media_stale` for the loser, and "on its way"
+for a member that finished what the room just left. `NoMediaCAS` and
+`NoTransitGuard` are the controls. A suspended member may report on a
+throttled timer (`SuspendedReportEveryMs`, the minute Chrome's intensive
+throttling gives a background tab), after reporting the suspension itself at
+once.
+
+**Scenario `next-episode`.** A playing room ends "m" at 60 s. a's site moves on
+after 5 s with the next episode preloaded (its `play` follows its `media` before
+anyone else has reported on the new seq); b's 60 ms after a's, before hearing of
+it; c's after 9 s, still on the end screen when the room moves; d is a
+throttled background tab, never finished. Servo, seeds 1..10:
+
+| | media applied | refused | plays held | held for | arrived late |
+|---|---|---|---|---|---|
+| both ON | **1.0** | 1.0 | 1.0 | 6962 ms | **0 ms** |
+| no condition (control) | **2.0** | 0 | 2.0 | 4436 ms | 0 ms |
+| no in-transit (control) | 1.0 | 1.0 | 1.0 | 2547 ms | **3824 ms** |
+
+Without the condition b's continuation restarts the room under a's, and both
+send a `play`. Without "on its way" c is absent when the room moves on, the
+play goes as soon as a and b are ready, and c joins an episode 3.8 s in. With
+both, the play waits for c — about 7 s, c's countdown and load — and never for
+d. Mutations `TestNextEpisodeMovesTheRoomOnceAndWaitsForTheMemberOnItsWay`
+catches in `room.go`: the compare-and-set (2 applied per run), the
+suspended-not-finished exemption (the hold grows to ~25 s, d's throttled
+report), and the pre-gate (a's play goes at once: 8.3 s late). Not caught here,
+and pinned in `room_test.go` instead: `finished` implying suspended, and
+acquiring-and-suspended not gating — this client never sends a report that
+needs either. The acquiring report's own `markGated` is redundant with the
+pre-gate in this scenario; each covers the other.
+
+Every row of the table that existed before is unchanged: the new behaviour
+only engages for a profile with an episode or a throttle.

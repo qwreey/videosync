@@ -96,6 +96,16 @@ type Result struct {
 	SiteSpuriousCmds  int
 	SiteMovesAbsorbed int
 
+	// The next episode. MediaApplied is how many `media` commands moved the
+	// room (each restarts it at 0, paused); MediaStale how many the
+	// compare-and-set refused; ContinuationsSent how many members' sites sent
+	// one. ArrivedLateMs is the part of SkippedMs that members lost by being
+	// conformed into a new episode the room had already started without them.
+	MediaApplied      int
+	MediaStale        int
+	ContinuationsSent int
+	ArrivedLateMs     float64
+
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
 	ConvergeMs []int64
@@ -208,6 +218,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			c.UpdateSuspension(now)
 			c.UpdateSite(now)
 			c.RunScheduled(now)
+			c.UpdateEpisode(now)
 			c.Advance(now, stepMs)
 			for _, cm := range c.TakeOutbox() {
 				if cm.Kind == "pause" && c.Suspended() {
@@ -243,7 +254,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 			var live []float64
 			for _, id := range order {
 				c := clients[id]
-				if c.stalled(now) || c.Offline(now) || c.Suspended() {
+				if c.stalled(now) || c.Offline(now) || c.Suspended() || c.holdsPlayer() {
 					continue // legitimately behind, absent, or not watching
 				}
 				live = append(live, c.Pos())
@@ -252,7 +263,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 				exp := float64(srv.Anchor().Expected(now))
 				for _, id := range order {
 					c := clients[id]
-					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() {
+					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() || c.holdsPlayer() {
 						continue
 					}
 					anchorErrs = append(anchorErrs, math.Abs(c.Pos()-exp))
@@ -271,7 +282,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 				allIn := true
 				for _, id := range order {
 					c := clients[id]
-					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() {
+					if c.stalled(now) || !c.haveOffset || c.Offline(now) || c.Suspended() || c.holdsPlayer() {
 						continue
 					}
 					exp := float64(srv.Anchor().Expected(c.serverNowEst(now)))
@@ -300,6 +311,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		CmdsHeld:               srv.CmdsHeld,
 		GateHoldMs:             srv.GateHoldMs,
 		RoomPausedBySuspension: roomPausedBySuspension,
+		MediaApplied:           srv.MediaApplied,
+		MediaStale:             srv.MediaStale,
 		ConvergeMs:             converge,
 		FinalAnchor:            srv.Anchor(),
 	}
@@ -313,6 +326,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		res.OutOfBufferSeeks += c.OutOfBufferSeeks
 		res.RateTimeMs += c.RateTimeMs
 		res.SkippedMs += c.SkippedMs
+		res.ContinuationsSent += c.ContinuationsSent
+		res.ArrivedLateMs += c.ArrivedLateMs
 	}
 	if len(divergences) > 0 {
 		sorted := append([]float64(nil), divergences...)

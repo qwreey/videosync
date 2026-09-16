@@ -155,6 +155,24 @@ func scenarios() []sim.Scenario {
 			Commands: []sim.Command{{AtMs: 21200, ClientID: "a", Kind: "play"}},
 		},
 		{
+			// D8, the next episode. A playing room reaches the end of "m" at
+			// 60 s. a's site moves on after 5 s with the next episode already
+			// loaded, b's 60 ms later (a race), c's after 9 s (still on the
+			// end screen when the room moves on); d is a throttled background
+			// tab. Every continuation is `media` if the room is still on "m".
+			Name: "next-episode", Seed: 71, DurationMs: 120000, StartPos: 0,
+			Clients: []sim.ClientProfile{
+				{ID: "a", IntrinsicRate: 1.0, Link: good,
+					EndAtMs: 60000, ContinueAfterMs: 5000, LoadMs: 100, NextKey: "m2"},
+				{ID: "b", IntrinsicRate: 1.0, Link: meh,
+					EndAtMs: 60000, ContinueAfterMs: 5060, LoadMs: 2500, NextKey: "m2"},
+				{ID: "c", IntrinsicRate: 1.0, Link: meh,
+					EndAtMs: 60000, ContinueAfterMs: 9000, LoadMs: 3000, NextKey: "m2"},
+				{ID: "d", IntrinsicRate: 1.0, Link: good,
+					Suspends: [][2]int64{{30000, 200000}}, SuspendedReportEveryMs: 60000},
+			},
+		},
+		{
 			Name: "command-storm", Seed: 6, DurationMs: 120000, StartPos: 0,
 			Clients: []sim.ClientProfile{
 				{ID: "a", IntrinsicRate: 1.0, Link: good},
@@ -229,6 +247,43 @@ func controlRun(tun vsync.Tunables) {
 			}
 			fmt.Printf("  %s site cmds sent %.1f   absorbed %.1f   held %.1f   skipped %6.0f ms   room ends at %6.1f s\n",
 				label, spurious, absorbed, held, skipped, finalS)
+		}
+	}
+	fmt.Println()
+
+	// D8: the next episode. Without the condition every member whose site
+	// moved on restarts the room; without "on its way" the member still on
+	// the end screen is absent, and the room starts the episode without it.
+	fmt.Println("CONTROL: next-episode, compare-and-set and in-transit ON vs OFF (mean over seeds 1..10)")
+	for _, sc := range scenarios() {
+		if sc.Name != "next-episode" {
+			continue
+		}
+		for _, arm := range []struct {
+			label string
+			tune  func(*sim.ClientProfile)
+		}{
+			{"both ON      ", func(*sim.ClientProfile) {}},
+			{"no condition ", func(p *sim.ClientProfile) { p.NoMediaCAS = true }},
+			{"no in-transit", func(p *sim.ClientProfile) { p.NoTransitGuard = true }},
+		} {
+			var applied, stale, held, holdMs, late float64
+			for seed := int64(1); seed <= 10; seed++ {
+				v := sc
+				v.Seed = seed
+				v.Clients = append([]sim.ClientProfile(nil), sc.Clients...)
+				for i := range v.Clients {
+					arm.tune(&v.Clients[i])
+				}
+				r := sim.Run(v, &vsync.ServoCorrector{}, tun)
+				applied += float64(r.MediaApplied) / 10
+				stale += float64(r.MediaStale) / 10
+				held += float64(r.CmdsHeld) / 10
+				holdMs += float64(r.GateHoldMs) / 10
+				late += r.ArrivedLateMs / 10
+			}
+			fmt.Printf("  %s media applied %.1f   refused %.1f   plays held %.1f for %5.0f ms   arrived late %5.0f ms\n",
+				arm.label, applied, stale, held, holdMs, late)
 		}
 	}
 	fmt.Println()
