@@ -4,10 +4,9 @@
  *
  * The userscript and the extension differ in exactly three injected pieces:
  * storage, the transport, and how an HTTP call reaches the server. Every other
- * line -- find
- * the element, name the media, mount the panel, wire the engine, decide what a
- * navigation means -- is identical, so it lives here rather than in two files
- * that would drift.
+ * line -- find the element, name the media, mount the panel, wire the engine,
+ * sign in, decide what a navigation means -- is identical, so it lives here
+ * rather than in two files that would drift.
  */
 import { Html5Adapter } from '../adapter/html5.ts';
 import { followableUrl, normalizeMediaKey, watchUrl } from '../adapter/mediakey.ts';

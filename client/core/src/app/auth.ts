@@ -138,7 +138,7 @@ export class ServerAuth {
     const info = await this.info(server);
     if (info.scope === 'none' || (purpose === 'join' && info.scope !== 'all')) return '';
     let r = await this.fetch(server, '/api/ticket', { method: 'POST' });
-    if (r.status !== 200 && info.methods.includes('proxy')) {
+    if ((r.status === 401 || r.gateway) && info.methods.includes('proxy')) {
       // A trusted network, or a gateway that already knows this browser:
       // the proxy's word is taken at /api/session, and costs no prompt.
       const s = await this.fetch(server, '/api/session', { method: 'POST' });
