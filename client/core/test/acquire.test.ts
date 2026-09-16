@@ -244,6 +244,31 @@ describe('a joiner whose site resumes from its history', () => {
     assert.deepEqual(h.kinds(), ['play']);
     assert.equal(h.engine.acquisition, 'steady');
   });
+
+  it('is left by a press that agrees with the room, too, and the room applies again', async () => {
+    const h = await joinPausedRoom();
+    for (let i = 0; i <= DEFAULT_ENGINE_CONFIG.maxReconforms; i++) {
+      h.player.positionS = 813;
+      h.player.emit('seeked');
+      await h.vt.advance(50);
+    }
+    assert.equal(h.engine.acquisition, 'fought');
+    // The site keeps autoplaying; the member presses pause -- which is what the
+    // paused room says anyway, so nothing needs sending.
+    await h.siteAutoplay();
+    h.g.press();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(50);
+    assert.equal(h.engine.acquisition, 'steady', 'the panel asked for a press, and the press did nothing');
+    assert.deepEqual(h.kinds(), [], 'an agreeing press is not a command');
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().suspended, false);
+    // And the room moves this member again.
+    await h.state({ positionMs: 30_000, atServerMs: h.serverNow(), paused: false }, 'play');
+    await h.vt.advance(300);
+    assert.equal(h.player.paused, false, 'a room play was not applied after leaving fought');
+  });
 });
 
 describe('a joiner into a playing room', () => {
@@ -425,6 +450,47 @@ describe('the creator', () => {
   });
 });
 
+describe('the creator, moved while it settles', () => {
+  it('ends where the room was moved, even if its site moved it again afterwards', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    assert.equal(h.engine.acquisition, 'guarded');
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    // The site's resume lands after the room's seek, and is absorbed.
+    h.player.positionS = 813;
+    h.player.emit('seeked');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.ok(Math.abs(h.player.positionS - 50) < 0.3, `left at ${h.player.positionS}`);
+  });
+});
+
+describe('the creator, still loading', () => {
+  it('does not seed over a command that arrived before its player was ready', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    assert.equal(h.engine.acquisition, 'detached');
+    // Another member seeks while this player is still loading.
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    h.player.positionS = 813; // the site's resume
+    h.player.readyState = 4;
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), [], 'the creator seeded over the other member\'s seek');
+    assert.ok(Math.abs(h.player.positionS - 50) < 0.3, `left at ${h.player.positionS}`);
+  });
+
+  it('control: with nobody else moving the room, it seeds from where it settled', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    h.player.positionS = 813;
+    h.player.readyState = 4;
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.deepEqual(h.kinds(), ['seek']);
+  });
+});
+
 describe('a room that names nothing yet (C3)', () => {
   it('is named by the first member on media, conditionally, and then seeded', async () => {
     const h = harness({ player: { paused: false, positionS: 42 } });
@@ -452,6 +518,36 @@ describe('a room that names nothing yet (C3)', () => {
     assert.equal(h.engine.stats.mediaStale, 1);
     await h.vt.advance(3000);
     assert.equal(h.kinds().filter((k) => k === 'media').length, 1, 'named again');
+  });
+
+  it('a member who lost the race to somebody on the same video does not seed over them', async () => {
+    const h = harness({ player: { paused: false, positionS: 42 } });
+    await h.join({ mediaKey: '' }, 2);
+    assert.deepEqual(h.kinds(), ['media']);
+    // The winner named the same video, paused at 100 s; then our refusal.
+    await h.state({ mediaKey: KEY, positionMs: 100_000, paused: true }, 'media');
+    h.tr.deliver({ t: 'error', code: 'media_stale', msg: 'x' });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 3000);
+    assert.deepEqual(h.kinds(), ['media'], 'the loser overwrote the winner\'s position and play state');
+    assert.ok(Math.abs(h.player.positionS - 100) < 0.3, `left at ${h.player.positionS}`);
+    assert.equal(h.player.paused, true);
+  });
+
+  it('names the room again after a reconnect that lost the naming', async () => {
+    const h = harness({ player: { paused: false, positionS: 42 } });
+    await h.join({ mediaKey: '' }, 2);
+    assert.deepEqual(h.kinds(), ['media']);
+    h.tr.drop();
+    await h.vt.advance(2000);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: '' },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: '',
+    });
+    await h.vt.advance(5000);
+    assert.equal(h.kinds().filter((k) => k === 'media').length, 2, 'the room stays unnamed for good');
   });
 
   it('a member on no media names nothing and stays quiet', async () => {
@@ -587,6 +683,38 @@ describe('the next episode', () => {
     assert.equal(h.lastHb().suspended, false);
   });
 
+  it('a member who finished long ago is not on its way anywhere', async () => {
+    const h = harness({ player: { paused: false, positionS: 1399 } });
+    await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.player.positionS = 1400;
+    h.player.paused = true;
+    h.player.ended = true;
+    h.player.emit('pause');
+    await h.vt.advance(10 * 60_000); // idle on the end screen
+    await h.state({ mediaKey: 'yt:other', positionMs: 0, paused: true }, 'media');
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, undefined, 'held the room\'s next play for someone who is not coming');
+    assert.equal(h.lastHb().suspended, true);
+  });
+
+  it('is on its way only for a while', async () => {
+    const h = harness({ player: { paused: false, positionS: 1399 } });
+    await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.player.positionS = 1400;
+    h.player.paused = true;
+    h.player.ended = true;
+    h.player.emit('pause');
+    await h.vt.advance(100);
+    await h.state({ mediaKey: NEXT, positionMs: 0, paused: true }, 'media');
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, true);
+    await h.vt.advance(60_000); // never arrives
+    assert.equal(h.lastHb().acquiring, undefined, 'still "on its way" a minute later');
+    assert.equal(h.lastHb().suspended, true);
+  });
+
   it('control: a member who was elsewhere when the room moved on is absent', async () => {
     const h = harness({ player: { paused: false, positionS: 600 } });
     await h.join({ positionMs: 600_000, atServerMs: OFFSET, paused: false });
@@ -595,5 +723,87 @@ describe('the next episode', () => {
     await h.vt.advance(1100);
     assert.equal(h.lastHb().acquiring, undefined);
     assert.equal(h.lastHb().suspended, true);
+  });
+});
+
+describe('the edges the design names', () => {
+  it('conforms a paused player that stays at metadata, after a while', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.player.readyState = 1;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(2000);
+    assert.equal(h.engine.acquisition, 'detached', 'conformed while the site may still be resuming');
+    await h.vt.advance(4000);
+    assert.notEqual(h.engine.acquisition, 'detached', 'a preload=metadata player stays acquiring for good');
+    assert.ok(Math.abs(h.player.positionS - 30) < 0.3, `left at ${h.player.positionS}`);
+  });
+
+  it('leaves alone an element the room is far past the end of', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 15 } }); // an ad, a preview
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.player.seeks, 0);
+    // Control: within the slack it is the room's media, and is conformed.
+    const c = harness({ player: { paused: true, positionS: 0, durationS: 29 } });
+    await c.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await c.vt.advance(3000);
+    assert.notEqual(c.engine.acquisition, 'detached');
+  });
+
+  it('ignores a correction while acquiring', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.player.readyState = 1;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    const seeks = h.player.seeks;
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+    h.tr.deliver({ t: 'correct', mode: 'nudge', rate: 1.05, when: h.serverNow() });
+    await h.vt.advance(100);
+    assert.equal(h.player.seeks, seeks, 'a stale judgement moved a player the conform step owns');
+    assert.deepEqual(h.player.rateSets, []);
+  });
+
+  async function nearEnd(o: { endedAt?: number; scrubBack?: boolean; playing?: boolean } = {}) {
+    const h = harness({ continues: (a, b) => a === KEY && b === NEXT, player: { paused: false, positionS: 1395 } });
+    await h.join({ positionMs: 1_395_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    // Within endWindow of the end, still playing: the site moves on before `ended`.
+    await h.vt.advance(4400);
+    assert.ok(h.player.positionS > 1400 - DEFAULT_ENGINE_CONFIG.endWindowMs / 1000, `at ${h.player.positionS}`);
+    if (o.scrubBack) {
+      h.player.positionS = 600;
+      h.player.emit('seeked');
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.evalIntervalMs * 3);
+    }
+    if (o.endedAt !== undefined) {
+      h.player.positionS = 1400;
+      h.player.paused = true;
+      h.player.ended = true;
+      h.player.emit('pause');
+      await h.vt.advance(o.endedAt);
+    }
+    h.engine.setLocalMediaKey(NEXT, 'https://laftel.net/player/1/2');
+    h.player.paused = true;
+    h.player.positionS = 0;
+    h.player.emit('emptied');
+    await h.vt.advance(20);
+    return h;
+  }
+
+  it('counts the last second of a playing room as finished', async () => {
+    const h = await nearEnd();
+    assert.deepEqual(h.kinds().filter((k) => k === 'media'), ['media']);
+  });
+
+  it('forgets a finish the member scrubbed back from', async () => {
+    const h = await nearEnd({ scrubBack: true });
+    assert.deepEqual(h.kinds().filter((k) => k === 'media'), [], 'moved the room on for a member watching the middle');
+  });
+
+  it('moves on only within the continuation window of the finish', async () => {
+    const h = await nearEnd({ endedAt: 21_000 });
+    assert.deepEqual(h.kinds().filter((k) => k === 'media'), [], 'a navigation long after the end moved the room');
+    const c = await nearEnd({ endedAt: 5500 });
+    assert.deepEqual(c.kinds().filter((k) => k === 'media'), ['media'], 'control: the site\'s own countdown');
   });
 });

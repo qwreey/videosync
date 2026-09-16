@@ -178,7 +178,9 @@ export interface SecretFrame { t: 'secret'; secret: string; rotated: string }
 
 export type ErrorCode =
   | 'join_refused' | 'room_full' | 'already_joined' | 'auth_required'
-  | 'bad_frame' | 'bad_kind' | 'bad_cmd' | 'rate_limited';
+  | 'bad_frame' | 'bad_kind' | 'bad_cmd' | 'rate_limited'
+  /** A conditional `media` command whose condition no longer held (PROTOCOL §3). */
+  | 'media_stale';
 
 export interface ErrorFrame { t: 'error'; code: ErrorCode | string; msg?: string }
 

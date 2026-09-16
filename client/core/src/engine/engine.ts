@@ -259,6 +259,8 @@ export function isAuthRequired(e: unknown): boolean {
 
 interface Scheduled {
   seq: number;
+  /** The server's answer to one of our own commands. */
+  own?: boolean;
   whenServerMs: number;
   /** When the server emitted it. Equal to `when` for a command applied with no
    *  lead, which is how a genuinely late apply stays distinguishable from one
@@ -415,8 +417,6 @@ interface Acquisition {
   reconforms: number;
   /** When the player last finished being conformed (or started being guarded). */
   guardedAt: number;
-  /** The room's seq when acquisition started; -1 before. */
-  seq: number;
   /** When the element was first seen with metadata in this epoch, or 0. */
   metadataAt: number;
 }
@@ -547,7 +547,7 @@ export class SyncEngine {
    * calls `play()` 1 ms after `emptied` (BROWSER-FINDINGS §20).
    */
   private acq: Acquisition = {
-    id: 0, startedAt: 0, state: 'detached', policy: null, reconforms: 0, guardedAt: 0, seq: -1, metadataAt: 0,
+    id: 0, startedAt: 0, state: 'detached', policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0,
   };
   /** A conform of the current epoch is queued or running. */
   private conformInFlight = false;
@@ -557,6 +557,16 @@ export class SyncEngine {
   private continuing: { key: string; play: boolean } | null = null;
   /** The local media this member already tried to name an unnamed room with. */
   private namedFor = '';
+  /**
+   * Somebody else's command moved the room since this member set out to seed
+   * it (joined as creator, or named the room). From then on that choice
+   * stands and this member conforms. Recorded when the command is applied,
+   * whatever acquisition state it finds -- a creator still loading skips it,
+   * and must still know it happened.
+   */
+  private foreignMove = false;
+  /** Until when an in-transit member reports itself acquiring. */
+  private inTransitUntil = 0;
   /**
    * Finished on the media the room just left, and not yet on the new one:
    * on the way there, so present-but-unready rather than absent.
@@ -743,7 +753,7 @@ export class SyncEngine {
     const now = this.d.now();
     this.acq = {
       id: this.acq.id + 1, startedAt: now, state: this.gating() ? 'detached' : 'steady',
-      policy: null, reconforms: 0, guardedAt: 0, seq: -1, metadataAt: 0,
+      policy: null, reconforms: 0, guardedAt: 0, metadataAt: 0,
     };
     this.conformInFlight = false;
     this.detector.reset();
@@ -985,6 +995,10 @@ export class SyncEngine {
         this.members = f.members;
         this.anchor = f.anchor;
         this.lastAppliedSeq = f.seq;
+        // A naming lost with the old connection (dropped before the server
+        // applied it) is tried again against the room as it is now; the
+        // compare-and-set makes a repeat harmless.
+        this.namedFor = '';
         this.setStatus('joined');
         this.ev.onMembers?.(f.members);
         this.ev.onAnchor?.(f.anchor);
@@ -1015,7 +1029,7 @@ export class SyncEngine {
         // simultaneity the timebase exists to provide.
         this.schedule({
           seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
-          anchor: f.anchor, kind: f.kind, beforeOwnPlay: this.ownAck(f.reqId),
+          anchor: f.anchor, kind: f.kind, beforeOwnPlay: this.ownAck(f.reqId), own: true,
         });
         this.stats.acksApplied++;
         break;
@@ -1057,6 +1071,8 @@ export class SyncEngine {
           const i = this.unacked.findIndex((c) => c.kind === 'media');
           if (i >= 0) this.unacked.splice(i, 1);
           this.continuing = null;
+          // A seed of ours that lost is dropped by `foreignMove`: the
+          // winner's state reaches us as somebody else's command.
           break;
         }
         if (f.code === 'join_refused' || f.code === 'room_full' || f.code === 'auth_required') {
@@ -1135,6 +1151,7 @@ export class SyncEngine {
     // command that arrives while an earlier one is still touching the player
     // knows it has been superseded.
     this.lastAppliedSeq = p.seq;
+    if (!p.own && this.adoptFor !== null) this.foreignMove = true;
     const roomMoved = p.anchor.mediaKey !== this.anchor.mediaKey;
     const left = this.anchor.mediaKey;
     this.anchor = p.anchor;
@@ -1143,7 +1160,12 @@ export class SyncEngine {
       // media: the room moving onto our page is a new media epoch as much as
       // our page moving is.
       const f = this.lastFinish;
-      this.inTransit = !!f && f.key === left && !this.onRoomMedia();
+      // Only a finish that just happened: a member idle on an end screen for
+      // minutes is not on its way to whatever the room moved to, and would
+      // hold its next play for GATE_TIMEOUT.
+      const now = this.d.now();
+      this.inTransit = !!f && f.key === left && !this.onRoomMedia() && now - f.at <= CONTINUATION_WINDOW_MS;
+      this.inTransitUntil = now + CONTINUATION_WINDOW_MS;
       this.newMediaEpoch();
     }
     this.ev.onAnchor?.(p.anchor);
@@ -1518,7 +1540,7 @@ export class SyncEngine {
       return a.state === 'detached' || a.state === 'conforming' ||
         (a.state === 'guarded' && a.policy === 'adopt');
     }
-    return this.inTransit && this.anchor.mediaKey !== '';
+    return this.inTransit && this.anchor.mediaKey !== '' && this.d.now() <= this.inTransitUntil;
   }
 
   /**
@@ -1556,6 +1578,14 @@ export class SyncEngine {
   private classify(o: Observation, state: PlayerState, now: number): void {
     const a = this.acq;
     if (!this.gating() || a.state === 'steady') {
+      this.act(o, state);
+      return;
+    }
+    if (a.state === 'fought' && this.intent(now)) {
+      // The panel asked for a press, so any press ends it -- including one
+      // that agrees with the room, which the echo test below would swallow.
+      this.stats.gesturedIntents++;
+      this.toSteady(now, state);
       this.act(o, state);
       return;
     }
@@ -1658,6 +1688,10 @@ export class SyncEngine {
     const near = durMs > 0 && !this.anchor.paused && !state.paused &&
       state.positionS * 1000 >= durMs - this.cfg.endWindowMs;
     if (state.ended || near) {
+      // When it finished, not when it was last seen finished: the
+      // continuation window runs from the end, not from the end screen.
+      const f = this.lastFinish;
+      if (f && f.epoch === this.acq.id && f.key === this.localMediaKey) return;
       this.lastFinish = { key: this.localMediaKey, epoch: this.acq.id, at: now };
     } else if (this.lastFinish && this.lastFinish.epoch === this.acq.id && durMs > 0) {
       this.lastFinish = null;
@@ -1674,6 +1708,7 @@ export class SyncEngine {
     if (!this.clock.ready || this.d.isHidden() || state.readyState < 1 || !(state.durationS > 0)) return;
     this.namedFor = this.localMediaKey;
     this.adoptFor = this.localMediaKey;
+    this.foreignMove = false;
     this.stats.namings++;
     this.send('media', state.positionS * 1000, { key: this.localMediaKey, url: this.localMediaUrl }, '');
   }
@@ -1684,7 +1719,7 @@ export class SyncEngine {
     const a = this.acq;
     if (a.state === 'detached') {
       if (!this.readyToAcquire(now, state)) return;
-      a.seq = this.lastAppliedSeq;
+      if (this.foreignMove) this.adoptFor = null;
       a.policy = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey ? 'adopt' : 'conform';
       this.stats.acquisitions++;
       if (a.policy === 'adopt') {
@@ -1777,7 +1812,7 @@ export class SyncEngine {
     this.setAcq('steady');
     if (this.adoptFor === null || this.adoptFor !== this.anchor.mediaKey || !this.onRoomMedia() || !this.clock.ready) return;
     this.adoptFor = null;
-    if (a.seq < 0 || this.lastAppliedSeq === a.seq) {
+    if (!this.foreignMove) {
       this.stats.adoptions++;
       this.adoptLocalState(state);
     } else if (was === 'guarded') {

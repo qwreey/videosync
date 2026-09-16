@@ -167,6 +167,22 @@ won; both on the next episode within 60 ms), where the control split them. `prob
 `site-autoplay-join` (seeds 1..10) sends 2 site commands and ends at 881 s without the guard, 0 and
 127 s with it (POC-FINDINGS §43).
 
+**Integration (review fixes):**
+
+- *Somebody else moved the room meanwhile* (item 7) is recorded when that command is applied, in
+  any acquisition state (`foreignMove`), not by comparing seqs from the moment guarding began: a
+  creator still loading skipped the command and then seeded over it. The same flag drops the seed
+  of a member who lost the naming race — the winner's state is somebody else's command — which
+  matters most when both were on the same video.
+- *In transit* (item 9) only for a finish within the continuation window, and for at most that
+  long after the room moved; a finish is timed from when the element finished, not from when it
+  was last seen finished, so an end screen left open does not keep the window open.
+- *FOUGHT* (item 10) is left by any gestured change, including one that agrees with the room.
+- A naming lost with a dropped connection is tried again after the next `welcome`.
+- `EngineDeps` pieces are optional, so the engine reports which it was built with
+  (`dump().engine.wiring`), and the app tests pin that the shims' shared wiring supplies them.
+- The continuation predicate is the descriptor's `continues` (D7), through `continuesMedia()`.
+
 **Not done:** ads (an ad in the same element bumps the epoch and, if its duration is long enough,
 is conformed — Y3 unmeasured); fullscreen consuming activation (Y4); Laftel in Firefox; Firefox
 media keys give no evidence (a media-key play while acquiring is put back once).
