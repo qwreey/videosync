@@ -10,6 +10,7 @@ import type { PlayerState, ProviderAdapter } from '../adapter/types.ts';
 import { AutoplayBlockedError } from '../adapter/types.ts';
 import { SeekDetector } from '../detector/detector.ts';
 import type { DetectorConfig } from '../detector/types.ts';
+import { DEFAULT_DETECTOR_CONFIG } from '../detector/types.ts';
 import { type Anchor, expectedAt, ServerClock } from './clock.ts';
 import type {
   ClientFrame, CmdKind, HbFrame, MemberInfo, ServerFrame,
@@ -235,6 +236,14 @@ const TRANSIENT_UNREADY_MS = 300;
 /** Buffered ahead above which "not ready" is taken to be transient. */
 const TRANSIENT_UNREADY_MIN_AHEAD_S = 1;
 
+/** What an in-flight applied transition is making the player do. */
+interface Applying {
+  /** Where it is seeking to. */
+  targetMs: number;
+  /** The pause state it leaves behind. */
+  paused: boolean;
+}
+
 export class SyncEngine {
   readonly cfg: EngineConfig;
   readonly clock = new ServerClock();
@@ -277,12 +286,20 @@ export class SyncEngine {
 
   /**
    * Backstop only. Echo suppression is structural -- the two-diff test for
-   * seeks, `rebaseline(pos, paused)` for play/pause. This flag exists solely
-   * for the window in which an async seek is in flight, and nothing may be
+   * seeks, `rebaseline(pos, paused)` for play/pause. This is set solely for
+   * the window in which an async seek is in flight, and nothing may be
    * load-bearing on it: syncwatch ships a load-bearing ignore-flag and it
    * deadlocks silently and forever (`content.ts:87-104`).
+   *
+   * It is not a mute either. It says what the engine is doing to the player,
+   * so an observation in that window that is neither the transition's own
+   * effect nor the room's state is still the user's, and is sent. Muting the
+   * window lost every gesture made during a slow seek -- and the rebaseline
+   * at its end then adopted them silently, for the reconciler to undo.
    */
-  private applyingRemote = false;
+  private applyingRemote: Applying | null = null;
+  /** `DetectorConfig.seekThresholdMs`, for judging a seek made mid-apply. */
+  private readonly seekThresholdMs: number;
   /**
    * The current room secret: the one joined with, until the room rotates it.
    * Every reconnect's `hello` is checked against the server's CURRENT secret.
@@ -373,6 +390,7 @@ export class SyncEngine {
       evalIntervalMs: cfg.evalIntervalMs,
       reportThresholdMs: cfg.reportThresholdMs,
     });
+    this.seekThresholdMs = cfg.detector.seekThresholdMs ?? DEFAULT_DETECTOR_CONFIG.seekThresholdMs;
     // A single-page router replaces the element, and the new one starts at 0.
     // Without this the next evaluation sees a 300 s backward jump that is large
     // in BOTH diffs, calls it a user seek, and drags the whole room to the
@@ -776,7 +794,7 @@ export class SyncEngine {
     targetMs: number, paused: boolean, toleranceMs: number, current: () => boolean,
   ): Promise<void> {
     const a = this.d.adapter;
-    this.applyingRemote = true;
+    this.applyingRemote = { targetMs, paused };
     try {
       const cur = a.readState().positionS * 1000;
       if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
@@ -792,11 +810,12 @@ export class SyncEngine {
         await this.tryPlay();
       }
     } finally {
-      this.applyingRemote = false;
+      this.applyingRemote = null;
       const s = a.readState();
       // Rebaseline with what the player ACTUALLY did, including its pause
       // state -- that is what keeps our own transition from coming back around
-      // as user intent.
+      // as user intent. Anything the user did meanwhile was already judged and
+      // sent by `evaluate`, so adopting it here loses nothing.
       this.detector.rebaseline(s.positionS, s.paused);
     }
   }
@@ -904,11 +923,14 @@ export class SyncEngine {
         this.stats.supersededApplies++;
         return;
       }
-      this.applyingRemote = true;
+      const targetMs = expectedAt(this.anchor, this.serverNow());
+      // A correction leaves the pause state alone, so the one it "makes" is
+      // the room's.
+      this.applyingRemote = { targetMs, paused: this.anchor.paused };
       try {
-        await a.seekTo(expectedAt(this.anchor, this.serverNow()) / 1000).catch(() => {});
+        await a.seekTo(targetMs / 1000).catch(() => {});
       } finally {
-        this.applyingRemote = false;
+        this.applyingRemote = null;
         const s = a.readState();
         this.detector.rebaseline(s.positionS, s.paused);
       }
@@ -946,11 +968,20 @@ export class SyncEngine {
     const { observation, report } = this.detector.evaluate(state, expected, now);
 
     const onRoomMedia = this.onRoomMedia();
-    if (!this.applyingRemote && !this.autoplayBlocked && onRoomMedia) {
+    // While a transition is in flight, what it does to the player is not the
+    // user's: its seek lands near its own target (the room may have moved on
+    // since, so the two-diff test alone is not enough there), and its pause
+    // state is the one it was asked for. Anything else is still the user's.
+    const applying = this.applyingRemote;
+    if (!this.autoplayBlocked && onRoomMedia) {
       if (observation.kind === 'seek') {
-        this.send('seek', observation.positionS * 1000);
+        if (!applying ||
+          Math.abs(observation.positionS * 1000 - applying.targetMs) > this.seekThresholdMs) {
+          this.send('seek', observation.positionS * 1000);
+        }
       } else if (observation.kind === 'playstate') {
-        if (observation.paused !== this.anchor.paused) {
+        if (observation.paused !== this.anchor.paused &&
+          (!applying || observation.paused !== applying.paused)) {
           this.send(observation.paused ? 'pause' : 'play', observation.positionS * 1000);
           if (!observation.paused) this.holdForRoom();
         } else {

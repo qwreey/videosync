@@ -942,6 +942,55 @@ describe('queued player work re-checks the session when it runs', () => {
     assert.equal(next.plays, 0, 'started the video playing after the user left');
     assert.equal(next.seeks, 0);
   });
+
+  it('a pause and a scrub made during an engine seek are sent, not swallowed', async () => {
+    // While a seek is in flight the engine used to skip every observation and
+    // then rebaseline onto whatever the player showed -- so the user's pause
+    // and scrub became the baseline, were never sent, and the reconciler then
+    // put the player back where the room was and pressed play.
+    const h = harness({ paused: false, positionS: 50 });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    const before = h.tr.sentOf('cmd').length;
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await h.vt.advance(500);
+    assert.equal(parked.length, 1);
+
+    await h.player.pause();                     // the user pauses
+    h.player.emit('pause');
+    await h.vt.advance(1500);
+    h.player.positionS = 500;                   // ...and scrubs
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    parked[0]!.release(false);                  // the engine's seek never took
+    await h.vt.advance(100);
+
+    const sent = h.tr.sentOf('cmd').slice(before);
+    assert.deepEqual(sent.map((c) => c.kind), ['pause', 'seek'], `sent ${JSON.stringify(sent)}`);
+    assert.ok(Math.abs(sent[1]!.positionMs - 500_000) < 1000);
+  });
+
+  it('control: the engine\'s own seek and pause inside that window are not sent', async () => {
+    const h = harness({ paused: false, positionS: 50 });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const parked = parkSeeks(h.player);
+    const before = h.tr.sentOf('cmd').length;
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 300_000, atServerMs: when, paused: true, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'pause',
+    });
+    await h.vt.advance(300);
+    assert.equal(parked.length, 1);
+    parked[0]!.release();
+    h.player.emit('seeked');
+    await flush();
+    await h.vt.advance(3000);
+    assert.equal(h.player.paused, true);
+    assert.ok(Math.abs(h.player.positionS - 300) < 0.01, `at ${h.player.positionS} after ${h.player.seeks} seeks`);
+    assert.deepEqual(h.tr.sentOf('cmd').slice(before), []);
+  });
 });
 
 describe('going absent', () => {
