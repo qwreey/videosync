@@ -1206,6 +1206,112 @@ describe('a local play waits for the room (holdLocalPlay)', () => {
     assert.equal(h.player.paused, false);
     assert.equal(h.engine.stats.playsHeld, 0);
   });
+
+  /** Log every position the engine seeks the player to. */
+  function logSeeks(p: FakePlayer): number[] {
+    const log: number[] = [];
+    const original = p.seekTo.bind(p);
+    p.seekTo = (pos: number) => { log.push(pos); return original(pos); };
+    return log;
+  }
+
+  it('a play pressed before our own seek is acked is held where we seeked to', async () => {
+    // A seek on a paused room has no lead, but its ack still takes a round
+    // trip. A play pressed inside it used to be held at the anchor the seek
+    // was about to replace: the picture jumped back to where the room had
+    // been, then forward again when the ack landed -- two seeks nobody asked
+    // for, either of which can be out of buffer.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    const seeks = logSeeks(h.player);
+    h.tr.sent.length = 0;
+
+    h.player.positionS = 60;                     // the user scrubs...
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    await h.player.play();                       // ...and presses play before the ack
+    h.player.emit('play');
+    await h.vt.advance(30);
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['seek', 'play']);
+    assert.ok(seeks.every((s) => s >= 59), `pulled back to ${seeks.join(', ')}`);
+
+    // The seek's ack lands: the room is paused at 60. That is where we hold.
+    const t1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[0]!.reqId, seq: 1, when: t1, emittedAt: t1,
+      anchor: { positionMs: 60_000, atServerMs: t1, paused: true, mediaKey: 'yt:abc' },
+      kind: 'seek',
+    });
+    await h.vt.advance(50);
+    assert.equal(h.player.paused, true, 'not held for the room');
+    assert.ok(Math.abs(h.player.positionS - 60) <= 0.08, `held at ${h.player.positionS}`);
+
+    // And the play starts everybody from there.
+    const t2 = h.vt.now + OFFSET + 400;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[1]!.reqId, seq: 2, when: t2, emittedAt: t2 - 500,
+      anchor: { positionMs: 60_000, atServerMs: t2, paused: false, mediaKey: 'yt:abc' },
+      kind: 'play',
+    });
+    await h.vt.advance(1000);
+    assert.equal(h.player.paused, false);
+    assert.ok(seeks.every((s) => s >= 59), `pulled back to ${seeks.join(', ')}`);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['seek', 'play']);
+  });
+
+  it('control: a play with no seek outstanding is still held at the anchor', async () => {
+    const h = await pressPlay(2, {}, 10.3);
+    await h.vt.advance(100);
+    assert.equal(h.player.paused, true);
+    assert.ok(Math.abs(h.player.positionS - 10) < 0.001);
+  });
+});
+
+describe('the creator adopting a room', () => {
+  async function adopt(members: number) {
+    const h = harness({ paused: false, positionS: 100 }, { adoptLocalStateOnJoin: true });
+    await h.join({}, 0, members);
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['seek', 'play']);
+    const pauses = h.player.pauses;
+    // A fresh room is paused@0 and a seek keeps it paused: the seek's ack says
+    // paused, the play's ack a moment later says playing.
+    const t1 = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[0]!.reqId, seq: 1, when: t1, emittedAt: t1,
+      anchor: { positionMs: cmds[0]!.positionMs, atServerMs: t1, paused: true, mediaKey: 'yt:abc' },
+      kind: 'seek',
+    });
+    await h.vt.advance(5);
+    const t2 = h.vt.now + OFFSET + (members < 2 ? 0 : 500);
+    h.tr.deliver({
+      t: 'ack', reqId: cmds[1]!.reqId, seq: 2, when: t2, emittedAt: h.vt.now + OFFSET,
+      anchor: { positionMs: cmds[0]!.positionMs, atServerMs: t2, paused: false, mediaKey: 'yt:abc' },
+      kind: 'play',
+    });
+    const pausedBetween = h.player.paused;
+    await h.vt.advance(1000);
+    return { h, pauses: h.player.pauses - pauses, pausedBetween };
+  }
+
+  it('does not pause a creator who is already playing, alone in the room', async () => {
+    // The seek's paused ack is only the first half of the adoption; applying
+    // it on its own paused the creator and then spent a play() -- one that can
+    // be refused -- to undo it.
+    const { h, pauses, pausedBetween } = await adopt(1);
+    assert.equal(pauses, 0, 'paused the creator between the two halves of the adoption');
+    assert.equal(pausedBetween, false);
+    assert.equal(h.player.paused, false);
+    assert.equal(h.engine.appliedSeq, 2);
+  });
+
+  it('control: with somebody else in the room it waits for the play like any other press', async () => {
+    const { h, pausedBetween } = await adopt(2);
+    assert.equal(pausedBetween, true, 'did not wait for `when` with the others');
+    assert.equal(h.player.paused, false);
+  });
 });
 
 describe('DOM events are the second input to the same decision', () => {
