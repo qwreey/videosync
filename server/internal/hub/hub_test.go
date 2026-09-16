@@ -934,27 +934,73 @@ func TestCommandsAreRateLimited(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		a.send(room.Cmd{ReqID: fmt.Sprintf("r%d", i), Kind: "play"})
 	}
-	acks, sawLimit := 0, false
+	acks, last := 0, ""
 	a.sock.ReadTimeout = 500 * time.Millisecond
 	for {
 		m, err := a.read()
 		if err != nil {
 			break
 		}
-		switch m["t"] {
-		case "ack":
+		if m["t"] == "ack" {
 			acks++
-		case "error":
-			if m["code"] == "rate_limited" {
-				sawLimit = true
-			}
+			last, _ = m["reqId"].(string)
 		}
 	}
 	if acks > 12 {
 		t.Fatalf("%d commands got through a burst of 10", acks)
 	}
-	if !sawLimit {
-		t.Fatal("no rate_limited error was sent")
+	// What is past the burst is coalesced, not queued: the newest intent is
+	// applied once the bucket allows it and everything in between is dropped.
+	if last != "r29" {
+		t.Fatalf("the last command applied was %q, want the newest, r29", last)
+	}
+}
+
+func TestTheNewestRateLimitedSeekIsAppliedNotDropped(t *testing.T) {
+	// Holding an arrow key is a stream of seeks ~100 ms apart or faster, and
+	// past the burst every other one was refused outright. When the last was
+	// refused the room stayed on an earlier skip -- and the ack for that
+	// earlier skip then sought the user's own player back to it.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	const n = 21
+	for i := 1; i <= n; i++ {
+		a.send(room.Cmd{ReqID: fmt.Sprintf("s%d", i), Kind: "seek", PositionMs: int64(i) * 5000})
+	}
+	final := float64(n * 5000)
+	deadline := time.Now().Add(3 * time.Second)
+	b.sock.ReadTimeout = 3 * time.Second
+	var pos float64
+	for time.Now().Before(deadline) && pos != final {
+		m, err := b.read()
+		if err != nil {
+			break
+		}
+		if m["t"] == "state" {
+			pos = num(m["anchor"].(map[string]any), "positionMs")
+		}
+	}
+	if pos != final {
+		t.Fatalf("the room ended at %v ms; the user stopped at %v ms", pos, final)
+	}
+	// And the sender's own last ack is for that seek, so its player stays put.
+	a.sock.ReadTimeout = time.Second
+	var lastAck map[string]any
+	for {
+		m, err := a.read()
+		if err != nil {
+			break
+		}
+		if m["t"] == "ack" {
+			lastAck = m
+		}
+	}
+	if lastAck == nil || lastAck["reqId"] != fmt.Sprintf("s%d", n) {
+		t.Fatalf("sender's last ack is %v, want s%d", lastAck, n)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/qwreey/videosync/server/internal/room"
@@ -132,6 +133,11 @@ func (l *Live) leave(c *conn) {
 		return // already replaced or removed
 	}
 	delete(l.conns, c.id)
+	if c.retry != nil {
+		c.retry.Stop()
+		c.retry = nil
+	}
+	c.pending = nil
 	now := l.hub.clock.NowMs()
 	l.room.Leave(now, c.id)
 	if l.hub.cfg.Verbose {
@@ -166,9 +172,11 @@ func (l *Live) handle(c *conn, m room.Msg) {
 		l.room.OnTime(now, c.id, v)
 	case room.Cmd:
 		if !c.cmd.allow(now) {
-			l.Send(c.id, room.Error{Code: "rate_limited", Msg: "too many commands"})
+			l.deferCmd(c, v, now)
 			return
 		}
+		// Anything still deferred is older than this, and superseded by it.
+		c.pending = nil
 		l.room.OnCmd(now, c.id, v)
 	case room.Report:
 		if !c.hb.allow(now) {
@@ -196,6 +204,44 @@ func (l *Live) handle(c *conn, m room.Msg) {
 		l.secret = newID()
 		l.room.Broadcast("", room.Secret{Secret: l.secret, Rotated: c.id})
 	}
+}
+
+// deferCmd keeps a command the cmd bucket refused, replacing any older one,
+// and applies it once the bucket allows. Called with l.mu held.
+//
+// Dropping it was wrong for the one burst a person really produces: holding
+// an arrow key or scrubbing is a stream of seeks ~100 ms apart, and past the
+// burst every other one was refused. When the LAST one was refused the room
+// stayed on an earlier skip, nothing resent the user's final position, and
+// the ack for that earlier skip then sought the user's own player back to it.
+// Coalescing keeps the limit -- still one command per window, whatever the
+// sender does -- while the newest intent wins, the same rule the readiness
+// gate applies to the command it holds. Nothing is sent on deferral: the
+// command will be applied, and its ack says so.
+func (l *Live) deferCmd(c *conn, v room.Cmd, now int64) {
+	c.pending = &v
+	if c.retry == nil {
+		c.retry = time.AfterFunc(time.Duration(c.cmd.waitMs(now))*time.Millisecond,
+			func() { l.retryCmd(c) })
+	}
+}
+
+func (l *Live) retryCmd(c *conn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	c.retry = nil
+	if c.pending == nil || l.conns[c.id] != c {
+		return
+	}
+	now := l.hub.clock.NowMs()
+	if !c.cmd.allow(now) {
+		c.retry = time.AfterFunc(time.Duration(c.cmd.waitMs(now))*time.Millisecond,
+			func() { l.retryCmd(c) })
+		return
+	}
+	v := *c.pending
+	c.pending = nil
+	l.room.OnCmd(now, c.id, v)
 }
 
 // truncateUTF8 cuts to at most n bytes without splitting a rune -- a truncated

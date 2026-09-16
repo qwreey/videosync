@@ -44,3 +44,12 @@ func (t *throttle) allow(now int64) bool {
 	}
 	return false
 }
+
+// waitMs is how long after now the next event would be allowed. Never less
+// than 1, so a caller that retries on it always makes progress.
+func (t *throttle) waitMs(now int64) int64 {
+	if t.count < t.burst {
+		return 1
+	}
+	return max(t.windowMs+int64(1000/t.sustained)-now, 1)
+}

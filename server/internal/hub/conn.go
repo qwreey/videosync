@@ -37,6 +37,12 @@ type conn struct {
 	chat *throttle
 	hb   *throttle
 	time *throttle
+
+	// pending is the newest command the cmd bucket refused, and retry the
+	// timer that applies it once the bucket allows. Both are guarded by the
+	// room mutex. See Live.deferCmd.
+	pending *room.Cmd
+	retry   *time.Timer
 }
 
 func newConn(id string, l *Live, sock *ws.Conn) *conn {

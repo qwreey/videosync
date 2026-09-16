@@ -457,10 +457,18 @@ natural rates and starving the clock bucket would degrade the timebase itself.
 
 | bucket | burst | sustained | cooldown | on refusal |
 |---|---|---|---|---|
-| `cmd` / `rotate` | 10 | 5/s | 4 s | `error{code:"rate_limited"}` |
+| `cmd` | 10 | 5/s | 4 s | **coalesced**: the newest refused `cmd` replaces any older one and is applied when the bucket allows; its `ack` arrives then. Nothing is sent on deferral |
+| `rotate` | (shares `cmd`'s bucket) | | | `error{code:"rate_limited"}` |
 | `chat` | 4 | 1/s | 4 s | `error{code:"rate_limited"}` |
 | `hb` | 40 | 20/s | 2 s | dropped silently — a report is advisory, and answering would add traffic |
 | `time` | 10 | 2/s | 10 s | dropped silently |
+
+Why `cmd` is coalesced rather than refused: the one burst a person really produces is holding an
+arrow key or scrubbing — seeks ~100 ms apart, of which every other one was refused past the burst.
+When the *last* one was refused the room stayed on an earlier skip, nothing resent the final
+position, and the `ack` for that earlier skip sought the user's own player back to it. Coalescing
+keeps the rate (one command per window whatever the sender does) and lets the newest intent win, as
+the readiness gate does for the command it holds.
 
 ### Errors
 
