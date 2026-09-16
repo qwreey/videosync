@@ -510,6 +510,16 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
 			Paused: true, MediaKey: m.MediaKey, MediaURL: SanitizeMediaURL(m.MediaURL)}
 		r.commit(now, r.anchor)
+		// Nobody is ready for media nobody has loaded. Until a member reports
+		// on the new seq it is unready, so the `play` that follows -- a
+		// continuation sends one as soon as its sender is conformed -- cannot
+		// race the first "acquiring" report of a member still on its way. A
+		// report from an absent member clears this like any other, and
+		// GATE_TIMEOUT bounds a member who never reports (docs/design/acquire.md).
+		for _, mid := range r.ids {
+			mm := r.members[mid]
+			mm.gated, mm.gatedAt, mm.gateWaived = true, now, false
+		}
 	}
 	r.lastCmdWhen = when
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}

@@ -379,6 +379,63 @@ func TestAnAcquiringMemberIsWaivedAfterTheGateTimeout(t *testing.T) {
 	}
 }
 
+// Nobody has loaded new media when the room moves to it, so a play right
+// behind the media command -- the continuation's own -- must wait until every
+// member has reported on the new media. Otherwise it races the first
+// "acquiring" report and a member still navigating is skipped past the start.
+func TestAPlayRightAfterAMediaCommandWaitsForEveryoneToReport(t *testing.T) {
+	r, _ := newRoom(&scripted{action: vsync.ActionNone}, vsync.Anchor{MediaKey: "ep1", Paused: false, AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	r.OnReport(50, "b", report(0, 0))
+	r.OnCmd(100, "a", media("m", "ep2", ifKey("ep1")))
+	r.OnReport(150, "a", report(1, 0))
+	r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+	if !r.Held() {
+		t.Fatal("the play went ahead before b had said anything about the new media")
+	}
+	// b's report on the old seq says nothing about the new media either.
+	r.OnReport(210, "b", report(0, 0))
+	if !r.Held() {
+		t.Fatal("released by a report from before the media change")
+	}
+	r.OnReport(300, "b", report(1, 0))
+	if r.Held() {
+		t.Fatal("still held after b reported ready on the new media")
+	}
+}
+
+// An absent member -- elsewhere, or with its tab suspended -- is not waited for.
+func TestAMediaCommandDoesNotWaitForAnAbsentMember(t *testing.T) {
+	c := &scripted{action: vsync.ActionNone}
+	r, _ := newRoom(c, vsync.Anchor{MediaKey: "ep1", AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	r.OnCmd(100, "a", media("m", "ep2", nil))
+	r.OnReport(150, "a", report(1, 0))
+	rep := report(1, 0)
+	rep.Suspended = true
+	r.OnReport(160, "b", rep)
+	r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+	if r.Held() {
+		t.Fatal("held for a member who is not watching")
+	}
+}
+
+// And a member who never reports is waived by GATE_TIMEOUT, like any other.
+func TestAMediaCommandDoesNotWaitForeverForASilentMember(t *testing.T) {
+	r, _ := newRoom(&scripted{action: vsync.ActionNone}, vsync.Anchor{MediaKey: "ep1", AtServerMs: 1})
+	r.Join(1, "a", "a")
+	r.Join(1, "b", "b")
+	r.OnCmd(100, "a", media("m", "ep2", nil))
+	r.OnReport(150, "a", report(1, 0))
+	r.OnCmd(200, "a", Cmd{ReqID: "p", Kind: "play"})
+	r.Tick(100 + GateTimeoutMs + 1)
+	if r.Held() {
+		t.Fatal("a silent member held the room past GATE_TIMEOUT")
+	}
+}
+
 // A member whose video has ended is finished, not behind: the room running on
 // past its duration must not seek it, gate on it, or count it as buffering.
 func TestAFinishedMemberIsAbsent(t *testing.T) {
