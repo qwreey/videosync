@@ -38,10 +38,14 @@ you press is. When an episode ends, the room waits for everyone, and on a site
 that plays the next episode of the same series by itself (Laftel) the room
 moves on with it.
 
-> **Upgrade the server together with the clients.** A client from before
-> 2026-09-17 still works against a newer server, but a newer client against an
+> **Upgrade the server together with the clients.** A newer client against an
 > older server loses the race protection for naming a room and moving on to the
-> next episode, and its "still loading" reports are ignored.
+> next episode, and its "still loading" reports are ignored. A client from
+> before 2026-09-17 against a newer server mostly works, with one gap: a room
+> made from a page with no video is no longer named by whoever joins it first,
+> and an old client never sends the command that now names it — so in such a
+> room it stays unsynced until somebody presses "move the room here". Old
+> clients also cannot sign in to a server with access control on.
 
 > **Use the extension if your server is on your own machine or your LAN.**
 > Measured: a page on a public origin — every OTT site — cannot reach a loopback

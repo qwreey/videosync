@@ -108,10 +108,12 @@ what it left open:
   client tries on its own before prompting when `proxy` is enabled.
 - **`Platform.authFetch(serverUrl, path, req)`** replaces `Platform.createRoom`, so the shims still
   differ in three pieces: storage, transport, HTTP. It takes the server because the userscript has
-  nowhere else to get it. The extension's background builds the URL from the server in the
-  settings store and a fixed path list, and fails a call whose `server` does not match the store
-  (two tabs on different servers must not cross). Tokens are keyed by origin and only ever sent to
-  the origin that issued them, and only on `/api/ticket`.
+  nowhere else to get it. The extension's background builds the URL from that server's origin and
+  a fixed path list (`isAuthPath`). Tokens are keyed by origin and only ever sent to the origin
+  that issued them, on `/api/ticket` and the provider paths. *(Integration: the first build took
+  the server from the settings store and refused a call whose `server` differed, and sent the
+  token on `/api/ticket` only; see "The worker takes the server from the message" and
+  "`/api/providers`" below.)*
 - **Where the device token lives.** Extension: the background's own IndexedDB — not
   `chrome.storage.local`, which content scripts read and whose access level the settings store
   needs as it is; not `storage.session`, which dies with the browser. Userscript: GM storage;
