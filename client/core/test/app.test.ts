@@ -10,6 +10,7 @@ import { afterEach, describe, it, mock } from 'node:test';
 import { start } from '../src/app/bootstrap.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
+import { Panel } from '../src/ui/panel.ts';
 import { FakeTransport, flush } from './fakes.ts';
 import { installDom } from './fakedom.ts';
 import type { FakeElement, Installed } from './fakedom.ts';
@@ -326,5 +327,71 @@ describe('a pending rejoin', () => {
     const h = harness(ROOM_URL, store);
     assert.ok(h.app.api.engine(), 'did not rejoin');
     assert.equal(store.data.get('rejoin') ?? '', '');
+  });
+});
+
+describe('the panel', () => {
+  function panel(dom: Installed, chats: string[] = []) {
+    return new Panel(dom.doc as unknown as Document, { serverUrl: '', roomId: 'R', secret: 'S', name: '' }, {
+      onCreateRoom() {}, onJoin() {}, onLeave() {}, onRotate() {}, onGesture() {},
+      onChat: (t) => { chats.push(t); },
+    });
+  }
+  const all = (dom: Installed) => [...dom.doc.getElementById('videosync-root')!.shadow!.walk()];
+
+  it('does not send a line while the IME is still composing it', () => {
+    const dom = installDom(ROOM_URL);
+    try {
+      const chats: string[] = [];
+      panel(dom, chats);
+      const input = all(dom).find((e) => e.placeholder === '메시지…')!;
+      input.value = '안녕';
+      input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: true, keyCode: 229 });
+      input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: false, keyCode: 229 });
+      assert.deepEqual(chats, []);
+      assert.equal(input.value, '안녕', 'cleared under an open composition');
+      input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: false, keyCode: 13 });
+      assert.deepEqual(chats, ['안녕']);
+      assert.equal(input.value, '');
+    } finally { dom.uninstall(); }
+  });
+
+  it('lets the collapse button receive its click', () => {
+    const dom = installDom(ROOM_URL);
+    try {
+      panel(dom);
+      const btn = all(dom).find((e) => e.textContent === '–')!;
+      const head = btn.parentNode!;
+      btn.dispatchEvent({ type: 'pointerdown', pointerId: 1, clientX: 0, clientY: 0 });
+      assert.deepEqual(head.captured, [], 'the header captured a press meant for the button');
+      btn.click();
+      assert.ok(head.parentNode!.classList.contains('collapsed'));
+      // The rest of the header still drags.
+      head.children[1]!.dispatchEvent({ type: 'pointerdown', pointerId: 2, clientX: 0, clientY: 0 });
+      assert.deepEqual(head.captured, [2]);
+    } finally { dom.uninstall(); }
+  });
+
+  async function copyWith(clip: { writeText(s: string): Promise<void> } | undefined) {
+    const dom = installDom(ROOM_URL);
+    try {
+      dom.setClipboard(clip);
+      panel(dom);
+      all(dom).find((e) => e.textContent === '초대 링크 복사')!.click();
+      await flush();
+      const st = all(dom).find((x) => x.className.split(' ')[0] === 'status')!;
+      return st.textContent;
+    } finally { dom.uninstall(); }
+  }
+
+  it('says the link was copied only when it was', async () => {
+    let got = '';
+    assert.match(await copyWith({ writeText: (s) => { got = s; return Promise.resolve(); } }), /복사했어요/);
+    assert.match(got, /#videosync=R\.S$/);
+    for (const clip of [undefined, { writeText: () => Promise.reject(new Error('NotAllowedError')) }]) {
+      const text = await copyWith(clip);
+      assert.doesNotMatch(text, /복사했어요/);
+      assert.match(text, /#videosync=R\.S/, 'with no clipboard, the link has to be somewhere the user can take it');
+    }
   });
 });

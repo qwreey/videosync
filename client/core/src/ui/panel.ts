@@ -141,8 +141,15 @@ export class Panel {
     copy.addEventListener('click', () => {
       const url = new URL(location.href);
       url.hash = `videosync=${encodeURIComponent(room.value)}.${encodeURIComponent(secret.value)}`;
-      void navigator.clipboard?.writeText(url.toString());
-      this.setStatus('초대 링크를 복사했어요. 이 링크를 가진 사람은 누구나 방을 조작할 수 있어요.', 'warn');
+      const link = url.toString();
+      const warn = '이 링크를 가진 사람은 누구나 방을 조작할 수 있어요.';
+      // No clipboard at all on a page that is not a secure context, and a
+      // write can be refused. Either way the user is about to paste whatever
+      // was there before, so the link has to be somewhere they can take it.
+      const failed = () => this.setStatus(`복사하지 못했어요. 직접 복사하세요: ${link} — ${warn}`, 'warn');
+      const clip = navigator.clipboard as Clipboard | undefined;
+      if (!clip) { failed(); return; }
+      clip.writeText(link).then(() => this.setStatus(`초대 링크를 복사했어요. ${warn}`, 'warn'), failed);
     });
     const rotate = mk('button', 'action secondary', '비밀키 교체');
     rotate.title = '기존 참가자는 그대로 있고, 예전 링크로는 아무도 들어올 수 없게 돼요.';
@@ -162,6 +169,11 @@ export class Panel {
     const chatInput = mk('input');
     chatInput.placeholder = '메시지…';
     chatInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      // The Enter that commits a Hangul syllable arrives mid-composition, with
+      // the syllable already in `value`. Sending then clears the box under the
+      // IME, which writes the syllable back: a stray last character after
+      // every line, and a second message on the next Enter.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key !== 'Enter' || !chatInput.value.trim()) return;
       e.stopPropagation(); // site hotkeys must not see what is typed here
       this.h.onChat(chatInput.value);
@@ -212,6 +224,9 @@ export class Panel {
   private dragify(handle: HTMLElement, panel: HTMLElement, doc: Document): void {
     let start: { x: number; y: number; left: number; top: number } | null = null;
     handle.addEventListener('pointerdown', (e: PointerEvent) => {
+      // A captured pointer's click goes to the capturing element, so capturing
+      // a press on a header button would take the click away from it.
+      if ((e.target as Element | null)?.closest?.('button')) return;
       const r = panel.getBoundingClientRect();
       start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
       handle.setPointerCapture(e.pointerId);
