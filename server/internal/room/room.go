@@ -522,6 +522,16 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	}
 
 	d := r.corrector.Decide(eff, r.anchor, now, r.tun)
+	// Readiness is a fact about this report, not about what the corrector
+	// wants done with it. Clearing the gate only on ActionNone left a member
+	// who was ready again but still being nudged -- the servo nudges for as
+	// long as it holds a rate bias, and a paused member never integrates one
+	// away -- gated indefinitely, holding every later play until they left
+	// (BROWSER-FINDINGS §15). The timeout below never fires for them either:
+	// it is only checked on a report that is itself unready.
+	if d.Action != vsync.ActionGate {
+		m.gated, m.gateWaived = false, false
+	}
 	switch d.Action {
 	case vsync.ActionSeek:
 		if now-cs.lastSeekAt < seekCooldownMs && cs.lastSeekAt > 0 {
@@ -556,7 +566,6 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 			r.GatesWaived++
 		}
 	default:
-		m.gated, m.gateWaived = false, false
 		// Only clear the rate when the client is genuinely back in tolerance.
 		// Clearing it while a nudge is still closing the gap cancels the
 		// correction that is working.

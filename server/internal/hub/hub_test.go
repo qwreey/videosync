@@ -535,6 +535,42 @@ func TestAMemberWhoLeavesWhileBufferingReleasesTheGate(t *testing.T) {
 	}
 }
 
+func TestAMemberWhoIsReadyAgainLeavesTheGateEvenWhileBeingNudged(t *testing.T) {
+	// Found on the real Laftel (BROWSER-FINDINGS §15). A presser's own play
+	// jump is an in-buffer seek, and the report taken during it said
+	// ReadyState 1 with 46 s buffered. That gated them -- and only an
+	// ActionNone decision ever cleared the flag, while the servo keeps
+	// answering "nudge" for as long as it holds a rate bias, which a paused
+	// member never integrates away. So a member with a full buffer stayed
+	// "buffering" indefinitely, and the NEXT play anyone pressed was held
+	// until that member left the room.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	b.send(hb(0, 0, func(r *vsync.Report) { r.ReadyState = 1 }))
+	if g := a.await("gate"); len(g["waitingOn"].([]any)) != 1 {
+		t.Fatalf("gate = %v, want b waited on", g)
+	}
+	// Ready again, but drifting slowly: the servo answers with a nudge, not
+	// with "nothing to do".
+	drifting := func(r *vsync.Report) { r.SlopeMsPerS = 50 }
+	b.send(hb(0, 0, drifting))
+	if c := b.await("correct"); c["mode"] != "nudge" {
+		t.Fatalf("correct = %v, want a nudge -- otherwise this does not reproduce", c)
+	}
+	if g := a.await("gate"); g["waitingOn"] != nil {
+		t.Fatalf("gate = %v, want nobody waited on once b reports ready", g)
+	}
+
+	a.send(room.Cmd{ReqID: "p1", Kind: "play"})
+	if ack := a.await("ack"); ack["reqId"] != "p1" {
+		t.Fatalf("a ready member held the play: %v", ack)
+	}
+}
+
 func TestASuspendedMemberDoesNotHoldTheRoom(t *testing.T) {
 	// The browser pauses a hidden tab whose playback was never audible. Such a
 	// member is ABSENT, not behind: gating on them waits forever for someone
