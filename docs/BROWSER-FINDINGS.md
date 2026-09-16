@@ -843,6 +843,167 @@ does not.
 Not covered: Laftel in Firefox (needs a login and Widevine in that profile),
 autoplay refusal, and Firefox for Android.
 
+## 20. What a page does to a video when a client finds it (`probe-acquire.mjs`)
+
+Measured on 2026-09-17, before building D8 (`docs/design/acquire.md`), to set
+its constants. A recorder injected into the page world before any page script
+logs every media event at the document (capture phase), trusted input,
+navigation, `<video>` insertion/removal, `navigator.userActivation`, and a
+10 ms poll for what fires no event. Helium 153 over CDP (the dedicated profile,
+logged in to Laftel), Firefox 156 over BiDi, `local-media.mjs` with its new
+site variants (autoplay, resume, SPA swaps). Results: `results/acquire-*.json`.
+
+**Input kinds, because they mean different things:** `cdp` = `Input.dispatch*`,
+trusted and activating (it arrived 10–39 ms after dispatch in every run here);
+`script` = a site-like call (`el.play()`, `__site.go`), no activation;
+`mpris` = a D-Bus `PlayPause`/`Play` to the browser's MPRIS service (`busctl`;
+`playerctl` is not installed). No activation claim below rests on script input.
+Both autoplay policies were run for M6 and L1: with
+`--autoplay-policy=no-user-gesture-required` and without it. **On this profile
+autoplay was allowed either way** — unmuted, on 127.0.0.1 and on Laftel — so
+C1 is not an artefact of the flag the earlier live probes used. That is a fact
+about this profile's history, not about Chromium's default policy.
+
+**The load algorithm on the same element (M1)** — Helium and Firefox agree:
+
+| | measured |
+|---|---|
+| order on a `src` change | `abort` → `emptied` → `ratechange` → `loadstart` → `durationchange` → `loadedmetadata` → `loadeddata` → `canplay` → `canplaythrough`, in 43–107 ms (MSE blob: 107 ms Helium, 534 ms Firefox) |
+| a playing element | becomes paused **with no `pause` event** (seen only by the poll), position 0 |
+| `playbackRate` 1.5 | reset to 1 (`defaultPlaybackRate`), with a `ratechange` — the engine's "a reused element keeps its rate" comment is wrong for a new `src` |
+| `src` swapped, URL changed 300 ms later | every media event of the new load fires before the URL moves |
+
+**The element replaced (M2):** in one task, the new element's `loadstart` and
+the old one's `pause` come together; removed first, the page has **no `<video>`**
+for the gap. The removed element's `pause` reaches only a listener on the
+element itself — a disconnected node's events do not pass through the
+document — which is exactly where `Html5Adapter` listens.
+
+**Where autoplay lands (M6):** attribute autoplay fires `play` at
+`canplaythrough` (+0 ms); `play()` at `loadedmetadata` 7–12 ms *before* it;
+at `canplay`/`canplaythrough` 3–8 ms after. Firefox the same (−40 to +2 ms).
+
+**Media keys (M3, M4):**
+
+| | Helium (MPRIS) | Firefox (MPRIS) |
+|---|---|---|
+| event after the D-Bus call | 8–11 ms | 7–12 ms |
+| input event | none | none |
+| `isActive` at the `play`/`pause` | **true** (false before the first press) | **false**, before and after |
+| with page `mediaSession` handlers | the same | not run |
+
+So in Chromium a media key shows up as an **activation rise with no input**;
+in Firefox it shows up as nothing at all.
+
+**The isolated world (M5):** `navigator.userActivation.isActive` read in the
+page and in the `VideoSync` content-script world agreed in 50/50 samples: true
+at 0, 0.1, 1 and 3 s after a trusted click, false at 6 s (the 5 s lifespan).
+The extension can read it.
+
+**Laftel (L1–L5), logged in:**
+
+| | measured |
+|---|---|
+| full load (L1, 3 runs × 2 policies) | the element appears 1.2–1.7 s in; **Laftel resumes from its history**: it writes `currentTime` at `loadedmetadata` and again every ~100 ms (12 `seeking` events) until 0.5–0.75 s before `canplaythrough` (resume point: the last position — 813 s; 419 s after watching at 400 s); `canplay` and `canplaythrough` fire together; then **Laftel autoplays 4–11 ms after `canplaythrough`**, `isActive` false |
+| in-app episode link, trusted click (L2, 3 runs) | **same element**; `pushState` 113–140 ms after the click, `emptied` 183–213, `loadstart` 217–252, `canplaythrough` 1270–2068, autoplay 3–11 ms later — **1.27–2.08 s after the click, with `isActive` still true** |
+| end of an episode (L3, 2 runs) | `pause` with `ended` already true, then `ended`; **5.3–5.6 s later** Laftel routes to the next episode (SPA, same element, 0 s remaining when the URL moved), autoplays 8–9 ms after `canplaythrough`, `isActive` false, rate 1 |
+| 300 s of plain playback (L4) | **0** `emptied`/`loadstart`/`abort`, 0 element changes, 0 navigations |
+| press → media event (L5, 10 each) | click on the video 24–50 ms, Space 14–32 ms |
+
+**YouTube (Y1, Y2, Y5):**
+
+| | measured |
+|---|---|
+| recommendation click (Y1, 5 runs; the file keeps the last 2 — the first 3 were read from their timelines before the probe's own summary was fixed) | same element; `pushState` 33–90 ms after the click; `emptied` 749–908 ms; **`play` 1 ms after `emptied`**, before `loadstart` (`readyState` 0), `isActive` true |
+| end with autonav on (Y2) | `pause` (`ended` true) → `ended`; routes on **7.6 s later**; again `play` 1 ms after `emptied` |
+| press → media event (Y5, 10 each) | click 214–268 ms (it waits out a double click, §17), Space 11–50 ms, `k` 6–28 ms |
+
+The recorder runs in every frame, so its "no `<video>` on the page" reading is
+unreliable on pages with iframes; element serials and `dom` events are not.
+
+**What this sets (the constants of `docs/design/acquire.md`):**
+
+- **G = 500 ms.** Above the slowest press measured (268 ms, a YouTube click),
+  below the fastest site autoplay after a navigation click (750 ms, YouTube).
+  The rule that the gesture must come **after the media epoch began** is
+  mandatory, not optional: at every such autoplay `isActive` was still true.
+  The epoch bump on `emptied` has to be synchronous: YouTube's `play` follows
+  it by 1 ms.
+- **T_settle = 1 s.** Every site move measured came before `canplaythrough`
+  or within 11 ms of it. The margin is large because exceeding it only
+  degrades to the old behaviour; a site that acts later is not covered.
+- **endWindow = 1 s.** Neither site navigates before `ended` (Laftel +5.3–5.6 s,
+  YouTube +7.6 s), so it only covers a player that stops a hair short. The
+  continuation window (how long after its own end a member's navigation may
+  still carry the room) is 20 s against those 5.3–7.6 s.
+- **Conform at HAVE_FUTURE_DATA, not at metadata.** Laftel's resume writes the
+  position for 1.5–1.8 s after `loadedmetadata`; a conform in that window
+  would be overwritten and fought. A paused element that never buffers is
+  conformed after 5 s at metadata (not measured: both sites buffer).
+- **K = 3** is the design's value. No site fought a conform in any run below.
+- **Firefox gets no media-key evidence**: a media-key play while acquiring is
+  put back once there. Outside that window nothing changes.
+
+**The control: what today's client sends (0f879c2).** Two Helium windows in a
+room, `videosyncd -verbose` as the oracle, nobody pressing anything unless the
+case says so (`results/acquire-CONTROL.json`, `-CONTROL-laftel.json`,
+`-CONTROL-control-new.json`):
+
+| case | commands on the wire |
+|---|---|
+| A1 follow; site autoplays at `canplay` | none (the autoplay beat the engine's first look; the reconciler paused it) |
+| A2 follow; site autoplays 1.5 s after `canplaythrough` | B: **`play`** — the paused room started |
+| B1 follow; site resumes to 120 s, autoplays | B: **`play`** |
+| D1 `src` swapped for episode 2, URL 400 ms later | B: **`seek 0`** on episode 1, for everyone |
+| E1 element removed, new one 300 ms later | B: **`seek 0`** (Path E, reproduced) |
+| G1 two members play to the end | A: **`pause@240000`** |
+| L1 Laftel: B followed onto an episode; Laftel resumes to 181 s and autoplays | B: **`play@300006`** — the paused room started |
+| N1 Laftel: two members play to the end | A: **`pause@1431430`**; Laftel moved A on alone; **B stopped 1 s short of the end, never reached `ended`, and was never moved on** (Path G, exactly as predicted) |
+| P1 trusted click pauses a playing B | B: `pause` |
+| P2/P3 trusted click / MPRIS play on B right after joining a paused room | B: `play` |
+
+Also seen in the control: a joiner of a *playing* room sat paused for 7.7 s,
+because the server's seek corrections (every 2 s) kept resetting the
+reconciler's 3 s timer. The conform step now starts such a joiner at once.
+
+## 21. The same cases with D8 built
+
+Same rig, the `local-ext.mjs` build of `feat/acquire` (`NAME=ext-fixed`) and a
+`videosyncd` from the same branch (`results/acquire-CONTROL-fixed.json`,
+`-fixed-2.json`):
+
+| case | before (§20) | after |
+|---|---|---|
+| A1 | none | none; B conformed, paused at 30 s |
+| A2 (site acts 1.5 s after ready) | `play` | **`play`** — outside T_settle, as designed: past the backstop the old behaviour applies. No measured site acts that late |
+| A3 (the same at 0.8 s) | — | **none**; absorbed, B paused at 30 s |
+| B1 | `play` | **none**; the resume and autoplay were put back |
+| D1 | `seek 0` | **none** (4 media epochs) |
+| E1 | `seek 0` | **none** (5 media epochs) |
+| G1 | `pause@240000` | **none**; `endsNotSent` 1, the room plays on past the end |
+| L1 Laftel follow | `play@300006` | **none**; both paused at 300 s, one site move absorbed |
+| N1 Laftel end → next episode | `pause`; members split | **no pause** (both `endsNotSent` 1); B's continuation `media` (conditional on episode 10) won, B sent `play` once conformed, and **both were on episode 11 at 25.98 / 25.92 s** |
+| P1 trusted click, steady | `pause` | `pause` |
+| P2 trusted click while `guarded` | `play` | **`play`** (`gesturedIntents` 1) |
+| P3 MPRIS play while `guarded` | `play` | **`play`** — the activation rise counted |
+
+`fought` was 0 in every run. The existing live probes still hold on this
+build: `probe-follow.mjs` **11/11** (B sent no command on either arrival; A's
+only commands were its adoption seek, now after its site settled, and the
+conditional `media` press); `probe-firefox.mjs LOCAL=1` with the fixed
+Firefox build **10/10**; `probe-laftel-room.mjs` (6 trials,
+`results/laftel-room-d8.json`) — no jump at landing, 0 correction seeks, 0
+reconciles, pause unchanged, presser starting 525–536 ms and the other member
+549–572 ms (§16: 517–518 / 529–539), the known re-aim at the press in 3 of 6
+trials (91–246 ms; §16: 81–203 ms in 6–8 of 10), gap 4 s later −209 to +12 ms.
+The presses there are the adapter's, after both members are `steady`, so
+nothing in them passes through the new classification.
+
+Not covered: a site that acts later than T_settle (A2 is the boundary),
+YouTube ads (Y3), fullscreen consuming activation (Y4), Laftel in Firefox, a
+member who follows by full-page navigation during a continuation (it leaves
+the room while its page loads, so the gate is released without it).
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
@@ -896,6 +1057,20 @@ TRIALS=10 node harness/browser/probe-laftel-room.mjs          # §15
 
 The extension probes need `client/extension/npm run build` as well as the two
 artifacts above.
+
+§20–21 (`probe-acquire.mjs`) attach to the dedicated Helium and Firefox the same
+way. Build the probe copies with `NAME=ext-control` / `NAME=ext-fixed node
+harness/browser/local-ext.mjs` and start Helium on one of them
+(`--load-extension=.cache/<name>/chromium`), with `local-media.mjs` on :8898 and
+`videosyncd -verbose` logging to `.cache/run/server.log`:
+
+```
+SCEN=M6,M1,M2,M3,M5 node harness/browser/probe-acquire.mjs      # local media, Helium
+BROWSER=firefox SCEN=FF node harness/browser/probe-acquire.mjs  # M1/M2/M6/M4, Firefox
+N=3 SCEN=L1,L2,L3,L5 node harness/browser/probe-acquire.mjs     # Laftel, logged in
+SITE=youtube SCEN=L5 node harness/browser/probe-acquire.mjs     # Y5
+SCEN=CONTROL BUILD=... LABEL=... CASES='^(A|B|D|E|G|P)' node harness/browser/probe-acquire.mjs
+```
 
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
 The container needs `--shm-size=1g`; Chrome's renderer hangs on the default

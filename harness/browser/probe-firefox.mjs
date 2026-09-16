@@ -35,7 +35,8 @@ const VIDEO = LOCAL ? 'http://127.0.0.1:8898/watch/1' : 'https://www.youtube.com
 const ELSEWHERE = LOCAL ? 'http://127.0.0.1:8898/watch/2' : 'https://www.youtube.com/watch?v=eRsGyueVLvQ'; // Sintel
 // Always the local-ext.mjs build: a shipped build closes the panel's shadow
 // root, and Firefox gives this probe no other way to reach the panel.
-const FF_EXT = join(HERE, '..', '..', '.cache', 'firefox-profile', 'ext-local');
+// FF_EXT: a build elsewhere under the sandbox's grant (local-ext.mjs NAME=/VS_CACHE=).
+const FF_EXT = process.env.FF_EXT || join(HERE, '..', '..', '.cache', 'firefox-profile', 'ext-local');
 const HOLD_S = LOCAL ? 30 : 15;
 
 const results = { when: new Date().toISOString(), checks: [], measurements: {}, notes: [] };

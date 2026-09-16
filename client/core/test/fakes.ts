@@ -122,6 +122,8 @@ export class FakePlayer implements ProviderAdapter {
   rate = 1;
   readyState = 4;
   muted = false;
+  /** The element reached its end, as `HTMLMediaElement.ended`. */
+  ended = false;
   durationS: number;
   bufferedAheadS = 30;
   bufferedBehindS = 30;
@@ -177,6 +179,7 @@ export class FakePlayer implements ProviderAdapter {
       buffered: [{ start: Math.max(0, this.positionS - this.bufferedBehindS), end: this.positionS + this.bufferedAheadS }],
       bufferedAheadS: this.bufferedAheadS,
       bufferedBehindS: this.bufferedBehindS,
+      ended: this.ended,
     };
   }
 

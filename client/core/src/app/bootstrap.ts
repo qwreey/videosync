@@ -9,7 +9,7 @@
  * rather than in two files that would drift.
  */
 import { Html5Adapter } from '../adapter/html5.ts';
-import { followableUrl, normalizeMediaKey, watchUrl } from '../adapter/mediakey.ts';
+import { continuesMedia, followableUrl, normalizeMediaKey, watchUrl } from '../adapter/mediakey.ts';
 import { PageWatcher } from '../adapter/resolve.ts';
 import { SwappableAdapter } from '../adapter/swappable.ts';
 import { builtinRegistry } from '../providers/registry.ts';
@@ -23,6 +23,7 @@ import type { SignInInput } from '../ui/panel.ts';
 import { AuthRequiredError, ServerAuth } from './auth.ts';
 import type { SignInResult } from './auth.ts';
 import type { AuthFetch } from './authfetch.ts';
+import { trackGestures } from './gestures.ts';
 
 /** A place to keep the server URL and the last room. Synchronous on purpose:
  *  the panel is built from it before anything can await. */
@@ -113,7 +114,7 @@ export interface VideoSyncApi {
    */
   dump(): string;
   status(): {
-    state: string; selfId: string; seq: number; blocked: boolean;
+    state: string; selfId: string; seq: number; blocked: boolean; acquisition: string;
     positionS: number; paused: boolean; readyState: number;
     expectedMs: number | null; mediaKey: string; roomMediaKey: string;
     members: number; waitingOn: readonly string[];
@@ -306,6 +307,8 @@ export function start(p: Platform): App {
     },
     onSignOut: () => { void signOut(); },
   }, p.openPanel ? 'open' : 'closed');
+  // What the member does with their hands, as time only; see gestures.ts.
+  const gestures = trackGestures(window, () => panel.hostElement, () => performance.now());
 
   const openTab = p.openTab ?? ((url: string) => { window.open(url, '_blank', 'noopener'); });
   const auth = new ServerAuth(p.authFetch, p.store, {
@@ -420,7 +423,13 @@ export function start(p: Platform): App {
       // Neither side names anything, so there is nothing to move and nothing
       // to follow. Without a word the member sits in the room and nothing
       // ever happens.
-      panel.setMediaAction('이 페이지에는 동기화할 영상이 없어요 — 영상을 열고 "이 영상으로 방 옮기기"를 눌러주세요');
+      panel.setMediaAction('아직 방에 영상이 없어요 — 영상을 열면 그 영상이 방의 영상이 돼요');
+      return;
+    }
+    if (!roomMediaKey) {
+      // The engine names the room from this page by itself (a conditional
+      // `media` command); a button here would race it.
+      panel.setMediaAction('이 영상을 방의 영상으로 정하는 중…');
       return;
     }
     if (!mediaKey) {
@@ -442,7 +451,9 @@ export function start(p: Platform): App {
       () => {
         // The transport drops a frame it cannot send, silently.
         if (!engine || engine.state !== 'joined') return;
-        engine.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000), mediaUrl);
+        // Decided against the room as it is on screen: if somebody moved it
+        // meanwhile, the server refuses this and the member follows theirs.
+        engine.setMedia(mediaKey, Math.round(adapter.readState().positionS * 1000), mediaUrl, roomMediaKey);
         clearMediaAction();
       },
     );
@@ -559,12 +570,9 @@ export function start(p: Platform): App {
     if (!serverUrl) { panel.setStatus('서버 주소를 입력해주세요.', 'err'); throw new Error('no server'); }
     const why = p.unreachable(serverUrl);
     if (why) { panel.setStatus(why, 'err'); throw new Error(why); }
-    // A room created here would name no media, and nobody follows such a room
-    // (`onRoomMedia`), the creator included.
-    if (!mediaKey) {
-      panel.setStatus('이 페이지에는 동기화할 영상이 없어요. 영상 페이지에서 방을 만들어주세요.', 'err');
-      throw new Error('no media on this page');
-    }
+    // A room created from a page with no media names nothing, and stays quiet
+    // until the first member on media names it (D8). Only a creator who is on
+    // media seeds the room from their own player at once.
     panel.setStatus('방을 만드는 중…');
     try {
       const out = await requestRoom(serverUrl);
@@ -750,6 +758,8 @@ export function start(p: Platform): App {
       clearTimer: (h) => { clearTimeout(h); },
       isHidden: () => document.hidden,
       ticket: () => joinTicket(serverUrl),
+      gestures,
+      continues: (prev, next) => continuesMedia(prev, next, reg),
     }, {
       ...DEFAULT_ENGINE_CONFIG,
       room: roomId, secret, name: name || '익명', mediaKey, mediaUrl,
@@ -821,6 +831,13 @@ export function start(p: Platform): App {
         }
       },
       onAutoplayBlocked: () => panel.showGesturePrompt(document),
+      onAcquisition: (a) => {
+        // The site keeps overriding the room, and the engine stopped fighting
+        // it. Nothing is synced until the member presses something.
+        if (a === 'fought') {
+          panel.setStatus('이 플레이어가 방의 상태를 계속 바꿔요 — 재생이나 일시정지를 직접 눌러주세요.', 'warn');
+        }
+      },
       onError: (code, msg) => {
         if (code === 'rate_limited') {
           panel.setStatus('너무 빠릅니다 — 잠시 후 다시 시도해주세요.', 'warn');
@@ -944,6 +961,7 @@ export function start(p: Platform): App {
           selfId: engine.id,
           appliedSeq: engine.appliedSeq,
           autoplayBlocked: engine.blocked,
+          acquisition: engine.acquisition,
           followingRoom: engine.followingRoom,
           expectedMs: engine.expectedMs(),
           anchor: engine.currentAnchor,
@@ -962,7 +980,7 @@ export function start(p: Platform): App {
           adapter: adapter.current?.id ?? null,
           capabilities: adapter.capabilities,
           positionS: s.positionS, paused: s.paused, rate: s.rate,
-          readyState: s.readyState, muted: s.muted,
+          readyState: s.readyState, muted: s.muted, ended: s.ended ?? null,
           bufferedAheadS: s.bufferedAheadS, bufferedBehindS: s.bufferedBehindS,
         },
       }, null, 2);
@@ -974,6 +992,7 @@ export function start(p: Platform): App {
         selfId: engine?.id ?? '',
         seq: engine?.appliedSeq ?? 0,
         blocked: engine?.blocked ?? false,
+        acquisition: engine?.acquisition ?? '',
         positionS: s.positionS,
         paused: s.paused,
         readyState: s.readyState,
@@ -993,6 +1012,7 @@ export function start(p: Platform): App {
       leave();
       offUpdateNotice();
       watcher.stop();
+      gestures.stop();
       adapter.destroy();
       panel.destroy();
       window.removeEventListener('pagehide', onPageHide);

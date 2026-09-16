@@ -1,0 +1,14 @@
+{
+ "when": "2026-09-16T16:08:18.958Z",
+ "browser": "helium",
+ "input": "none",
+ "seconds": 300,
+ "epochEvents": [],
+ "elements": [
+  1
+ ],
+ "end": {
+  "ct": 359.905438,
+  "paused": false
+ }
+}

@@ -8,7 +8,11 @@
 // clock. Every entry point takes the current server time as a parameter.
 package room
 
-import vsync "github.com/qwreey/videosync/server/internal/sync"
+import (
+	"strconv"
+
+	vsync "github.com/qwreey/videosync/server/internal/sync"
+)
 
 // Msg is one protocol frame. Type() is both the marker that makes the set
 // closed and the `t` discriminator on the wire (docs/PROTOCOL.md).
@@ -43,6 +47,25 @@ type Cmd struct {
 	PositionMs int64  `json:"positionMs"`
 	MediaKey   string `json:"mediaKey,omitempty"`
 	MediaURL   string `json:"mediaUrl,omitempty"`
+	// IfMediaKey makes a `media` command a compare-and-set: it applies only
+	// while the room's media is exactly this key, and is otherwise refused
+	// with `media_stale` before it takes a seq. nil means unconditional; a
+	// pointer because "" is a real condition -- a room that names nothing
+	// yet. Two members whose sites both moved on to the next episode send
+	// the same continuation; without the condition the second one restarts
+	// the room under the first (docs/design/acquire.md). Ignored on every
+	// other kind.
+	IfMediaKey *string `json:"ifMediaKey,omitempty"`
+}
+
+// String keeps `-verbose` logs readable: %+v prints a pointer as an address.
+func (c Cmd) String() string {
+	cond := "-"
+	if c.IfMediaKey != nil {
+		cond = strconv.Quote(*c.IfMediaKey)
+	}
+	return "{ReqID:" + c.ReqID + " Kind:" + c.Kind + " PositionMs:" + strconv.FormatInt(c.PositionMs, 10) +
+		" MediaKey:" + c.MediaKey + " MediaURL:" + c.MediaURL + " IfMediaKey:" + cond + "}"
 }
 
 // Report is the heartbeat / anomaly report (section 4). vsync.Report is

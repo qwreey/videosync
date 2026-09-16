@@ -1,5 +1,5 @@
 {
-  "when": "2026-09-16T14:35:45.736Z",
+  "when": "2026-09-16T16:37:25.880Z",
   "checks": [
     {
       "name": "the Firefox build loads and mounts its panel",
@@ -9,12 +9,12 @@
     {
       "name": "Firefox is taken to the room's video",
       "ok": true,
-      "detail": "after 1630 ms"
+      "detail": "after 1638 ms"
     },
     {
       "name": "and rejoins there (the rejoin survived Firefox's storage)",
       "ok": true,
-      "detail": "after 1632 ms"
+      "detail": "after 1641 ms"
     },
     {
       "name": "B conformed to the room: paused at A's position",
@@ -24,27 +24,27 @@
     {
       "name": "Chromium presses play, Firefox follows",
       "ok": true,
-      "detail": "gap -144 ms"
+      "detail": "gap -16 ms"
     },
     {
       "name": "Firefox pauses, Chromium follows",
       "ok": true,
-      "detail": "gap -135 ms"
+      "detail": "gap -43 ms"
     },
     {
       "name": "Firefox presses play, both run together",
       "ok": true,
-      "detail": "gap 206 ms"
+      "detail": "gap 190 ms"
     },
     {
       "name": "Chromium seeks, Firefox follows",
       "ok": true,
-      "detail": "target 200: A 204.44 B 204.46, gap -14 ms"
+      "detail": "target 200: A 204.46 B 204.50, gap -32 ms"
     },
     {
       "name": "still together over 30 s",
       "ok": true,
-      "detail": "gaps -7, -44, -21, -35, -35, -61 ms"
+      "detail": "gaps 13, -46, -35, -50, -1, -42 ms"
     },
     {
       "name": "Firefox hands back its playback rate on leaving",
@@ -53,15 +53,15 @@
     }
   ],
   "measurements": {
-    "gapAfterPlayMs": -144,
-    "gapAfterFirefoxPlayMs": 206,
+    "gapAfterPlayMs": -16,
+    "gapAfterFirefoxPlayMs": 190,
     "gapsEvery5sMs": [
-      -7,
-      -44,
-      -21,
+      13,
+      -46,
       -35,
-      -35,
-      -61
+      -50,
+      -1,
+      -42
     ]
   },
   "notes": [],

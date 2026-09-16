@@ -775,17 +775,56 @@ func TestMediaMismatchIsReportedNotRefused(t *testing.T) {
 	a.await("state")
 }
 
-func TestFirstMemberNamesTheMedia(t *testing.T) {
+func TestAHelloNeverNamesTheMedia(t *testing.T) {
+	// Not even the first one. A room created with no media stays that way
+	// until a `media` command names it -- with the condition "still nothing",
+	// so two members naming it at once cannot both win (docs/design/acquire.md).
+	// Naming it from a hello skipped the one step that makes the namer adopt
+	// its own position: it was then conformed to paused@0 like any joiner.
 	f := start(t, nil)
 	id, secret := f.createRoom("")
 	a, welcome, err := f.dial(id, secret, "a", "yt:xyz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if welcome["mediaKey"] != "yt:xyz" {
-		t.Fatalf("welcome mediaKey = %v", welcome["mediaKey"])
+	if welcome["mediaKey"] != "" {
+		t.Fatalf("a hello named the room: welcome mediaKey = %v", welcome["mediaKey"])
 	}
 	a.quiet(200*time.Millisecond, "media.mismatch")
+
+	empty := ""
+	a.send(room.Cmd{ReqID: "n1", Kind: "media", MediaKey: "yt:xyz", PositionMs: 42000, IfMediaKey: &empty})
+	ack := a.await("ack")
+	anchor, _ := ack["anchor"].(map[string]any)
+	if anchor["mediaKey"] != "yt:xyz" || num(anchor, "positionMs") != 42000 {
+		t.Fatalf("naming did not apply: %v", anchor)
+	}
+}
+
+func TestAStaleMediaCommandIsRefusedOnTheWire(t *testing.T) {
+	f := start(t, nil)
+	id, secret := f.createRoom("laftel:/player/1/1")
+	a, _, _ := f.dial(id, secret, "a", "laftel:/player/1/1")
+	b, _, _ := f.dial(id, secret, "b", "laftel:/player/1/1")
+	a.await("members")
+
+	prev := "laftel:/player/1/1"
+	a.send(room.Cmd{ReqID: "c1", Kind: "media", MediaKey: "laftel:/player/1/2", IfMediaKey: &prev})
+	if s := num(a.await("ack"), "seq"); s != 1 {
+		t.Fatalf("seq = %v", s)
+	}
+	b.await("state")
+	b.send(room.Cmd{ReqID: "c2", Kind: "media", MediaKey: "laftel:/player/1/2", IfMediaKey: &prev})
+	if e := b.await("error"); e["code"] != "media_stale" {
+		t.Fatalf("error = %v", e)
+	}
+	b.quiet(200*time.Millisecond, "ack")
+	a.quiet(200*time.Millisecond, "state")
+	// And the next command is seq 2: the refusal took nothing.
+	b.send(room.Cmd{ReqID: "p", Kind: "pause"})
+	if s := num(b.await("ack"), "seq"); s != 2 {
+		t.Fatalf("seq = %v after a refused media command, want 2", s)
+	}
 }
 
 func TestMembershipIsAnnouncedOnJoinAndLeave(t *testing.T) {
@@ -1282,13 +1321,19 @@ func TestTheRoomCarriesWhereItsMediaCanBeOpened(t *testing.T) {
 	}
 }
 
-func TestTheFirstMemberNamesWhereTheMediaIs(t *testing.T) {
+func TestTheMemberWhoNamesTheMediaNamesWhereItIs(t *testing.T) {
 	f := start(t, nil)
 	id, secret := f.createRoom("")
-	_, w, _ := f.dialHello(room.Hello{Room: id, Secret: secret, Name: "a",
+	a, w, _ := f.dialHello(room.Hello{Room: id, Secret: secret, Name: "a",
 		MediaKey: "yt:abc", MediaURL: "https://www.youtube.com/watch?v=abc"})
-	if got := anchorURL(t, w); got != "https://www.youtube.com/watch?v=abc" {
-		t.Fatalf("welcome mediaUrl = %v", got)
+	if got := anchorURL(t, w); got != nil {
+		t.Fatalf("a hello set the room's URL to %v", got)
+	}
+	empty := ""
+	a.send(room.Cmd{ReqID: "n", Kind: "media", MediaKey: "yt:abc",
+		MediaURL: "https://www.youtube.com/watch?v=abc", IfMediaKey: &empty})
+	if got := anchorURL(t, a.await("ack")); got != "https://www.youtube.com/watch?v=abc" {
+		t.Fatalf("ack mediaUrl = %v", got)
 	}
 }
 

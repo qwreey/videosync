@@ -1,0 +1,272 @@
+{
+ "when": "2026-09-16T15:36:10.019Z",
+ "browser": "helium",
+ "policy": "no-user-gesture-required",
+ "input": "script (page autoplay)",
+ "runs": [
+  {
+   "autoplay": "attr",
+   "k": 0,
+   "loadstartMs": 156,
+   "metadataMs": 167,
+   "canplayMs": 176,
+   "canplaythroughMs": 176,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 176,
+     "afterCanplaythroughMs": 0
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "attr",
+   "k": 1,
+   "loadstartMs": 54,
+   "metadataMs": 81,
+   "canplayMs": 93,
+   "canplaythroughMs": 94,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 93,
+     "afterCanplaythroughMs": 0
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "attr",
+   "k": 2,
+   "loadstartMs": 64,
+   "metadataMs": 88,
+   "canplayMs": 99,
+   "canplaythroughMs": 100,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 99,
+     "afterCanplaythroughMs": 0
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "meta",
+   "k": 0,
+   "loadstartMs": 65,
+   "metadataMs": 86,
+   "canplayMs": 97,
+   "canplaythroughMs": 97,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 91,
+     "afterCanplaythroughMs": -7
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "meta",
+   "k": 1,
+   "loadstartMs": 56,
+   "metadataMs": 81,
+   "canplayMs": 89,
+   "canplaythroughMs": 89,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 82,
+     "afterCanplaythroughMs": -7
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "meta",
+   "k": 2,
+   "loadstartMs": 60,
+   "metadataMs": 84,
+   "canplayMs": 94,
+   "canplaythroughMs": 94,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 1,
+     "act": false,
+     "sinceStartMs": 85,
+     "afterCanplaythroughMs": -9
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplay",
+   "k": 0,
+   "loadstartMs": 54,
+   "metadataMs": 82,
+   "canplayMs": 91,
+   "canplaythroughMs": 92,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 95,
+     "afterCanplaythroughMs": 4
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplay",
+   "k": 1,
+   "loadstartMs": 86,
+   "metadataMs": 137,
+   "canplayMs": 157,
+   "canplaythroughMs": 158,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 165,
+     "afterCanplaythroughMs": 8
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplay",
+   "k": 2,
+   "loadstartMs": 63,
+   "metadataMs": 95,
+   "canplayMs": 104,
+   "canplaythroughMs": 105,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0.001,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 109,
+     "afterCanplaythroughMs": 4
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplaythrough",
+   "k": 0,
+   "loadstartMs": 66,
+   "metadataMs": 94,
+   "canplayMs": 104,
+   "canplaythroughMs": 104,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 108,
+     "afterCanplaythroughMs": 4
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplaythrough",
+   "k": 1,
+   "loadstartMs": 57,
+   "metadataMs": 91,
+   "canplayMs": 101,
+   "canplaythroughMs": 101,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 105,
+     "afterCanplaythroughMs": 4
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  },
+  {
+   "autoplay": "canplaythrough",
+   "k": 2,
+   "loadstartMs": 57,
+   "metadataMs": 82,
+   "canplayMs": 93,
+   "canplaythroughMs": 93,
+   "moves": [
+    {
+     "type": "play",
+     "ct": 0,
+     "rs": 4,
+     "act": false,
+     "sinceStartMs": 101,
+     "afterCanplaythroughMs": 8
+    }
+   ],
+   "playedAtAll": true,
+   "playAct": false,
+   "sticky": false,
+   "refused": []
+  }
+ ]
+}

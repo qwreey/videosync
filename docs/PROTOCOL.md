@@ -68,7 +68,8 @@ joined socket is answered with `error{code:"already_joined"}` rather than re-joi
 
 `mediaKey` is the normalized media identity (provider + content id), not the raw URL — query params and
 tracking junk must not fork a room. If the room has no media yet, the first member's `mediaKey`
-names it. Otherwise a mismatch ⇒ server sends `{"t":"media.mismatch","roomMediaKey":"...",
+names it *(superseded 2026-09-17: a `hello` never names the media — see "a room that names nothing"
+below)*. Otherwise a mismatch ⇒ server sends `{"t":"media.mismatch","roomMediaKey":"...",
 "yours":"..."}` and the client shows "everyone else is watching X". **It is a notice, not a
 refusal** — the joiner is in the room and can see its state; forcing them out would make the
 common case (arriving before anyone has opened the video) unjoinable.
@@ -90,7 +91,8 @@ it is watching but not *where*, and a joiner on another page had nothing to foll
 link carried the inviter's URL, which goes stale the moment the room moves on.
 
 The anchor now carries an optional `mediaUrl`, set by the same things that set `mediaKey` and
-nothing else: `POST /api/rooms`, the first member's `hello` while the room has no media, and a
+nothing else: `POST /api/rooms`, the first member's `hello` while the room has no media *(no
+longer, since D8)*, and a
 `media` command (a `media` command without one clears it, rather than keeping a URL for media the
 room has left). A later joiner's `hello.mediaUrl` is ignored, as its `mediaKey` is.
 
@@ -119,6 +121,20 @@ A client that finds the room on other media **because it joined or because the r
 the member there after a short grace period with a "stay here" button, and carries the session
 across the page load so it rejoins on arrival. A member who navigates away **themselves** is never
 taken back; they are offered "move the room here", as before.
+
+### Amendment: a room that names nothing, and a `hello` that never names it (D8, 2026-09-17)
+
+A room may be created with no media (`POST /api/rooms` with an empty or absent `mediaKey`) — from a
+site's front page, a search page — and its anchor's `mediaKey` stays `""`. **A `hello` never changes
+room state, not even the first member's**: the server ignores `hello.mediaKey`/`hello.mediaUrl` for
+naming (it still uses the key for `media.mismatch`). Naming from the first `hello` skipped the one
+step that lets the namer keep its own position — it was conformed to `paused@0` like any joiner.
+
+The room is named by the first member **on media**, with a conditional `media` command (§3
+amendment): `cmd{kind:"media", ifMediaKey:"", mediaKey, mediaUrl, positionMs}`. Two members naming it
+at once cannot both win. The winner then seeds the room from its own player once its acquisition has
+settled (§4 amendment), as a creator does. Until the room is named, its members are quiet: a member
+on no media is absent, and nobody is conformed, corrected or gated.
 
 Membership changes are broadcast:
 `{"t":"members","members":[{"id","name","suspended","ready"}],"joined":"<id>"|"left":"<id>"}`.
@@ -218,6 +234,46 @@ would burn a seq and broadcast a `state` that changed nothing — which still ad
 `kind:"media"` replaces the anchor outright — position, pause state and identity all change at once
 — and lands **paused**, because nobody has loaded the new media yet.
 
+### Amendment: a conditional `media` command (D8, 2026-09-17)
+
+`cmd` gains an optional **`ifMediaKey`**, read only on `kind:"media"`:
+
+```json
+{"t":"cmd","reqId":"...","kind":"media","positionMs":0,
+ "mediaKey":"laftel:/player/45462/93305","mediaUrl":"https://laftel.net/player/45462/93305",
+ "ifMediaKey":"laftel:/player/45462/93304"}
+```
+
+The server applies it only if the room's current `mediaKey` (the newest anchor, including one whose
+`when` has not come yet) equals `ifMediaKey` exactly; otherwise it answers
+`{"t":"error","code":"media_stale"}` and **takes no `seq`**, sends no `ack` and broadcasts nothing.
+`ifMediaKey:""` is a condition ("the room names nothing"), distinct from an absent field
+(unconditional, as before). Refusals carry no `reqId`; they come back in order, so a client drops its
+oldest unanswered `media` command. `media_stale` is not an error in the client's eyes: it simply
+follows the room as it is.
+
+Who sends it:
+
+- **Naming** a room that names nothing: `ifMediaKey:""` (§2 amendment).
+- **The next episode**: a member whose own site moved on to the next episode sends
+  `ifMediaKey:<the episode it finished>`, `positionMs:0`. It does so only if its previous media epoch
+  was on the room's media and ended (or was within `endWindow` of the end while the room played),
+  its site moved on within 20 s of that, and the provider rule says the new key continues the old
+  one (Laftel: same series; YouTube: never). Every member whose site moved on sends the same
+  command; exactly one wins. The winner sends `play` once its own player is conformed to the new
+  anchor; the gate holds it for everybody still on the way (§6 amendment).
+- **"Move the room here"**: conditional on the room media the button was shown against.
+
+Anything else — a member's own navigation outside that narrow case — still moves nobody (D4).
+
+### Amendment: after a `media` command, nobody is ready yet (D8)
+
+Applying a `media` command marks **every** member unready, until it reports on the new `seq`. A
+continuation's `play` follows its `media` within one conform, which can be sooner than a member
+still navigating says it is acquiring; without this the `play` started without that member. A report
+from an absent member (elsewhere, suspended, finished) clears it like any other report, and
+`GATE_TIMEOUT` bounds a member who never reports.
+
 ## 4. Local detection and reporting (§4b, §4c)
 
 Three layers, because they answer different questions:
@@ -271,6 +327,38 @@ them. Distinguish by the observable state — buffering is `paused === false`, `
 draining buffer, with a `waiting` event; suspension is `paused === true`, `readyState === 4`, full
 buffer, with a `pause` event.
 
+### Amendment: a newly found video is not trusted (D8, 2026-09-17)
+
+When a client finds a video — joining, arriving by a follow, an SPA navigation, the next episode, an
+element swap — the element's play/pause/position is usually **the site's** doing: autoplay,
+resume-from-history, the load algorithm resetting a reused element. Measured
+(`BROWSER-FINDINGS.md` §20): Laftel resumes to its history position and autoplays 4–11 ms after
+`canplaythrough`; YouTube calls `play()` 1 ms after `emptied`; a new `src` pauses the element with
+**no `pause` event**. Broadcast as the member's, each of these moved the whole room (C1).
+
+The client keeps a **media epoch**, bumped synchronously by anything that changes which media is in
+the element (element replaced or gone, `emptied`/`loadstart`, the page's media key, the room's), and
+per epoch an acquisition state:
+
+| state | what happens | the member reports |
+|---|---|---|
+| `detached` | nothing applied yet: no element that can play, or not the room's media | `acquiring` if on (or on the way to) the room's media, else absent |
+| `conforming` | the room's state is applied once, when the element reaches HAVE_FUTURE_DATA | `acquiring` |
+| `guarded` | the player agrees with the room; an **un-gestured** change is put back (after `K` of them the client stops fighting: `fought`, absent) | normal (a member who seeds the room: `acquiring` until it has) |
+| `steady` | the behaviour before this amendment | normal |
+
+A change is the member's if a **trusted activation-triggering input** (keydown, mousedown, mouse
+pointerdown, non-mouse pointerup, touchend — time only, no target, no key) came within `G` before it
+**and after the epoch began**, or `navigator.userActivation.isActive` rose with no input (a media key
+in Chromium). A gestured change is sent as before and ends acquiring. `guarded` ends on that, on a
+playing room with the player running in agreement, or after `T_settle`. Nothing here silences a
+frame or waits for one: the states only decide how an observation is classified.
+
+**The end of the media is not a pause.** A `pause` observed with `ended` set is not sent; the member
+reports `finished`.
+
+A client with no gesture evidence behaves as before this amendment.
+
 ### Heartbeat
 
 ```json
@@ -287,7 +375,9 @@ buffer, with a `pause` event.
   "uncertaintyMs":   30,
   "rttMs":           60,
   "clockSamples":    12,
-  "suspended":       false }
+  "suspended":       false,
+  "acquiring":       false,    // optional (D8): present but not ready
+  "finished":        false }   // optional (D8): the element reached its end
 ```
 
 **Every field is load-bearing.** Omitting one does not degrade gracefully — it silently disables a
@@ -303,6 +393,8 @@ mechanism that exists because a measurement demanded it:
 | `rttMs` | `CMD_DELAY` is stuck at its 500 ms floor for the whole room, because it is computed from reported RTTs and nothing else |
 | `clockSamples` | `ConfidenceGated` cannot tell a settled estimate from a fresh one. (Count *completed* exchanges, not accepted ones — a min-RTT counter stops advancing once it converges, which froze the gate shut for whole sessions) |
 | `suspended` | a hidden never-audible tab reports `paused:true, readyState:4`, so it is not gated but **is** judged — the server seeks a member who is not watching (BROWSER-FINDINGS §5) |
+| `acquiring` | a member still loading or conforming its video counts as ready (a joiner's `readyState` is often 4 already), so a `play` starts without it — and its position, which is the site's and not the room's, is judged |
+| `finished` | a member whose video ended is judged against a room that runs on past the duration, and is seeked back into the credits |
 | `atServerMs` | nothing in the shipping path. Only the experimental PLL/FLL correctors read it, to min-filter a one-way delay estimate. Send it; it is cheap and it keeps those comparable |
 
 `lastAppliedSeq` is what lets the server spot a client stuck on stale state. **The server MUST act
@@ -404,6 +496,11 @@ gate and the room resumes without them.
 
 Sent on **change only**: one frame per report per member would be the room's report rate times its
 size. A suspended member is never in `waitingOn` — they are absent, not buffering (§4).
+
+*(D8)* A report with `acquiring:true` puts the member in the gate whatever its `readyState`, and is
+not judged; one with `finished:true` is absent, exactly like `suspended`. After a `media` command
+every member starts in the gate until it reports on the new seq (§3 amendment). The `ready` flag in
+the roster is false while a member is acquiring.
 A join changes nothing about the gate, so a member who joins while a `play` is held or someone is
 buffering gets the current `gate` frame right after its `welcome` instead; otherwise it would never
 hear why its own `play` is not starting.
@@ -451,7 +548,8 @@ Rooms: >=128-bit CSPRNG id, rotatable join secret (the no-host replacement for "
 idle-expiry. See SYNTHESIS §13 — the room URL is the *only* access control this design has.
 
 Creation is HTTP, not a frame: `POST /api/rooms` with an optional `{"mediaKey":"...","mediaUrl":"..."}` returns
-`{"roomId","secret"}` (201). `GET /healthz` reports `{"ok","rooms","serverMs"}`. With access control
+`{"roomId","secret"}` (201). With no `mediaKey` the room names nothing until a member does (§2
+amendment). `GET /healthz` reports `{"ok","rooms","serverMs"}`. With access control
 on (§8) the body also carries `"ticket"`, `/healthz` adds `"auth":{"methods":[...],"scope":"..."}`,
 and a creation without a live ticket is `401 {"error":"auth_required","methods":[...]}`.
 
@@ -530,8 +628,9 @@ the readiness gate does for the command it holds.
 
 `{"t":"error","code":"<stable machine-readable>","msg":"<for humans>"}`. Codes in use:
 `join_refused`, `room_full`, `already_joined`, `bad_frame`, `bad_kind`, `bad_cmd`, `rate_limited`,
-`auth_required` (§2, §8). A client treats `auth_required` like `join_refused` — the session ends,
-no reconnect — and asks the member to sign in.
+`auth_required` (§2, §8), `media_stale` (a conditional `media` command whose condition no longer
+held; no `seq` taken — §3 amendment). A client treats `auth_required` like `join_refused` — the
+session ends, no reconnect — and asks the member to sign in.
 
 An unknown frame type is answered with `bad_frame` and the connection **stays open** — a client
 from a newer build must not be able to kill its own session by sending something we have not heard
@@ -607,6 +706,11 @@ min), `nonce` and `sub` are checked. Every IdP URL must be https for that reason
 | `ROOM_IDLE_TTL` | 3 min | room deleted this long after its last member leaves |
 | `OUTBOX_DEPTH` | 64 frames | a member further behind than this is disconnected |
 | `RATE_REFRESH` | 5000 ms | re-state a rate the client should already hold, in case the `correct` was lost |
+| `G` (`gestureWindowMs`) | 500 ms | an input this long before a change is its cause (D8). Measured presses ≤ 268 ms; site autoplay after a navigation click ≥ 750 ms (BROWSER-FINDINGS §20) |
+| `T_settle` (`settleMs`) | 1000 ms | `guarded` → `steady` backstop after the last conform. Measured site moves ≤ 11 ms after `canplaythrough` |
+| `endWindow` (`endWindowMs`) | 1000 ms | this close to the end while playing counts as finished. Measured sites move on only after `ended` |
+| `K` (`maxReconforms`) | 3 | site overrides put back per media epoch before `fought` (design value; no site fought in any run) |
+| continuation window | 20 s | how long after its own end a member's navigation may carry the room. Measured 5.3–7.6 s |
 
 ## Open, not yet settled
 

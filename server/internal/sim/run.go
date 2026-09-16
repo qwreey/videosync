@@ -90,6 +90,11 @@ type Result struct {
 	// RoomPausedBySuspension counts anchor transitions into paused that were
 	// caused by a suspended member.
 	RoomPausedBySuspension int
+	// SiteSpuriousCmds is the part of SpuriousCmds that a member's own site
+	// caused on arrival -- autoplay, resume (C1). SiteMovesAbsorbed is how
+	// many such moves the acquisition guard put back instead.
+	SiteSpuriousCmds  int
+	SiteMovesAbsorbed int
 
 	// ConvergeMs is time from each command until every non-stalled client is
 	// within tolerance of the anchor. -1 means it never converged.
@@ -201,6 +206,7 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 				continue
 			}
 			c.UpdateSuspension(now)
+			c.UpdateSite(now)
 			c.RunScheduled(now)
 			c.Advance(now, stepMs)
 			for _, cm := range c.TakeOutbox() {
@@ -301,6 +307,8 @@ func Run(sc Scenario, corr vsync.Corrector, tun vsync.Tunables) Result {
 		c := clients[id]
 		res.Misdetections += c.Misdetections
 		res.SpuriousCmds += c.SpuriousCmds
+		res.SiteSpuriousCmds += c.SiteSpuriousCmds
+		res.SiteMovesAbsorbed += c.SiteMovesAbsorbed
 		res.InBufferSeeks += c.InBufferSeeks
 		res.OutOfBufferSeeks += c.OutOfBufferSeeks
 		res.RateTimeMs += c.RateTimeMs

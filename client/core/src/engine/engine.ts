@@ -9,7 +9,7 @@
 import type { PlayerState, ProviderAdapter } from '../adapter/types.ts';
 import { AutoplayBlockedError } from '../adapter/types.ts';
 import { SeekDetector } from '../detector/detector.ts';
-import type { DetectorConfig } from '../detector/types.ts';
+import type { DetectorConfig, Observation } from '../detector/types.ts';
 import { DEFAULT_DETECTOR_CONFIG } from '../detector/types.ts';
 import { type Anchor, expectedAt, ServerClock } from './clock.ts';
 import type {
@@ -62,8 +62,11 @@ export interface EngineConfig {
   rateMin: number;
   rateMax: number;
   /**
-   * Seed the room from this member's own player, once, on the first settled
-   * evaluation after joining. Set only by whoever CREATED the room.
+   * Seed the room from this member's own player, once, when its acquisition
+   * of the video has settled (`STEADY`, docs/design/acquire.md) -- or, with no
+   * gesture evidence, on the first settled evaluation. Set only by whoever
+   * CREATED the room; a member who names a room that named nothing does the
+   * same without it.
    *
    * A room is created with the anchor at `paused@0` (`hub.Create`), and the
    * detector only reports play-state *transitions* -- so a creator whose video
@@ -94,6 +97,29 @@ export interface EngineConfig {
    * so there is nothing to wait for and the hold would only flicker.
    */
   holdLocalPlay: boolean;
+  /**
+   * G: how long before an observation a trusted input may be and still be its
+   * cause. Measured input -> media event: Laftel <= 50 ms, YouTube Space <= 50
+   * and click <= 268 ms (it waits out a double click); a site's own autoplay
+   * after a navigation click came >= 750 ms after it (BROWSER-FINDINGS §20).
+   */
+  gestureWindowMs: number;
+  /**
+   * T_settle: how long a player that agrees with the room stays `GUARDED`
+   * after it was last conformed. Every site move measured came before
+   * `canplaythrough` or within 11 ms of it (§20); this is the backstop for a
+   * paused room whose site never moves, and exceeding it only degrades to
+   * the behaviour before D8.
+   */
+  settleMs: number;
+  /**
+   * How close to the end a playing member counts as finished for the next
+   * episode, when its element never reports `ended`. Neither measured site
+   * needed it -- both route on well after `ended` (§20) -- so it is small.
+   */
+  endWindowMs: number;
+  /** K: re-conforms in one media epoch before the engine stops fighting a site. */
+  maxReconforms: number;
   detector: Partial<DetectorConfig>;
 }
 
@@ -113,8 +139,52 @@ export const DEFAULT_ENGINE_CONFIG: Omit<EngineConfig, 'room' | 'secret' | 'name
   rateMax: 1.1,
   adoptLocalStateOnJoin: false,
   holdLocalPlay: true,
+  gestureWindowMs: 500,
+  settleMs: 1000,
+  endWindowMs: 1000,
+  maxReconforms: 3,
   detector: {},
 };
+
+/**
+ * Where this member is in acquiring the video it is showing, per media epoch
+ * (docs/design/acquire.md, research/design-acquire-video.md §4.2):
+ *
+ *  - `detached`: no usable element yet, or not the room's media. Nothing is
+ *    applied; on the room's media the member reports itself acquiring.
+ *  - `conforming`: the room's state is being put onto the element, once.
+ *  - `guarded`: the element agrees with the room. A change nobody gestured
+ *    for is the site's and is put back; a gestured one is the member's.
+ *  - `steady`: the behaviour from before D8. Every change is the member's.
+ *  - `fought`: the site kept overriding the room; the engine stopped fighting
+ *    and reports the member absent until they press something.
+ *
+ * It only decides how an observation is CLASSIFIED -- nothing is silenced and
+ * nothing waits on it: every way out of `guarded` is a condition or the
+ * `settleMs` backstop, which leads to `steady`.
+ */
+export type AcquisitionState = 'detached' | 'conforming' | 'guarded' | 'steady' | 'fought';
+
+/**
+ * Evidence that the member, not the site, did something. Supplied by the app
+ * layer from trusted input events (time only: no targets, no keys).
+ */
+export interface GestureEvidence {
+  /** When the member last gave an activation-triggering input, on the `now()` clock. */
+  lastInputAt(): number;
+  /**
+   * When the last input was that must NOT count -- one on VideoSync's own
+   * panel. It still activates the page, so an activation edge right after it
+   * is not a media key.
+   */
+  lastIgnoredInputAt(): number;
+  /**
+   * `navigator.userActivation.isActive`, or null where there is none. A rise
+   * with no input behind it is a media key: Chromium activates the page for
+   * an MPRIS play/pause, Firefox does not (BROWSER-FINDINGS §20).
+   */
+  activationActive(): boolean | null;
+}
 
 export type EngineStatus =
   | 'idle' | 'connecting' | 'joining' | 'joined' | 'refused' | 'closed';
@@ -139,6 +209,8 @@ export interface EngineEvents {
    */
   onAutoplayBlocked?(): void;
   onAnchor?(a: Anchor): void;
+  /** The acquisition state changed. `fought` is worth telling the member. */
+  onAcquisition?(s: AcquisitionState): void;
 }
 
 export interface EngineDeps {
@@ -149,6 +221,19 @@ export interface EngineDeps {
   setTimer(fn: () => void, ms: number): number;
   clearTimer(h: number): void;
   isHidden(): boolean;
+  /**
+   * Gesture evidence (see `GestureEvidence`). Without it the engine cannot
+   * tell a site's autoplay from a member's press, counts every change as the
+   * member's, and skips the acquisition states -- which is how it behaved
+   * before D8. Both shims supply it.
+   */
+  gestures?: GestureEvidence;
+  /**
+   * Whether `nextKey` is the natural continuation of `prevKey`
+   * (`continuesMedia` in mediakey.ts). Absent: never, so a member's own
+   * navigation never moves the room without a press.
+   */
+  continues?(prevKey: string, nextKey: string): boolean;
   /**
    * A server-access ticket for the next `hello`, fetched before every connect
    * (docs/design/auth.md). '' when the server wants none; a plain string
@@ -211,6 +296,30 @@ export interface EngineStats {
   reportsDeferred: number;
   /** Times the player disagreed with the anchor long enough to be re-applied. */
   reconciles: number;
+  /** Times the media in the element changed under the engine (see `mediaEpoch`). */
+  mediaEpochs: number;
+  /** Media epochs that got as far as being conformed or adopted. */
+  acquisitions: number;
+  /** Changes a site made on its own while guarded, and that were put back or absorbed. */
+  siteMovesAbsorbed: number;
+  /** Changes nobody gestured for while acquiring, and that were not sent. */
+  ungesturedIgnored: number;
+  /** Changes a gesture accounted for while acquiring, and that were sent. */
+  gesturedIntents: number;
+  /** Epochs in which the engine gave up fighting the site. */
+  fought: number;
+  /** Pauses made by the end of the media, which are not a member's pause. */
+  endsNotSent: number;
+  /** Our conditional `media` commands the room had already moved past. */
+  mediaStale: number;
+  /** Next-episode continuations sent. */
+  continuations: number;
+  /** Rooms that named nothing, named by this member. */
+  namings: number;
+  /** Times this member seeded the room from its own player. */
+  adoptions: number;
+  /** Scheduled transitions not applied because the conform step will. */
+  skippedAcquiring: number;
 }
 
 /**
@@ -267,6 +376,46 @@ const TRANSIENT_UNREADY_MIN_AHEAD_S = 1;
  */
 const OWN_ACK_WAIT_MS = 5000;
 
+/**
+ * How long after its own end a member's site may move on and still carry the
+ * room with it. Measured: Laftel routes ~5.5 s after `ended`, YouTube's
+ * autonav ~7.6 s (BROWSER-FINDINGS §20). A navigation later than this was
+ * somebody's choice, and gets the "move the room here" button instead.
+ */
+const CONTINUATION_WINDOW_MS = 20_000;
+
+/**
+ * A room position this far past the element's duration is not on this
+ * element's timeline -- an ad, a preview, a room that has already finished --
+ * and conforming would only seek it to its end.
+ */
+const PAST_DURATION_SLACK_MS = 2000;
+
+/**
+ * Conform a paused element that has metadata but will not buffer on its own
+ * (`preload="metadata"`) after this long. Before that, conforming waits for
+ * HAVE_FUTURE_DATA, because Laftel writes its resume position again and again
+ * from `loadedmetadata` until up to 0.5 s before `canplaythrough` -- 1.5 to
+ * 1.8 s -- and a conform in that window is fought (BROWSER-FINDINGS §20).
+ */
+const METADATA_ONLY_MS = 5000;
+
+/** One media epoch's acquisition. See `AcquisitionState`. */
+interface Acquisition {
+  id: number;
+  startedAt: number;
+  state: AcquisitionState;
+  /** `adopt`: this member seeds the room from its player instead of conforming. */
+  policy: 'conform' | 'adopt' | null;
+  reconforms: number;
+  /** When the player last finished being conformed (or started being guarded). */
+  guardedAt: number;
+  /** The room's seq when acquisition started; -1 before. */
+  seq: number;
+  /** When the element was first seen with metadata in this epoch, or 0. */
+  metadataAt: number;
+}
+
 /** What an in-flight applied transition is making the player do. */
 interface Applying {
   /** Where it is seeking to. */
@@ -303,6 +452,9 @@ export class SyncEngine {
     reconnects: 0, lateApplies: 0, echoesSuppressed: 0, badFrames: 0,
     skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0,
     playFailures: 0, playsHeld: 0, reportsDeferred: 0, reconciles: 0,
+    mediaEpochs: 0, acquisitions: 0, siteMovesAbsorbed: 0, ungesturedIgnored: 0,
+    gesturedIntents: 0, fought: 0, endsNotSent: 0, mediaStale: 0, continuations: 0,
+    namings: 0, adoptions: 0, skippedAcquiring: 0,
   };
 
   private readonly d: EngineDeps;
@@ -377,8 +529,39 @@ export class SyncEngine {
   private rateWeSet = 1;
   /** When the player started looking unready with a full buffer, or 0. */
   private transientUnreadySince = 0;
-  /** One-shot: the creator's seed, consumed by the first settled evaluation. */
-  private pendingAdopt = false;
+  /**
+   * The room media this member seeds from its own player, or null: the
+   * creator's media, or media this member named. See `adoptLocalStateOnJoin`.
+   */
+  private adoptFor: string | null = null;
+  /**
+   * The media epoch: bumped on anything that changes WHICH media is in the
+   * element -- the element replaced or gone, `emptied`/`loadstart` on it, the
+   * page's media key, the room's. The bump resets the detector synchronously,
+   * inside the handler, so no observation can straddle two media: YouTube
+   * calls `play()` 1 ms after `emptied` (BROWSER-FINDINGS §20).
+   */
+  private acq: Acquisition = {
+    id: 0, startedAt: 0, state: 'detached', policy: null, reconforms: 0, guardedAt: 0, seq: -1, metadataAt: 0,
+  };
+  /** A conform of the current epoch is queued or running. */
+  private conformInFlight = false;
+  /** The last time this member's element reached (or nearly reached) the room's media's end. */
+  private lastFinish: { key: string; epoch: number; at: number } | null = null;
+  /** Our next-episode continuation, until it is conformed and the room is started. */
+  private continuing: { key: string; play: boolean } | null = null;
+  /** The local media this member already tried to name an unnamed room with. */
+  private namedFor = '';
+  /**
+   * Finished on the media the room just left, and not yet on the new one:
+   * on the way there, so present-but-unready rather than absent.
+   */
+  private inTransit = false;
+  /** `activationActive()` at the last sample, and when it last rose with no input. */
+  private prevActivation = false;
+  private activationEdgeAt = -Infinity;
+  /** What the last report said about acquiring, so a change is reported at once. */
+  private lastAcquiringSent = false;
 
   /** The last TRACE_MAX frames in either direction. See `TraceEntry`. */
   private readonly traceRing: TraceEntry[] = [];
@@ -420,7 +603,7 @@ export class SyncEngine {
 
   private record(dir: 'tx' | 'rx', t: string, f: Record<string, unknown>): void {
     const detail: Record<string, unknown> = {};
-    for (const k of ['seq', 'when', 'kind', 'positionMs', 'mode', 'rate', 'code', 'reqId', 'mediaKey', 'mediaUrl'] as const) {
+    for (const k of ['seq', 'when', 'kind', 'positionMs', 'mode', 'rate', 'code', 'reqId', 'mediaKey', 'mediaUrl', 'ifMediaKey', 'acquiring', 'finished'] as const) {
       if (f[k] !== undefined) detail[k] = f[k];
     }
     // The anchor is the thing you actually want when reading a trace back.
@@ -443,7 +626,9 @@ export class SyncEngine {
     this.localMediaKey = cfg.mediaKey;
     this.localMediaUrl = cfg.mediaUrl ?? '';
     this.secret = cfg.secret;
-    this.pendingAdopt = cfg.adoptLocalStateOnJoin;
+    this.adoptFor = cfg.adoptLocalStateOnJoin ? cfg.mediaKey : null;
+    this.acq.startedAt = deps.now();
+    if (!this.gating()) this.acq.state = 'steady';
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
       evalIntervalMs: cfg.evalIntervalMs,
@@ -462,11 +647,22 @@ export class SyncEngine {
     // timer runs; nothing about the decision changes.
     const unsubs = (['seeked', 'play', 'pause', 'ratechange', 'waiting', 'playing'] as const)
       .map((ev) => deps.adapter.on(ev, () => { if (this.running) this.evaluate(); }));
+    // The load algorithm ran on the element: new media, same element. It set
+    // `paused` without a `pause` event and dropped the position to 0, which the
+    // detector would otherwise read as a seek to 0 on the media we were on.
+    for (const ev of ['emptied', 'loadstart'] as const) {
+      unsubs.push(deps.adapter.on(ev, () => {
+        this.newMediaEpoch();
+        if (this.running) this.evaluate();
+      }));
+    }
     const unsubReplaced = deps.adapter.on('elementreplaced', () => {
-      this.detector.reset();
-      // If we are still on the room's media, put the new element where the
-      // room is. If we are not, leave it alone -- snapping someone's next
-      // episode to the old one's timestamp is worse than doing nothing.
+      this.newMediaEpoch();
+      if (this.gating()) return; // `conforming` puts the new element where the room is
+      // Without gesture evidence: if we are still on the room's media, put the
+      // new element where the room is. If we are not, leave it alone --
+      // snapping someone's next episode to the old one's timestamp is worse
+      // than doing nothing.
       //
       // Checked again when the work runs, not only here: this fires inside
       // `setTarget`, and a navigation retargets the element BEFORE it names the
@@ -494,8 +690,61 @@ export class SyncEngine {
   setLocalMediaKey(key: string, url = ''): void {
     this.localMediaUrl = url;
     if (key === this.localMediaKey) return;
+    const prev = this.localMediaKey;
     this.localMediaKey = key;
+    // A seed is for the media it was taken on; sent after a navigation it would
+    // restart a room somebody has since chosen a state for.
+    this.adoptFor = null;
+    this.inTransit = false;
+    this.newMediaEpoch();
+    this.maybeContinue(prev, key);
+  }
+
+  /**
+   * Whether this member's own navigation from `prev` to `key` carries the room
+   * with it: the next episode, which the site moved on to by itself at the end
+   * of the room's media. Everything else keeps the "move the room here"
+   * button (D4) -- with no host, an accidental navigation must not drag
+   * everybody along.
+   *
+   * Sent as a compare-and-set on `prev`: every member whose site moved on
+   * sends the same, exactly one wins, and the rest follow the room.
+   */
+  private maybeContinue(prev: string, key: string): void {
+    const f = this.lastFinish;
+    this.lastFinish = null;
+    if (this.status !== 'joined' || !f || f.key !== prev || prev !== this.anchor.mediaKey) return;
+    if (this.d.now() - f.at > CONTINUATION_WINDOW_MS) return;
+    if (!key || !this.d.continues?.(prev, key)) return;
+    // It lands paused at 0 -- the sender's own site may be seconds into the
+    // new episode -- and the room is started once this member is conformed,
+    // by a `play` the readiness gate holds for everyone still on the way.
+    this.continuing = { key, play: !this.anchor.paused };
+    this.stats.continuations++;
+    this.send('media', 0, { key, url: this.localMediaUrl }, prev);
+  }
+
+  /** Whether the acquisition states are in force. See `EngineDeps.gestures`. */
+  private gating(): boolean { return this.d.gestures !== undefined; }
+
+  private setAcq(state: AcquisitionState): void {
+    if (this.acq.state === state) return;
+    this.acq.state = state;
+    this.ev.onAcquisition?.(state);
+  }
+
+  /** See `acq`. */
+  private newMediaEpoch(): void {
+    const now = this.d.now();
+    this.acq = {
+      id: this.acq.id + 1, startedAt: now, state: this.gating() ? 'detached' : 'steady',
+      policy: null, reconforms: 0, guardedAt: 0, seq: -1, metadataAt: 0,
+    };
+    this.conformInFlight = false;
     this.detector.reset();
+    this.disagreeingSince = 0;
+    this.stats.mediaEpochs++;
+    this.ev.onAcquisition?.(this.acq.state);
   }
 
   /**
@@ -777,6 +1026,16 @@ export class SyncEngine {
         break;
 
       case 'error':
+        if (f.code === 'media_stale') {
+          // Our conditional `media` lost a race: the room had already moved.
+          // Nothing to undo -- we follow the room as it is. Refusals carry no
+          // reqId; the server answers in order, so it is our oldest one.
+          this.stats.mediaStale++;
+          const i = this.unacked.findIndex((c) => c.kind === 'media');
+          if (i >= 0) this.unacked.splice(i, 1);
+          this.continuing = null;
+          break;
+        }
         if (f.code === 'join_refused' || f.code === 'room_full' || f.code === 'auth_required') {
           this.setStatus('refused', f.code);
         }
@@ -853,7 +1112,17 @@ export class SyncEngine {
     // command that arrives while an earlier one is still touching the player
     // knows it has been superseded.
     this.lastAppliedSeq = p.seq;
+    const roomMoved = p.anchor.mediaKey !== this.anchor.mediaKey;
+    const left = this.anchor.mediaKey;
     this.anchor = p.anchor;
+    if (roomMoved) {
+      // Whatever the element shows now is acquired afresh against the new
+      // media: the room moving onto our page is a new media epoch as much as
+      // our page moving is.
+      const f = this.lastFinish;
+      this.inTransit = !!f && f.key === left && !this.onRoomMedia();
+      this.newMediaEpoch();
+    }
     this.ev.onAnchor?.(p.anchor);
 
     // Track the room's state, but do not move a player that is showing
@@ -862,9 +1131,17 @@ export class SyncEngine {
       this.stats.skippedOffMedia++;
       return Promise.resolve();
     }
+    // Not yet acquired: the conform step reads the anchor when it runs, so
+    // applying this too would only move the player twice. A player the site
+    // took over is left alone as well, until the member takes it back.
+    if (this.acq.state === 'detached' || this.acq.state === 'conforming' || this.acq.state === 'fought') {
+      this.stats.skippedAcquiring++;
+      return Promise.resolve();
+    }
 
     const epoch = this.epoch;
-    const current = (): boolean => this.canAim(epoch) && p.seq === this.lastAppliedSeq;
+    const media = this.acq.id;
+    const current = (): boolean => this.canAim(epoch) && p.seq === this.lastAppliedSeq && media === this.acq.id;
     return this.serialise(async () => {
       if (epoch === this.epoch && !this.onRoomMedia()) {
         // The member navigated away while this waited.
@@ -1024,6 +1301,9 @@ export class SyncEngine {
     // ten-second timeout.
     if (!this.onRoomMedia()) return;
     if (mode === 'seek' && !this.clock.ready) return;
+    // Judged on a report sent before we started acquiring: stale, and the
+    // conform step is about to do better.
+    if (this.acquiring()) return;
     if (mode === 'nudge') {
       if (!a.capabilities.supportsPlaybackRateNudge) {
         // A provider that fights playbackRate gets seek-only correction. Count
@@ -1043,9 +1323,10 @@ export class SyncEngine {
     // stale by a downlink delay on arrival.
     this.stats.correctionsSeek++;
     const epoch = this.epoch;
+    const media = this.acq.id;
     await this.serialise(async () => {
       // ...and ask both guards again: this can wait behind a ten-second seek.
-      if (!this.canAim(epoch)) {
+      if (!this.canAim(epoch) || media !== this.acq.id) {
         this.stats.supersededApplies++;
         return;
       }
@@ -1078,20 +1359,26 @@ export class SyncEngine {
 
     const now = this.d.now();
     const state = this.d.adapter.readState();
+    this.sampleActivation(now);
 
-    // The creator seeds the room from their own player, exactly once, as soon
-    // as the clock is settled -- which is well inside `reconcileAfterMs`, so
-    // they never see the room defend `paused@0` against them. See
-    // `adoptLocalStateOnJoin`.
+    this.nameRoomIfUnnamed(state);
+    this.trackFinish(now, state);
+    this.advanceAcquisition(now, state);
+
+    // Without gesture evidence there is no acquisition to settle, so the
+    // creator seeds the room from their own player as soon as the clock is
+    // settled -- which is well inside `reconcileAfterMs`, so they never see the
+    // room defend `paused@0` against them. See `adoptLocalStateOnJoin`.
     //
     // Consumed even when the creator is not on the room's media, and then not
-    // acted on: a page that names no media has nothing to seed the room from,
-    // and a seed sent later -- after a navigation, or after a `media` command
-    // named the room -- would restart a room somebody has since chosen a state
-    // for.
-    if (this.pendingAdopt && this.clock.ready) {
-      this.pendingAdopt = false;
-      if (this.onRoomMedia()) this.adoptLocalState(state);
+    // acted on: a page that names no media has nothing to seed the room from.
+    if (!this.gating() && this.adoptFor !== null && this.clock.ready) {
+      const k = this.adoptFor;
+      this.adoptFor = null;
+      if (this.onRoomMedia() && k === this.anchor.mediaKey) {
+        this.stats.adoptions++;
+        this.adoptLocalState(state);
+      }
     }
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
@@ -1100,37 +1387,17 @@ export class SyncEngine {
     const { observation, report } = this.detector.evaluate(state, expected, now);
 
     const onRoomMedia = this.onRoomMedia();
-    // While a transition is in flight, what it does to the player is not the
-    // user's: its seek lands near its own target (the room may have moved on
-    // since, so the two-diff test alone is not enough there), and its pause
-    // state is the one it was asked for. Anything else is still the user's.
-    const applying = this.applyingRemote;
-    if (!this.autoplayBlocked && onRoomMedia) {
-      if (observation.kind === 'seek') {
-        if (!applying ||
-          Math.abs(observation.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) >
-            this.seekThresholdMs) {
-          this.send('seek', observation.positionS * 1000);
-        }
-      } else if (observation.kind === 'playstate') {
-        if (observation.paused !== this.anchor.paused &&
-          (!applying || observation.paused !== applying.paused)) {
-          this.send(observation.paused ? 'pause' : 'play', observation.positionS * 1000);
-          if (!observation.paused) this.holdForRoom();
-        } else {
-          // Agrees with the anchor: this is our own applied transition coming
-          // back around, not user intent. The pause/play counterpart of the
-          // two-diff test's roomDiff, and the reason echo suppression here is
-          // structural rather than a timeout flag.
-          this.stats.echoesSuppressed++;
-        }
-      }
+    if (!this.autoplayBlocked && onRoomMedia && SeekDetector.isUserIntent(observation)) {
+      this.classify(observation, state, now);
     }
 
     // --- the anchor is truth, including about being paused ------------------
+    // Only once acquired: until then the conform step and `guarded` do this,
+    // and a player at its end is finished, not paused -- play() on an ended
+    // element starts it again from the beginning.
     if (
       this.clock.ready && onRoomMedia && !this.autoplayBlocked && !this.applyingRemote &&
-      state.paused !== this.anchor.paused
+      this.acq.state === 'steady' && !state.ended && state.paused !== this.anchor.paused
     ) {
       if (this.disagreeingSince === 0) {
         this.disagreeingSince = now;
@@ -1138,11 +1405,12 @@ export class SyncEngine {
         this.disagreeingSince = 0;
         this.stats.reconciles++;
         const epoch = this.epoch;
+        const media = this.acq.id;
         void this.serialise(async () => {
-          if (!this.canAim(epoch)) return;
+          if (!this.canAim(epoch) || media !== this.acq.id) return;
           await this.applyTransition(
             expectedAt(this.anchor, this.serverNow()), this.anchor.paused,
-            this.cfg.seekToleranceMs, () => this.canAim(epoch));
+            this.cfg.seekToleranceMs, () => this.canAim(epoch) && media === this.acq.id);
         });
       }
     } else {
@@ -1151,7 +1419,9 @@ export class SyncEngine {
 
     if (!report) return;
 
-    if (report.readyState < 3 && report.bufferedAheadS >= TRANSIENT_UNREADY_MIN_AHEAD_S) {
+    const acquiring = this.acquiring();
+    const finished = onRoomMedia && state.ended === true;
+    if (!acquiring && report.readyState < 3 && report.bufferedAheadS >= TRANSIENT_UNREADY_MIN_AHEAD_S) {
       if (this.transientUnreadySince === 0) this.transientUnreadySince = now;
       if (now - this.transientUnreadySince < TRANSIENT_UNREADY_MS) {
         this.stats.reportsDeferred++;
@@ -1163,8 +1433,10 @@ export class SyncEngine {
 
     // Watching something else is the same fact to the server as a suspended tab
     // or a refused autoplay: this member cannot follow the room and no
-    // correction can change that. Absent, not behind.
-    const absent = report.suspended || this.autoplayBlocked || !onRoomMedia;
+    // correction can change that. Absent, not behind. So is a member whose
+    // video has ended, and one whose site took the player over.
+    const absent = !acquiring && (
+      report.suspended || this.autoplayBlocked || !onRoomMedia || finished || this.acq.state === 'fought');
 
     // An absent member is no longer judged, so any rate the servo left behind
     // would stick forever -- including onto whatever they navigate to next,
@@ -1175,7 +1447,11 @@ export class SyncEngine {
     const anomaly =
       Math.abs(report.residualMs) >= this.cfg.reportThresholdMs ||
       report.paused !== this.anchor.paused;
-    if (!dueHeartbeat && !(anomaly && now - this.lastReportAt >= this.cfg.minReportIntervalMs)) return;
+    // Starting or stopping acquiring is reported at once: it is what holds and
+    // releases a play for this member.
+    const acquiringChanged = acquiring !== this.lastAcquiringSent;
+    if (!dueHeartbeat && !acquiringChanged &&
+      !(anomaly && now - this.lastReportAt >= this.cfg.minReportIntervalMs)) return;
 
     const hb: HbFrame = {
       t: 'hb',
@@ -1196,11 +1472,302 @@ export class SyncEngine {
       // give it back. Both mean absent, not behind -- do not gate the room for
       // them and do not seek them in circles.
       suspended: absent,
+      ...(acquiring ? { acquiring: true } : {}),
+      ...(finished ? { finished: true } : {}),
     };
     this.tx(hb);
     this.stats.reportsSent++;
     this.lastReportAt = now;
+    this.lastAcquiringSent = acquiring;
     if (dueHeartbeat) this.lastHbAt = now;
+  }
+
+  /**
+   * Present on the room's media (or on the way to it) but not yet on its
+   * timeline: gated, not judged. A creator or namer that has not adopted yet
+   * is still acquiring too -- its player is where IT is, not where the room
+   * was seeded, and judging it would seek it to the room's placeholder.
+   */
+  private acquiring(): boolean {
+    if (!this.gating() || this.autoplayBlocked || this.d.isHidden()) return false;
+    const a = this.acq;
+    if (this.onRoomMedia()) {
+      return a.state === 'detached' || a.state === 'conforming' ||
+        (a.state === 'guarded' && a.policy === 'adopt');
+    }
+    return this.inTransit && this.anchor.mediaKey !== '';
+  }
+
+  /**
+   * Whether a gesture accounts for what the player just did: an input within
+   * `gestureWindowMs`, AND after this media epoch began. The second half is
+   * what keeps the click on a "next episode" link from counting for that
+   * episode's autoplay -- `isActive` is still true then (BROWSER-FINDINGS §20).
+   */
+  private intent(now: number): boolean {
+    const g = this.d.gestures;
+    if (!g) return true;
+    const at = Math.max(g.lastInputAt(), this.activationEdgeAt);
+    return at >= this.acq.startedAt && now - at <= this.cfg.gestureWindowMs;
+  }
+
+  /** A rise of `isActive` with no input behind it is a media key. */
+  private sampleActivation(now: number): void {
+    const g = this.d.gestures;
+    if (!g) return;
+    const act = g.activationActive() === true;
+    if (act && !this.prevActivation &&
+      now - Math.max(g.lastInputAt(), g.lastIgnoredInputAt()) > this.cfg.gestureWindowMs) {
+      this.activationEdgeAt = now;
+    }
+    this.prevActivation = act;
+  }
+
+  /**
+   * Decide whose change an observation is, and act on it.
+   *
+   * `steady` (or no gesture evidence): the member's, as always. Otherwise a
+   * gesture makes it the member's and ends acquiring; with none, it is the
+   * site's -- put back while `guarded`, left for the conform step before.
+   */
+  private classify(o: Observation, state: PlayerState, now: number): void {
+    const a = this.acq;
+    if (!this.gating() || a.state === 'steady') {
+      this.act(o, state);
+      return;
+    }
+    if (this.isEcho(o, state)) {
+      this.stats.echoesSuppressed++;
+      return;
+    }
+    if (o.kind === 'playstate' && o.paused && state.ended) {
+      // Nobody's pause, and not the site's to be undone either: a conform
+      // would press play on an ended element, which starts it over.
+      this.stats.endsNotSent++;
+      return;
+    }
+    if (this.intent(now)) {
+      this.stats.gesturedIntents++;
+      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
+      this.toSteady(now, state);
+      // A creator's press is carried by the adoption, which sends the
+      // position as well; the press alone (a `play` has none) would not.
+      if (!adopting) this.act(o, state);
+      return;
+    }
+    if (a.state === 'guarded' && !this.applyingRemote && !this.conformInFlight) {
+      this.stats.siteMovesAbsorbed++;
+      if (a.policy === 'adopt') {
+        // The site is setting up the member's own player, which the room is
+        // about to be seeded from: let it, and wait for it to finish.
+        a.guardedAt = now;
+        return;
+      }
+      if (++a.reconforms > this.cfg.maxReconforms) {
+        this.stats.fought++;
+        this.setAcq('fought');
+        return;
+      }
+      this.conform();
+      return;
+    }
+    this.stats.ungesturedIgnored++;
+  }
+
+  /** The effect of our own in-flight transition, or agreement with the room. */
+  private isEcho(o: Observation, state: PlayerState): boolean {
+    const applying = this.applyingRemote;
+    if (o.kind === 'seek') {
+      return !!applying &&
+        Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
+    }
+    if (o.kind === 'playstate') {
+      return o.paused === this.anchor.paused || (!!applying && o.paused === applying.paused);
+    }
+    return true;
+  }
+
+  /** The member's own change: tell the room. */
+  private act(o: Observation, state: PlayerState): void {
+    // While a transition is in flight, what it does to the player is not the
+    // user's: its seek lands near its own target (the room may have moved on
+    // since, so the two-diff test alone is not enough there), and its pause
+    // state is the one it was asked for. Anything else is still the user's.
+    const applying = this.applyingRemote;
+    if (o.kind === 'seek') {
+      if (!applying ||
+        Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) >
+          this.seekThresholdMs) {
+        this.send('seek', o.positionS * 1000);
+      }
+    } else if (o.kind === 'playstate') {
+      if (o.paused !== this.anchor.paused &&
+        (!applying || o.paused !== applying.paused)) {
+        if (o.paused && state.ended) {
+          // The end of the media pauses the element, and it is nobody's
+          // pause: sent, the first member to finish stops the room at its own
+          // end, a member 100 ms behind is stopped just short of `ended`, and
+          // a site that moves on at `ended` never moves on for them.
+          this.stats.endsNotSent++;
+          return;
+        }
+        this.send(o.paused ? 'pause' : 'play', o.positionS * 1000);
+        if (!o.paused) this.holdForRoom();
+      } else {
+        // Agrees with the anchor: this is our own applied transition coming
+        // back around, not user intent. The pause/play counterpart of the
+        // two-diff test's roomDiff, and the reason echo suppression here is
+        // structural rather than a timeout flag.
+        this.stats.echoesSuppressed++;
+      }
+    }
+  }
+
+  /**
+   * Remember that this member's element reached the end of the room's media
+   * (or is within `endWindowMs` of it while the room plays), for the next
+   * episode. Forgotten when the same epoch turns out not to be finished --
+   * a member who scrubbed back from the credits.
+   */
+  private trackFinish(now: number, state: PlayerState): void {
+    if (!this.onRoomMedia()) return;
+    const durMs = state.durationS * 1000;
+    const near = durMs > 0 && !this.anchor.paused && !state.paused &&
+      state.positionS * 1000 >= durMs - this.cfg.endWindowMs;
+    if (state.ended || near) {
+      this.lastFinish = { key: this.localMediaKey, epoch: this.acq.id, at: now };
+    } else if (this.lastFinish && this.lastFinish.epoch === this.acq.id && durMs > 0) {
+      this.lastFinish = null;
+    }
+  }
+
+  /**
+   * A room that names nothing is named by the first member on media, with the
+   * condition "still nothing" (C3). That member then seeds the room from its
+   * own player once its acquisition settles, as a creator does.
+   */
+  private nameRoomIfUnnamed(state: PlayerState): void {
+    if (this.anchor.mediaKey !== '' || this.localMediaKey === '' || this.namedFor === this.localMediaKey) return;
+    if (!this.clock.ready || this.d.isHidden() || state.readyState < 1 || !(state.durationS > 0)) return;
+    this.namedFor = this.localMediaKey;
+    this.adoptFor = this.localMediaKey;
+    this.stats.namings++;
+    this.send('media', state.positionS * 1000, { key: this.localMediaKey, url: this.localMediaUrl }, '');
+  }
+
+  /** DETACHED -> CONFORMING/GUARDED, and GUARDED -> STEADY. */
+  private advanceAcquisition(now: number, state: PlayerState): void {
+    if (!this.gating()) return;
+    const a = this.acq;
+    if (a.state === 'detached') {
+      if (!this.readyToAcquire(now, state)) return;
+      a.seq = this.lastAppliedSeq;
+      a.policy = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey ? 'adopt' : 'conform';
+      this.stats.acquisitions++;
+      if (a.policy === 'adopt') {
+        a.guardedAt = now;
+        this.setAcq('guarded');
+        return;
+      }
+      this.setAcq('conforming');
+      this.conform();
+      return;
+    }
+    if (a.state !== 'guarded' || this.conformInFlight || !this.onRoomMedia() || !this.clock.ready) return;
+    // A playing room and a player running with it: startup is over, and from
+    // here a site's pause is indistinguishable from a member's but by gesture,
+    // which is exactly what `steady` assumes.
+    const together = a.policy === 'conform' && !this.anchor.paused && !state.paused &&
+      state.readyState >= 3 &&
+      Math.abs(state.positionS * 1000 - expectedAt(this.anchor, this.serverNow())) <= this.cfg.seekToleranceMs;
+    if (together || now - a.guardedAt >= this.cfg.settleMs) this.toSteady(now, state);
+  }
+
+  /**
+   * Whether the element can be put where the room is. HAVE_FUTURE_DATA
+   * rather than metadata: a site that resumes from its history writes the
+   * position repeatedly until then (Laftel, BROWSER-FINDINGS §20), and
+   * `canplay` is also where measured autoplay happens. A paused element that
+   * stays at metadata because it will not buffer on its own is conformed
+   * after `METADATA_ONLY_MS`.
+   */
+  private readyToAcquire(now: number, state: PlayerState): boolean {
+    if (!this.clock.ready || !this.onRoomMedia() || this.d.isHidden()) return false;
+    if (state.readyState < 1 || !(state.durationS > 0)) return false;
+    const a = this.acq;
+    if (a.metadataAt === 0) a.metadataAt = now;
+    if (state.readyState < 3 && now - a.metadataAt < METADATA_ONLY_MS) return false;
+    const expected = expectedAt(this.anchor, this.serverNow());
+    return expected <= state.durationS * 1000 + PAST_DURATION_SLACK_MS;
+  }
+
+  /**
+   * Put the room's state onto the element, once, serialised with every other
+   * player mutation. Leads to `guarded`; if something newer took over while it
+   * waited, acquisition starts over from `detached` against the newest anchor.
+   */
+  private conform(): void {
+    const id = this.acq.id;
+    const sess = this.epoch;
+    const seq = this.lastAppliedSeq;
+    const current = (): boolean => this.canAim(sess) && this.acq.id === id && this.lastAppliedSeq === seq;
+    this.conformInFlight = true;
+    void this.serialise(async () => {
+      let done = false;
+      try {
+        if (!current()) return;
+        await this.applyTransition(
+          expectedAt(this.anchor, this.serverNow()), this.anchor.paused, this.cfg.seekToleranceMs, current);
+        done = current();
+      } finally {
+        if (this.acq.id === id) {
+          this.conformInFlight = false;
+          const a = this.acq;
+          if (done) {
+            a.guardedAt = this.d.now();
+            if (a.state === 'conforming') this.setAcq('guarded');
+            this.startContinuation();
+          } else if (a.state === 'conforming') {
+            this.setAcq('detached');
+          }
+        }
+      }
+    });
+  }
+
+  /** Our continuation is on the room and conformed: start everybody. */
+  private startContinuation(): void {
+    const c = this.continuing;
+    if (!c || c.key !== this.anchor.mediaKey || !this.onRoomMedia()) return;
+    this.continuing = null;
+    if (c.play) this.send('play', this.d.adapter.readState().positionS * 1000);
+  }
+
+  /**
+   * Acquisition is over. A member who seeds the room does it now, from the
+   * state it settled on -- unless the room was moved by somebody else in the
+   * meantime, in which case that choice stands and this member conforms.
+   */
+  private toSteady(now: number, state: PlayerState): void {
+    const a = this.acq;
+    const was = a.state;
+    this.setAcq('steady');
+    if (this.adoptFor === null || this.adoptFor !== this.anchor.mediaKey || !this.onRoomMedia() || !this.clock.ready) return;
+    this.adoptFor = null;
+    if (a.seq < 0 || this.lastAppliedSeq === a.seq) {
+      this.stats.adoptions++;
+      this.adoptLocalState(state);
+    } else if (was === 'guarded') {
+      const epoch = this.epoch;
+      const id = a.id;
+      void this.serialise(async () => {
+        if (!this.canAim(epoch) || id !== this.acq.id) return;
+        await this.applyTransition(
+          expectedAt(this.anchor, this.serverNow()), this.anchor.paused,
+          this.cfg.seekToleranceMs, () => this.canAim(epoch) && id === this.acq.id);
+      });
+    }
+    void now;
   }
 
   /**
@@ -1307,7 +1874,9 @@ export class SyncEngine {
     if (!s.paused) this.play();
   }
 
-  private send(kind: CmdKind, positionMs: number, media?: { key: string; url?: string | undefined }): string {
+  private send(
+    kind: CmdKind, positionMs: number, media?: { key: string; url?: string | undefined }, ifMediaKey?: string,
+  ): string {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;
     const now = this.d.now();
     this.unacked = this.unacked.filter((c) => now - c.at < OWN_ACK_WAIT_MS);
@@ -1316,6 +1885,7 @@ export class SyncEngine {
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),
       ...(media === undefined ? {} : { mediaKey: media.key }),
       ...(media?.url ? { mediaUrl: media.url } : {}),
+      ...(ifMediaKey === undefined ? {} : { ifMediaKey }),
     });
     this.stats.cmdsSent++;
     return reqId;
@@ -1325,9 +1895,13 @@ export class SyncEngine {
   play(): string { return this.send('play', this.d.adapter.readState().positionS * 1000); }
   pause(): string { return this.send('pause', this.d.adapter.readState().positionS * 1000); }
   seek(positionS: number): string { return this.send('seek', positionS * 1000); }
-  /** Point the room at other media. `mediaUrl` is where the others can open it. */
-  setMedia(mediaKey: string, positionMs = 0, mediaUrl?: string): string {
-    return this.send('media', positionMs, { key: mediaKey, url: mediaUrl });
+  /**
+   * Point the room at other media. `mediaUrl` is where the others can open it.
+   * `ifMediaKey`, when given, is the room media this was decided against: if
+   * somebody moved the room first, the server refuses this one.
+   */
+  setMedia(mediaKey: string, positionMs = 0, mediaUrl?: string, ifMediaKey?: string): string {
+    return this.send('media', positionMs, { key: mediaKey, url: mediaUrl }, ifMediaKey);
   }
   chat(text: string): void { this.tx({ t: 'chat', text }); }
   rotateSecret(): void { this.tx({ t: 'rotate' }); }
@@ -1345,6 +1919,8 @@ export class SyncEngine {
   get followingRoom(): boolean { return this.onRoomMedia(); }
   /** The wire trace, oldest first. See `TraceEntry`. */
   get trace(): readonly TraceEntry[] { return this.traceRing; }
+  /** Where this member is in acquiring its video. See `AcquisitionState`. */
+  get acquisition(): AcquisitionState { return this.acq.state; }
 
   /** Where the room should be right now, or null before the clock settles. */
   expectedMs(): number | null {

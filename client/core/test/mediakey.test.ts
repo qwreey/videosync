@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
+import { continuesMedia, followableUrl, normalizeMediaKey, providerId, watchUrl } from '../src/adapter/mediakey.ts';
 import { Html5Adapter } from '../src/adapter/html5.ts';
 import { pickVideo } from '../src/adapter/resolve.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
@@ -399,5 +399,47 @@ describe('where a room\'s media can be opened', () => {
       assert.equal(followableUrl(u, room, here), null, String(u));
     }
     assert.equal(followableUrl('https://laftel.net/player/1/2', '', here), null, 'a room with no media');
+  });
+});
+
+describe('which media continues which (the next episode)', () => {
+  const key = (u: string) => normalizeMediaKey(u)!;
+
+  it('is another episode of the same Laftel series', () => {
+    assert.equal(continuesMedia(key('https://laftel.net/player/45462/93304'), key('https://laftel.net/player/45462/93305')), true);
+  });
+
+  it('is never the same episode, another series, another provider, or nothing', () => {
+    const e1 = key('https://laftel.net/player/45462/93304');
+    assert.equal(continuesMedia(e1, e1), false);
+    assert.equal(continuesMedia(e1, key('https://laftel.net/player/1/2')), false);
+    assert.equal(continuesMedia(e1, key('https://laftel.net/item/45462')), false);
+    assert.equal(continuesMedia(e1, key('https://www.youtube.com/watch?v=abc')), false);
+    assert.equal(continuesMedia(e1, ''), false);
+    assert.equal(continuesMedia('', e1), false);
+  });
+
+  it('is never anything on YouTube, whose autonav picks an arbitrary video', () => {
+    assert.equal(continuesMedia(key('https://www.youtube.com/watch?v=a'), key('https://www.youtube.com/watch?v=b')), false);
+  });
+
+  it('is never anything on a site no rule knows', () => {
+    assert.equal(continuesMedia(key('http://127.0.0.1:8898/watch/1'), key('http://127.0.0.1:8898/watch/2')), false);
+  });
+});
+
+describe('an element that goes away', () => {
+  it('is announced like a replacement, so nothing keeps judging the old one', () => {
+    const vt = new VirtualTime();
+    const sw = new SwappableAdapter();
+    let fired = 0;
+    sw.on('elementreplaced', () => { fired++; });
+    sw.setTarget(null);
+    assert.equal(fired, 0, 'nothing to nothing is not a change');
+    sw.setTarget(new FakePlayer(vt));
+    assert.equal(fired, 1);
+    sw.setTarget(null);
+    assert.equal(fired, 2);
+    assert.equal(sw.readState().ended, false);
   });
 });

@@ -308,22 +308,32 @@ describe('the move-the-room offer', () => {
 describe('a page that names no media', () => {
   const NOWHERE = 'https://www.youtube.com/results?search_query=x';
 
-  it('does not create a room nobody could follow', async () => {
+  it('can create a room, which names nothing until somebody is on media (D8)', async () => {
     const h = harness(NOWHERE);
-    await h.app.api.createRoom(SERVER, 'me').catch(() => {});
-    assert.equal(h.server.to('/api/rooms').length, 0, 'a keyless room is one the engine never follows');
-    assert.equal(h.transports.length, 0);
-    assert.match(h.status().text, /영상/);
-    assert.match(h.status().cls, /err/);
+    await h.app.api.createRoom(SERVER, 'me');
+    assert.deepEqual(h.server.to('/api/rooms').map((r) => r.body['mediaKey']), ['']);
+    assert.equal(h.transports.length, 1, 'the creator did not join the room it made');
+    h.welcome({ mediaKey: '' });
+    await h.tick(3000);
+    assert.deepEqual(h.tr().sentOf('cmd'), [], 'a page with no media named or seeded the room');
   });
 
-  it('tells a member in a room with no media that there is nothing to sync here', async () => {
+  it('tells a member in a room with no media how it gets one', async () => {
     const h = harness(NOWHERE);
     h.join();
     h.welcome({ mediaKey: '' });
     await h.tick(100);
-    assert.match(h.mediaNotice().text, /동기화할 영상/);
+    assert.match(h.mediaNotice().text, /영상을 열면/);
     assert.ok(h.mediaNotice().shown, 'the member would sit in the room with nothing happening and no word why');
+  });
+
+  it('offers no button to a member on media in such a room: the engine names it', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: '' });
+    await h.tick(100);
+    assert.equal(h.visibleButton('이 영상으로 방 옮기기'), undefined);
+    assert.match(h.mediaNotice().text, /정하는 중/);
   });
 });
 

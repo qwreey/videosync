@@ -54,6 +54,27 @@ export function normalizeMediaKey(href: string, reg: ProviderRegistry = builtinR
 }
 
 /**
+ * Whether the room may follow a member from `prevKey` on to `nextKey` without
+ * anybody pressing "move the room here": the provider says `next` continues
+ * `prev`. Only same-provider keys can; YouTube never does, because autonav
+ * picks an arbitrary recommendation.
+ *
+ * The one place this is decided: the descriptor's `continues` rules (D7),
+ * read through the registry in force (Laftel: same series).
+ */
+export function continuesMedia(prevKey: string, nextKey: string, reg: ProviderRegistry = builtinRegistry()): boolean {
+  if (!prevKey || !nextKey || prevKey === nextKey) return false;
+  const colon = prevKey.indexOf(':');
+  if (colon <= 0 || !nextKey.startsWith(prevKey.slice(0, colon + 1))) return false;
+  const prefix = prevKey.slice(0, colon);
+  // The descriptor that owns this key namespace decides. Two in force that
+  // mint the same prefix cannot both be believed, and a continuation moves
+  // the whole room, so an ambiguous namespace continues nothing.
+  const owners = reg.entries.filter((e) => e.provider.keyPrefix === prefix);
+  return owners.length === 1 && owners[0]!.provider.continues(prevKey, nextKey);
+}
+
+/**
  * Where the media at `href` can be opened by somebody else: the provider's
  * canonical watch URL, or origin + path. Never the query string or fragment --
  * a query is where sites keep session tokens and tracking, and a fragment is

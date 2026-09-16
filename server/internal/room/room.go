@@ -35,7 +35,11 @@ type Member struct {
 	hasRTT bool
 
 	LastAppliedSeq uint64
-	Suspended      bool
+	// Suspended is "absent": a suspended tab, a refused autoplay, other media,
+	// or a finished one.
+	Suspended bool
+	// Acquiring is "present, not ready": see vsync.Report.Acquiring.
+	Acquiring      bool
 	ReadyState     int
 	BufferedAheadS float64
 	LastSeenMs     int64
@@ -133,6 +137,8 @@ type Room struct {
 	NudgesSuppressed int // rate commands the client was already holding
 	CmdsHeld         int // commands the gate held before applying
 	JudgingDeferred  int // reports not judged because a command was not due yet
+	MediaStale       int // `media` commands refused because their condition no longer held
+	AcquiringReports int // reports from members on their way to the room's media
 	GateHoldMs       int64
 
 	// GateDisabled turns the hold off, as a control: the gate is still
@@ -258,7 +264,7 @@ func (r *Room) MemberList() []MemberInfo {
 		m := r.members[id]
 		out = append(out, MemberInfo{
 			ID: m.ID, Name: m.Name, Suspended: m.Suspended,
-			Ready: m.ReadyState >= r.tun.MinReadyState,
+			Ready: m.ReadyState >= r.tun.MinReadyState && !m.Acquiring,
 		})
 	}
 	return out
@@ -338,6 +344,15 @@ func (r *Room) OnCmd(now int64, id string, m Cmd) {
 		}
 		if SanitizeMediaKey(m.MediaKey) == "" {
 			r.send(id, Error{Code: "bad_cmd", Msg: "mediaKey too long"})
+			return
+		}
+		// The compare-and-set, before any seq is taken. Against r.anchor, the
+		// newest the room has been told, not the one it is on right now: a
+		// continuation racing a media command still inside its lead was
+		// written against the media that command left.
+		if m.IfMediaKey != nil && *m.IfMediaKey != r.anchor.MediaKey {
+			r.MediaStale++
+			r.send(id, Error{Code: "media_stale", Msg: "the room is no longer on " + strconv.Quote(*m.IfMediaKey)})
 			return
 		}
 	default:
@@ -495,6 +510,16 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 		r.anchor = vsync.Anchor{PositionMs: m.PositionMs, AtServerMs: when,
 			Paused: true, MediaKey: m.MediaKey, MediaURL: SanitizeMediaURL(m.MediaURL)}
 		r.commit(now, r.anchor)
+		// Nobody is ready for media nobody has loaded. Until a member reports
+		// on the new seq it is unready, so the `play` that follows -- a
+		// continuation sends one as soon as its sender is conformed -- cannot
+		// race the first "acquiring" report of a member still on its way. A
+		// report from an absent member clears this like any other, and
+		// GATE_TIMEOUT bounds a member who never reports (docs/design/acquire.md).
+		for _, mid := range r.ids {
+			mm := r.members[mid]
+			mm.gated, mm.gatedAt, mm.gateWaived = true, now, false
+		}
 	}
 	r.lastCmdWhen = when
 	st := State{Seq: r.seq, When: when, EmittedAt: now, Anchor: r.anchor, By: id, Kind: m.Kind}
@@ -530,7 +555,11 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 
 	m.LastSeenMs = now
 	m.LastAppliedSeq = rep.LastAppliedSeq
+	// Finished is absent to everything below, exactly like suspended: the
+	// corrector sees Suspended and leaves the member alone.
+	rep.Suspended = rep.Suspended || rep.Finished
 	m.Suspended = rep.Suspended
+	m.Acquiring = rep.Acquiring && !rep.Suspended
 	m.ReadyState = rep.ReadyState
 	m.BufferedAheadS = rep.BufferedAheadS
 	// Use the client's own measured round trip, not (now - its estimated server
@@ -563,6 +592,14 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// 1 -> 4. Make the grace explicit and derive it from the member's own
 	// measured round trip: it cannot be stale until the command has had time to
 	// reach it.
+	// Present but not ready, whatever its readyState says: hold a play for it.
+	// Marked before the stale check, because a member on its way to new media
+	// is very often also behind on seq -- that is how it learned of the media.
+	if m.Acquiring {
+		r.AcquiringReports++
+		r.markGated(m, now)
+	}
+
 	if rep.LastAppliedSeq < r.seq {
 		switch {
 		case r.NoStaleResend:
@@ -577,6 +614,12 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 			r.JudgingDeferred++
 			return
 		}
+	}
+
+	if m.Acquiring {
+		// Not judged: its position is not on the room's timeline yet, and the
+		// conform step that will put it there is already on its way.
+		return
 	}
 
 	cs := &m.corr
@@ -651,17 +694,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		m.lastRate, m.lastRateAt = d.Rate, now
 		r.send(id, Correct{Mode: "nudge", Rate: d.Rate, When: now, Why: d.Why})
 	case vsync.ActionGate:
-		if !m.gated && !m.gateWaived {
-			m.gated, m.gatedAt = true, now
-			r.GatesOpened++
-		}
-		// Anti-hang: a member stuck buffering past the timeout is dropped from
-		// the gate and the room continues without them. The waiver latches --
-		// see Member.gateWaived.
-		if m.gated && now-m.gatedAt > GateTimeoutMs {
-			m.gated, m.gateWaived = false, true
-			r.GatesWaived++
-		}
+		r.markGated(m, now)
 	default:
 		// Only clear the rate when the client is genuinely back in tolerance.
 		// Clearing it while a nudge is still closing the gap cancels the
@@ -674,6 +707,20 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 			m.lastRate, m.lastRateAt = 1.0, now
 			r.send(id, Correct{Mode: "nudge", Rate: 1.0, When: now, Why: "in tolerance"})
 		}
+	}
+}
+
+// markGated records that m is not ready. Anti-hang: a member unready past the
+// timeout is dropped from the gate and the room continues without them. The
+// waiver latches -- see Member.gateWaived.
+func (r *Room) markGated(m *Member, now int64) {
+	if !m.gated && !m.gateWaived {
+		m.gated, m.gatedAt = true, now
+		r.GatesOpened++
+	}
+	if m.gated && now-m.gatedAt > GateTimeoutMs {
+		m.gated, m.gateWaived = false, true
+		r.GatesWaived++
 	}
 }
 

@@ -528,5 +528,8 @@ export class Panel {
   /** The closed root, for the shim's own API (the browser probes drive it). */
   get tree(): ShadowRoot { return this.root; }
 
+  /** The element the panel lives in: input inside it is not a press on the player. */
+  get hostElement(): HTMLElement { return this.host; }
+
   destroy(): void { this.host.remove(); }
 }

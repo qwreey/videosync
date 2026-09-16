@@ -1,0 +1,490 @@
+{
+ "when": "2026-09-16T15:38:04.280Z",
+ "browser": "helium",
+ "input": "script (__site.go)",
+ "runs": [
+  {
+   "name": "replace in one task",
+   "q": "swap=el",
+   "removedElementPaused": true,
+   "zeroVideosSeen": false,
+   "order": [
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "http://127.0.0.1:8898/watch/1?swap=el"
+    },
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "http://127.0.0.1:8898/watch/2?swap=el"
+    },
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "pushState",
+     "act": false,
+     "href": "http://127.0.0.1:8898/watch/2?swap=el"
+    },
+    {
+     "dt": 4,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 4,
+     "k": "dom",
+     "type": "video-removed",
+     "act": false
+    },
+    {
+     "dt": 12,
+     "k": "media",
+     "type": "loadstart",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 12,
+     "k": "media",
+     "type": "pause",
+     "el": 1,
+     "conn": false,
+     "src": "/127.0.0.1:8898/test.mp4",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0.857,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 45,
+     "k": "media",
+     "type": "durationchange",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 45,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 52,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 52,
+     "k": "media",
+     "type": "canplay",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 52,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    }
+   ]
+  },
+  {
+   "name": "remove, insert 300 ms later",
+   "q": "swap=gap&gapMs=300",
+   "removedElementPaused": true,
+   "zeroVideosSeen": true,
+   "order": [
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "27.0.0.1:8898/watch/1?swap=gap&gapMs=300"
+    },
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "27.0.0.1:8898/watch/2?swap=gap&gapMs=300"
+    },
+    {
+     "dt": 2,
+     "k": "nav",
+     "type": "pushState",
+     "act": false,
+     "href": "27.0.0.1:8898/watch/2?swap=gap&gapMs=300"
+    },
+    {
+     "dt": 3,
+     "k": "dom",
+     "type": "video-removed",
+     "act": false
+    },
+    {
+     "dt": 5,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 6,
+     "k": "media",
+     "type": "pause",
+     "el": 1,
+     "conn": false,
+     "src": "/127.0.0.1:8898/test.mp4",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0.783,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 305,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 309,
+     "k": "media",
+     "type": "loadstart",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 313,
+     "k": "count",
+     "type": 1,
+     "act": false
+    },
+    {
+     "dt": 332,
+     "k": "media",
+     "type": "durationchange",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 333,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 341,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 342,
+     "k": "media",
+     "type": "canplay",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 342,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    }
+   ]
+  },
+  {
+   "name": "remove, insert 300 ms later, URL 600 ms later",
+   "q": "swap=gap&gapMs=300&urlAfter=600",
+   "removedElementPaused": true,
+   "zeroVideosSeen": true,
+   "order": [
+    {
+     "dt": 4,
+     "k": "dom",
+     "type": "video-removed",
+     "act": false
+    },
+    {
+     "dt": 4,
+     "k": "count",
+     "type": 0,
+     "act": false
+    },
+    {
+     "dt": 5,
+     "k": "media",
+     "type": "pause",
+     "el": 1,
+     "conn": false,
+     "src": "/127.0.0.1:8898/test.mp4",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0.868,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 306,
+     "k": "dom",
+     "type": "video-added",
+     "act": false
+    },
+    {
+     "dt": 310,
+     "k": "media",
+     "type": "loadstart",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 0,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": null,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 315,
+     "k": "count",
+     "type": 1,
+     "act": false
+    },
+    {
+     "dt": 330,
+     "k": "media",
+     "type": "durationchange",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 330,
+     "k": "media",
+     "type": "loadedmetadata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 1,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 335,
+     "k": "media",
+     "type": "loadeddata",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 335,
+     "k": "media",
+     "type": "canplay",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 335,
+     "k": "media",
+     "type": "canplaythrough",
+     "el": 2,
+     "conn": true,
+     "src": "0.0.1:8898/test.mp4?ep=2",
+     "rs": 4,
+     "paused": true,
+     "ended": false,
+     "ct": 0,
+     "dur": 240,
+     "rate": 1,
+     "act": false,
+     "trusted": true
+    },
+    {
+     "dt": 604,
+     "k": "nav",
+     "type": "navigate",
+     "act": false,
+     "href": "/watch/1?swap=gap&gapMs=300&urlAfter=600"
+    },
+    {
+     "dt": 605,
+     "k": "nav",
+     "type": "currententrychange",
+     "act": false,
+     "href": "/watch/2?swap=gap&gapMs=300&urlAfter=600"
+    },
+    {
+     "dt": 605,
+     "k": "nav",
+     "type": "pushState",
+     "act": false,
+     "href": "/watch/2?swap=gap&gapMs=300&urlAfter=600"
+    }
+   ]
+  }
+ ]
+}

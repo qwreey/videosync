@@ -6,6 +6,7 @@ import type { CapabilityMask, SeekHints } from '../providers/descriptor.ts';
 
 const DOM_EVENTS: readonly AdapterEvent[] = [
   'play', 'pause', 'seeked', 'seeking', 'ratechange', 'waiting', 'playing', 'stalled', 'timeupdate',
+  'emptied', 'loadstart',
 ];
 
 /** What a provider descriptor may tune on this adapter. */
@@ -99,6 +100,7 @@ export class Html5Adapter implements ProviderAdapter {
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
+      ended: this.el.ended,
     };
   }
 

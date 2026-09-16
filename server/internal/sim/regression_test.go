@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"math"
 	"testing"
 
 	"github.com/qwreey/videosync/server/internal/room"
@@ -517,6 +518,66 @@ func TestGateStopsTheRoomSkippingPastASlowMember(t *testing.T) {
 	}
 	if off.CmdsHeld != 0 {
 		t.Errorf("control held %d commands with the gate disabled", off.CmdsHeld)
+	}
+}
+
+// siteJoinScenario is D8's: a paused room at 60 s, a member who arrives on a
+// page whose site resumes to 813 s and autoplays when it can play (Laftel,
+// BROWSER-FINDINGS 20), and a play pressed while that member is still loading.
+func siteJoinScenario(seed int64, noGuard bool) Scenario {
+	good := Link{UpMs: 25, DownMs: 25, JitterMs: 5}
+	meh := Link{UpMs: 80, DownMs: 80, JitterMs: 30}
+	return Scenario{
+		Name: "site-autoplay-join", Seed: seed, DurationMs: 90000, StartPos: 60000, StartPaused: true,
+		Clients: []ClientProfile{
+			{ID: "a", IntrinsicRate: 1.0, Link: good},
+			{ID: "b", IntrinsicRate: 1.0, Link: meh},
+			{ID: "c", IntrinsicRate: 1.0, Link: meh, JoinAtMs: 20000,
+				SiteAfterMs: 1500, SiteResumeToMs: 813000, SiteAutoplay: true, NoAcquireGuard: noGuard},
+		},
+		Commands: []Command{{AtMs: 21200, ClientID: "a", Kind: "play"}},
+	}
+}
+
+// C1: a site's autoplay and resume on a newly found video were broadcast as
+// the member's own play and seek, so the room went wherever one member's site
+// history pointed. With the acquisition guard they are put back, and the play
+// somebody did press waits for the member who is still loading.
+//
+// Averaged over seeds, with the control, so neither half rests on one draw of
+// the jitter (POC-FINDINGS 39).
+func TestAcquireGuardIsLoadBearing(t *testing.T) {
+	tun := vsync.DefaultTunables()
+	const seeds = 10
+	// Where the room should be at the end: at 60 s, playing from shortly after
+	// the press (the lead, and the wait for c).
+	intended := float64(60000 + 90000 - 21200)
+	var onSpurious, offSpurious, onHeld int
+	var onErr, offErr float64
+	for seed := int64(1); seed <= seeds; seed++ {
+		on := Run(siteJoinScenario(seed, false), &vsync.ServoCorrector{}, tun)
+		off := Run(siteJoinScenario(seed, true), &vsync.ServoCorrector{}, tun)
+		onSpurious += on.SiteSpuriousCmds
+		offSpurious += off.SiteSpuriousCmds
+		onHeld += on.CmdsHeld
+		onErr += math.Abs(float64(on.FinalAnchor.Expected(90000))-intended) / seeds
+		offErr += math.Abs(float64(off.FinalAnchor.Expected(90000))-intended) / seeds
+		if on.SiteMovesAbsorbed == 0 {
+			t.Errorf("seed %d: the site's move was never put back -- the scenario tests nothing", seed)
+		}
+	}
+	// Structural, not statistical: with the guard the site's moves are never sent.
+	if onSpurious != 0 {
+		t.Errorf("guard on: %d site commands sent", onSpurious)
+	}
+	if offSpurious == 0 {
+		t.Error("control sent no site commands -- the scenario no longer reproduces C1")
+	}
+	if onHeld != seeds {
+		t.Errorf("guard on: %d plays held over %d seeds; the play should wait for the loading member every time", onHeld, seeds)
+	}
+	if !(onErr < 5000 && offErr > 100000) {
+		t.Errorf("room ends %.0f ms from where it was taken (guard on) vs %.0f ms (control)", onErr, offErr)
 	}
 }
 

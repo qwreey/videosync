@@ -61,7 +61,23 @@ type ClientProfile struct {
 	// not do this on its own (the hub closes a connection whose outbox
 	// overflows); it is the case the stale-anchor resend is a backstop for.
 	DropsDown [][2]int64
+
+	// The member's own site acting on the player it has just loaded (D8,
+	// docs/BROWSER-FINDINGS.md 20): SiteAfterMs after this member joins --
+	// when its player can play, which is where both measured sites act -- the
+	// site resumes to SiteResumeToMs (0: no resume) and, with SiteAutoplay,
+	// starts playback. Nobody pressed anything.
+	SiteAfterMs    int64
+	SiteResumeToMs int64
+	SiteAutoplay   bool
+	// NoAcquireGuard counts those moves as the member's and broadcasts them,
+	// which is what the client did before D8 (C1). Control for
+	// TestAcquireGuardIsLoadBearing. With the guard, the member reports itself
+	// acquiring until its player is loaded, and then conforms to the room.
+	NoAcquireGuard bool
 }
+
+func (p ClientProfile) hasSite() bool { return p.SiteAfterMs > 0 }
 
 // Client is a simulated player plus the client half of the sync protocol.
 type Client struct {
@@ -121,6 +137,12 @@ type Client struct {
 	// SpuriousCmds counts commands this client sent that were caused by the
 	// browser, not by its user.
 	SpuriousCmds int
+	// SiteSpuriousCmds is the part of SpuriousCmds the member's site caused.
+	SiteSpuriousCmds int
+	// SiteMovesAbsorbed counts site moves the acquisition guard put back.
+	SiteMovesAbsorbed int
+	siteDone          bool
+	reportedAcquiring bool
 
 	// stall inference -- the client cannot call stalled(); it must work this
 	// out from what a real <video> exposes: readyState, and the fact that
@@ -305,6 +327,61 @@ func (c *Client) UpdateSuspension(serverMs int64) {
 
 func (c *Client) Suspended() bool { return c.suspended }
 
+// UpdateSite models the member's own site acting on the player it has just
+// loaded, and what the client makes of it. See ClientProfile.SiteAfterMs.
+func (c *Client) UpdateSite(serverMs int64) {
+	if c.siteDone || !c.P.hasSite() || !c.joined || serverMs < c.P.JoinAtMs+c.P.SiteAfterMs {
+		return
+	}
+	if !c.P.NoAcquireGuard && !c.haveOffset {
+		return // nothing to conform to yet; the site's move waits with the load
+	}
+	c.siteDone = true
+	resumed := c.P.SiteResumeToMs > 0
+	if resumed {
+		c.payForSeek(float64(c.P.SiteResumeToMs), serverMs)
+		c.posMs = float64(c.P.SiteResumeToMs)
+	}
+	started := c.P.SiteAutoplay && c.paused
+	if started {
+		c.paused = false
+	}
+	if c.P.NoAcquireGuard {
+		// Before D8: a jump in both diffs is a seek, and a transition to
+		// playing that the room does not share is a play. Both are sent.
+		if resumed {
+			c.outbox = append(c.outbox, MsgCmd{Kind: "seek", PositionMs: int64(c.posMs)})
+			c.SpuriousCmds++
+			c.SiteSpuriousCmds++
+		}
+		if started && c.anchor.Paused {
+			c.outbox = append(c.outbox, MsgCmd{Kind: "play", PositionMs: int64(c.posMs)})
+			c.SpuriousCmds++
+			c.SiteSpuriousCmds++
+		}
+		return
+	}
+	// D8: nobody gestured, so these are the site's. The player is conformed
+	// to the room and the member is on its timeline from here.
+	if resumed || started {
+		c.SiteMovesAbsorbed++
+	}
+	target := float64(c.anchor.Expected(c.serverNowEst(serverMs)))
+	if math.Abs(target-c.posMs) > seekToleranceMs {
+		c.payForSeek(target, serverMs)
+		c.posMs = target
+	}
+	c.paused = c.anchor.Paused
+	c.lastKnownPos = c.posMs
+	c.residualHist = nil
+}
+
+// acquiring reports whether this member is still loading the media it joined
+// on: present, not ready (docs/design/acquire.md).
+func (c *Client) acquiring() bool {
+	return !c.P.NoAcquireGuard && c.P.hasSite() && c.joined && !c.siteDone
+}
+
 func (c *Client) stalled(serverMs int64) bool {
 	if serverMs < c.seekStallUntil {
 		return true
@@ -462,13 +539,20 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	// nothing new for detection to judge -- but a heartbeat is still due.
 
 	// An anomaly is reported at once, but not more often than the engine
-	// allows (minReportIntervalMs); the heartbeat goes regardless.
+	// allows (minReportIntervalMs); the heartbeat goes regardless. So does a
+	// change in acquiring, which is what holds and releases a play (engine.ts).
+	acq := c.acquiring()
+	if acq != c.reportedAcquiring {
+		force = true
+	}
 	if !force && (math.Abs(res) < float64(t.ReportThreshold) ||
 		(c.haveReported && serverMs-c.lastReportAt < minReportIntervalMs)) {
 		return vsync.Report{}, false
 	}
 	c.lastReportAt, c.haveReported = serverMs, true
+	c.reportedAcquiring = acq
 	return vsync.Report{
+		Acquiring:       acq,
 		ClientID:        c.P.ID,
 		ResidualMs:      int64(res),
 		SlopeMsPerS:     c.slope(),

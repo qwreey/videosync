@@ -599,7 +599,105 @@ describe('client core against a real videosyncd', { concurrency: false }, () => 
       a.engine.stop();
     }
   });
+
+  it('two members whose sites move on at the end: one continuation wins, and the play waits for both', async function () {
+    const EP1 = 'e2e:ep1';
+    const EP2 = 'e2e:ep2';
+    const { roomId, secret } = await createRoom(EP1);
+    const a = acqPeer(roomId, secret, 'a', EP1);
+    const b = acqPeer(roomId, secret, 'b', EP1);
+    try {
+      await joined(a, b);
+      a.engine.seek(97);
+      a.engine.play();
+      await waitFor(() => !a.player.paused && !b.player.paused &&
+        a.engine.acquisition === 'steady' && b.engine.acquisition === 'steady', 8000, 'both to play, settled');
+      // Both reach the end. Nobody pauses the room for it.
+      await waitFor(() => a.player.readState().positionS >= 99.5, 5000, 'the end');
+      for (const p of [a, b]) endOf(p);
+      await sleep(300);
+      assert.equal(a.engine.currentAnchor.paused, false, 'the end of the media paused the room');
+      // Both sites route on in the same instant -- so both send the
+      // continuation before either hears of the other's -- and b loads slower.
+      b.player.readyState = 1;
+      for (const p of [a, b]) {
+        p.engine.setLocalMediaKey(EP2);
+        p.player.ended = false; p.player.paused = true; p.player.positionS = 0;
+        p.player.emit('emptied');
+      }
+      // Their sites autoplay the new episode.
+      for (const p of [a, b]) { p.player.paused = false; p.player.emit('play'); }
+      await waitFor(() => a.engine.currentAnchor.mediaKey === EP2 && b.engine.currentAnchor.mediaKey === EP2,
+        4000, 'the room to move on');
+      assert.equal(a.engine.stats.mediaStale + b.engine.stats.mediaStale, 1, 'not exactly one winner');
+      assert.equal(a.engine.stats.continuations + b.engine.stats.continuations, 2);
+      await sleep(1500);
+      assert.equal(a.engine.currentAnchor.paused, true, 'the room started without the member still loading');
+      assert.equal(a.player.paused, true, 'a site autoplay kept running under a paused room');
+      b.player.readyState = 4;
+      await waitFor(() => !a.engine.currentAnchor.paused && !a.player.paused && !b.player.paused,
+        5000, 'the room to start once both are there');
+      await sleep(1500);
+      const pa = a.player.readState().positionS;
+      const pb = b.player.readState().positionS;
+      assert.ok(pa < 4 && Math.abs(pa - pb) < 0.3, `a at ${pa.toFixed(2)} s, b at ${pb.toFixed(2)} s`);
+      for (const p of [a, b]) {
+        const kinds = p.engine.trace.filter((e) => e.dir === 'tx' && e.t === 'cmd').map((e) => e.detail['kind']);
+        assert.ok(!kinds.includes('pause'), `${kinds} -- a pause was sent`);
+      }
+      assert.equal(a.engine.stats.badFrames + b.engine.stats.badFrames, 0);
+    } finally {
+      a.engine.stop(); b.engine.stop();
+    }
+  });
+
+  it('a room created with no media is named by the first member on media, once', async function () {
+    const { roomId, secret } = await createRoom('');
+    const a = acqPeer(roomId, secret, 'a', 'e2e:mine', { paused: false, positionS: 40 });
+    const b = acqPeer(roomId, secret, 'b', 'e2e:theirs', { paused: false, positionS: 70 });
+    try {
+      await joined(a, b);
+      await waitFor(() => a.engine.currentAnchor.mediaKey !== '' &&
+        a.engine.currentAnchor.mediaKey === b.engine.currentAnchor.mediaKey, 4000, 'the room to be named');
+      assert.equal(a.engine.stats.namings + b.engine.stats.namings, 2);
+      assert.equal(a.engine.stats.mediaStale + b.engine.stats.mediaStale, 1, 'not exactly one namer');
+      const namer = a.engine.currentAnchor.mediaKey === 'e2e:mine' ? a : b;
+      const start = namer === a ? 40 : 70;
+      // The namer seeds the room from where it is, once settled, and keeps playing.
+      await waitFor(() => !namer.engine.currentAnchor.paused, 5000, 'the namer to seed the room');
+      assert.ok(Math.abs(namer.engine.currentAnchor.positionMs / 1000 - start) < 5,
+        `seeded at ${namer.engine.currentAnchor.positionMs} ms`);
+      assert.equal(namer.player.paused, false, 'the namer was paused by its own naming');
+    } finally {
+      a.engine.stop(); b.engine.stop();
+    }
+  });
 });
+
+/** A peer with gesture evidence (none given, ever) and the continuation rule of the e2e episodes. */
+function acqPeer(roomId: string, secret: string, name: string, mediaKey: string, opts = {}): Peer {
+  const player = new FakePlayer(realTime, { paused: true, positionS: 0, durationS: 100, ...opts });
+  const engine = new SyncEngine({
+    adapter: player,
+    transport: new WebSocketTransport(`${base.replace('http', 'ws')}/ws`),
+    now: () => performance.now(),
+    setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+    clearTimer: (h) => { clearTimeout(h); },
+    isHidden: () => false,
+    gestures: { lastInputAt: () => -Infinity, lastIgnoredInputAt: () => -Infinity, activationActive: () => false },
+    continues: (p, n) => p === 'e2e:ep1' && n === 'e2e:ep2',
+  }, { ...DEFAULT_ENGINE_CONFIG, room: roomId, secret, name, mediaKey }, {});
+  return { engine, player, gates: [], chat: [] };
+}
+
+/** What the end of the media does to an element. */
+function endOf(p: Peer): void {
+  p.player.readState();
+  p.player.positionS = 100;
+  p.player.paused = true;
+  p.player.ended = true;
+  p.player.emit('pause');
+}
 
 // Access control (D6), over the wire: the client's real sign-in path -- the
 // shims' token policy on a real `fetch`, `ServerAuth`, the engine's ticket

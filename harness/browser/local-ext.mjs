@@ -8,24 +8,30 @@
 //   node harness/browser/local-ext.mjs
 //   -> .cache/ext-local/chromium        (--load-extension=...)
 //   -> .cache/firefox-profile/ext-local (inside the Firefox sandbox's reach)
+//
+// NAME=ext-control keeps a second build beside the first (a before/after pair),
+// and VS_CACHE points at another checkout's .cache -- a worktree's own is not
+// inside the Firefox sandbox's grant.
 import { cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..');
 const LOCAL = 'http://127.0.0.1/*';
+const NAME = process.env.NAME || 'ext-local';
+const cache = process.env.VS_CACHE || join(root, '.cache');
 for (const [from, to] of [
-  ['client/extension/dist', '.cache/ext-local/chromium'],
-  ['client/extension/dist-firefox', '.cache/firefox-profile/ext-local'],
+  [join(root, 'client/extension/dist'), join(cache, NAME, 'chromium')],
+  [join(root, 'client/extension/dist-firefox'), join(cache, 'firefox-profile', NAME)],
 ]) {
-  cpSync(join(root, from), join(root, to), { recursive: true });
-  const p = join(root, to, 'manifest.json');
+  cpSync(from, to, { recursive: true });
+  const p = join(to, 'manifest.json');
   const m = JSON.parse(readFileSync(p, 'utf8'));
   for (const cs of m.content_scripts) if (!cs.matches.includes(LOCAL)) cs.matches.push(LOCAL);
   writeFileSync(p, JSON.stringify(m, null, 2));
   // The panel's shadow root is closed in shipped builds. Firefox gives a probe
   // no way into the content script's world, so the probe build opens it.
-  const js = join(root, to, 'content.js');
+  const js = join(to, 'content.js');
   const src = readFileSync(js, 'utf8');
   const marker = '["videosync-panel:closed"]';
   if (!src.includes(marker)) throw new Error(`${js}: panel marker not found -- was content.ts changed?`);

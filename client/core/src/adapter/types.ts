@@ -69,12 +69,29 @@ export interface PlayerState {
   readonly bufferedAheadS: number;
   /** Seconds of contiguous buffer behind it -- a backward seek into this is free. */
   readonly bufferedBehindS: number;
+  /**
+   * The element reached the end of its media. Already true inside the `pause`
+   * handler that the end of media fires (BROWSER-FINDINGS §20), which is what
+   * lets that pause be told apart from a member's. Undefined where the
+   * adapter cannot say.
+   */
+  readonly ended?: boolean | undefined;
 }
 
 export type AdapterEvent =
   | 'play' | 'pause' | 'seeked' | 'seeking' | 'ratechange'
   | 'waiting' | 'playing' | 'stalled' | 'timeupdate'
-  /** The underlying element was swapped out; every cached reference is stale. */
+  /**
+   * The element's media was replaced under it: the HTML load algorithm ran
+   * (a new `src`, a new MSE blob). It fires `emptied` for an element that had
+   * media and `loadstart` always, and sets `paused` WITHOUT a `pause` event
+   * (BROWSER-FINDINGS §20).
+   */
+  | 'emptied' | 'loadstart'
+  /**
+   * The underlying element was swapped out, or is gone (no element at all);
+   * every cached reference is stale.
+   */
   | 'elementreplaced';
 
 export interface ProviderAdapter {
