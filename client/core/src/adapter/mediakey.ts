@@ -30,6 +30,12 @@ export interface MediaKeyRule {
    * host the URL named, which for a known provider is any subdomain of it.
    */
   url?(body: string): string;
+  /**
+   * Whether media `next` is the natural continuation of `prev` on this
+   * provider (both key bodies), so a member whose site moved on to it at the
+   * end of `prev` may move the room along. Absent: never.
+   */
+  continues?(prev: string, next: string): boolean;
 }
 
 /** `/watch?v=ID`, `/embed/ID`, `/shorts/ID`, `/live/ID`, and youtu.be/ID. */
@@ -73,6 +79,13 @@ const LAFTEL: MediaKeyRule = {
   hosts: ['laftel.net'],
   key: () => null, // fall through to the path
   url: (path) => `https://laftel.net${path}`,
+  // Another episode of the same series: `/player/<series>/<episode>`. Laftel
+  // routes there on its own ~5.5 s after an episode ends (BROWSER-FINDINGS §20).
+  continues: (prev, next) => {
+    const a = /^\/player\/(\d+)\/(\d+)$/.exec(prev);
+    const b = /^\/player\/(\d+)\/(\d+)$/.exec(next);
+    return !!a && !!b && a[1] === b[1] && a[2] !== b[2];
+  },
 };
 
 export const RULES: readonly MediaKeyRule[] = [YOUTUBE, LAFTEL];
@@ -119,6 +132,26 @@ export function normalizeMediaKey(href: string): string | null {
   const path = u.pathname.replace(/\/+$/, '');
   if (path === '' || path === '/') return null;
   return `${id}:${path}`;
+}
+
+/**
+ * Whether the room may follow a member from `prevKey` on to `nextKey` without
+ * anybody pressing "move the room here": the provider says `next` continues
+ * `prev`. Only same-provider keys can; YouTube never does, because autonav
+ * picks an arbitrary recommendation.
+ *
+ * The one place this is decided, so a provider descriptor's `continues` can
+ * replace the hard-coded rules without touching the callers.
+ */
+export function continuesMedia(prevKey: string, nextKey: string): boolean {
+  if (!prevKey || !nextKey || prevKey === nextKey) return false;
+  for (const r of RULES) {
+    const pre = `${r.id}:`;
+    if (prevKey.startsWith(pre) && nextKey.startsWith(pre)) {
+      return r.continues?.(prevKey.slice(pre.length), nextKey.slice(pre.length)) ?? false;
+    }
+  }
+  return false;
 }
 
 /**

@@ -5,6 +5,7 @@ import { AutoplayBlockedError } from './types.ts';
 
 const DOM_EVENTS: readonly AdapterEvent[] = [
   'play', 'pause', 'seeked', 'seeking', 'ratechange', 'waiting', 'playing', 'stalled', 'timeupdate',
+  'emptied', 'loadstart',
 ];
 
 /**
@@ -74,6 +75,7 @@ export class Html5Adapter implements ProviderAdapter {
       buffered,
       bufferedAheadS: aheadS,
       bufferedBehindS: behindS,
+      ended: this.el.ended,
     };
   }
 

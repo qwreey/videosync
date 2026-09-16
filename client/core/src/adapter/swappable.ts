@@ -5,7 +5,7 @@ import type {
 /** What a swappable adapter reports while there is no element at all. */
 const ABSENT: PlayerState = {
   positionS: 0, paused: true, rate: 1, readyState: 0, muted: false,
-  durationS: 0, buffered: [], bufferedAheadS: 0, bufferedBehindS: 0,
+  durationS: 0, buffered: [], bufferedAheadS: 0, bufferedBehindS: 0, ended: false,
 };
 
 /**
@@ -41,13 +41,20 @@ export class SwappableAdapter implements ProviderAdapter {
   setTarget(next: ProviderAdapter | null): void {
     for (const u of this.unsubs) u();
     this.unsubs = [];
+    const had = this.target !== null;
     this.target?.destroy();
     this.target = next;
-    if (!next) return;
-    for (const [event, fns] of this.listeners) {
-      this.unsubs.push(next.on(event, () => { for (const fn of fns) fn(); }));
+    if (next) {
+      for (const [event, fns] of this.listeners) {
+        this.unsubs.push(next.on(event, () => { for (const fn of fns) fn(); }));
+      }
     }
-    // Subscribers care that the ground moved under them.
+    // Subscribers care that the ground moved under them -- including when it
+    // is simply gone. Returning early there left the detector holding the old
+    // element's position while `readState` fell to ABSENT's 0, which it read
+    // as a seek to the start, and sent (research/design-acquire-video.md
+    // Path E, reproduced in BROWSER-FINDINGS §20).
+    if (!next && !had) return;
     for (const fn of this.listeners.get('elementreplaced') ?? []) fn();
   }
 
