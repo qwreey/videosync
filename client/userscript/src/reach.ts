@@ -62,12 +62,19 @@ function unmapIPv4(h: string): string {
  * is the one thing it can do that a userscript structurally cannot.
  *
  * That block is Chromium's. Firefox was measured NOT to apply it: an https
- * YouTube page's socket to `ws://127.0.0.1` arrived as a plain GET (§19). So on
- * Firefox nothing here claims a block, and loopback -- which is not mixed
- * content there -- is let through. Firefox and a LAN address was not
- * measured, and saying nothing is better than saying something false: the
- * cost is the browser's silence if it does block. Any other engine keeps the
- * Chromium answer, which is the only one measured to be refused.
+ * YouTube page's socket to `ws://127.0.0.1` arrived as a plain GET (§19). That
+ * one address is all that was measured from a page. So on Firefox nothing
+ * here claims a block, and loopback is not refused as mixed content.
+ *
+ * The rest is a choice between two ways of being wrong, not a measurement. A
+ * refusal here stops the member outright -- 참가 does nothing else -- while a
+ * pass that should have been a refusal costs the browser's silence. So where
+ * nothing was measured the answer leans to saying nothing: Firefox and a LAN
+ * address, and `localhost` and `::1`, which Firefox treats as the same
+ * loopback as 127.0.0.1 for mixed content but which §19 did not open from a
+ * page. (§19's "`localhost` is upgraded the same way" is about the MV3
+ * background, not a page.) Any other engine keeps the Chromium answer, which
+ * is the only one measured to be refused.
  */
 export function unreachable(serverUrl: string, page: PageLocation, userAgent: string): string | null {
   let u: URL;
@@ -92,8 +99,8 @@ export function unreachable(serverUrl: string, page: PageLocation, userAgent: st
       '서버를 공개 주소 + 실제 인증서로 두거나, 터널을 쓰거나, 확장 프로그램 쪽을 쓰세요 — ' +
       '확장의 서비스 워커는 이 제한을 받지 않아요.';
   }
-  // Only what §19 covered: a `*.localhost` name is loopback to Chromium, but
-  // was not measured to be exempt from mixed content in Firefox.
+  // `*.localhost` is left out: it is loopback to Chromium, but nothing here
+  // says Firefox resolves it locally rather than sending it to DNS.
   const sh = unmapIPv4(u.hostname.toLowerCase().replace(/^\[|\]$/g, ''));
   const loopback = isLoopback(sh) && !sh.endsWith('.localhost');
   if (page.protocol === 'https:' && u.protocol === 'http:' && !(firefox && loopback)) {

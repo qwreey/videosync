@@ -60,8 +60,11 @@ describe('a server the page cannot reach', () => {
 
   it('is not claimed on Firefox, which was measured to let a public page reach loopback', () => {
     // BROWSER-FINDINGS §19: an https YouTube page's socket to ws://127.0.0.1
-    // arrived as a plain GET.
-    for (const s of ['http://127.0.0.1:8787', 'http://localhost:8787']) {
+    // arrived as a plain GET. That address is the measured one.
+    assert.equal(unreachable('http://127.0.0.1:8787', YOUTUBE, FIREFOX), null);
+    // Not measured from a page; let through because a false refusal stops the
+    // member outright and a false pass only costs the browser's silence.
+    for (const s of ['http://localhost:8787', 'http://[::1]:8787']) {
       assert.equal(unreachable(s, YOUTUBE, FIREFOX), null, s);
     }
     // Firefox was not measured to block a private address, so nothing may
