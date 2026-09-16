@@ -45,6 +45,13 @@ export interface Platform {
    * worker can (docs/BROWSER-FINDINGS.md §8, §9).
    */
   unreachable(serverUrl: string): string | null;
+  /**
+   * Leave the panel's shadow root open. For a probe build only: Firefox gives
+   * a test driver no way into a content script's world, so its probe can only
+   * reach the panel from the page, which is exactly what a shipped build must
+   * not allow (see `Panel`).
+   */
+  openPanel?: boolean;
 }
 
 export interface App {
@@ -60,6 +67,12 @@ export interface VideoSyncApi {
   createRoom(serverUrl: string, name: string): Promise<{ roomId: string; secret: string }>;
   join(serverUrl: string, roomId: string, secret: string, name: string): void;
   leave(): void;
+  /**
+   * The panel's shadow root. It is closed to the page (see `Panel`), so this is
+   * the way in for whoever holds this API -- the console and the browser
+   * probes, which drive the panel as a user would.
+   */
+  panelRoot(): ShadowRoot;
   /**
    * Everything worth knowing about this session, in one object, as JSON.
    *
@@ -220,7 +233,7 @@ export function start(p: Platform): App {
     onChat: (text) => engine?.chat(text),
     onRotate: () => engine?.rotateSecret(),
     onGesture: () => { void engine?.resumeAfterGesture(); },
-  });
+  }, p.openPanel ? 'open' : 'closed');
 
   const watcher = new PageWatcher({
     doc: document,
@@ -605,6 +618,7 @@ export function start(p: Platform): App {
     createRoom: (serverUrl, name) => createRoom(serverUrl, name),
     join: (serverUrl, roomId, secret, name) => { join(serverUrl, roomId, secret, name); },
     leave,
+    panelRoot: () => panel.tree,
     dump() {
       const s = adapter.readState();
       return JSON.stringify({

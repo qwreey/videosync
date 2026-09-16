@@ -6,6 +6,14 @@
  * break the site. Everything is created with `createElement` -- no
  * `innerHTML` anywhere a room name, a member name or a chat line could reach,
  * because all three are attacker-controlled text from the room's perspective.
+ *
+ * The root is closed. The page's own scripts, third-party ones included, can
+ * otherwise walk into it: read the secret a room creator was handed by the
+ * server -- never typed, never in the URL -- and press 참가, 나가기 or 비밀키
+ * 교체 for the member. Closed, the page reaches the host element and nothing
+ * under it; our own code keeps the handle (`tree`), and the only way to it
+ * from outside is the shim's API, which the page cannot see. Only a probe
+ * build opens it (`Platform.openPanel`).
  */
 import type { MemberInfo } from '../engine/protocol.ts';
 
@@ -83,11 +91,11 @@ export class Panel {
   private gestureOverlay: HTMLElement | null = null;
   private joined = false;
 
-  constructor(doc: Document, fields: UIFields, handlers: UIHandlers) {
+  constructor(doc: Document, fields: UIFields, handlers: UIHandlers, mode: ShadowRootMode = 'closed') {
     this.h = handlers;
     this.host = doc.createElement('div');
     this.host.id = 'videosync-root';
-    this.root = this.host.attachShadow({ mode: 'open' });
+    this.root = this.host.attachShadow({ mode });
     const style = doc.createElement('style');
     style.textContent = CSS;
     this.root.append(style, this.build(doc, fields));
@@ -364,6 +372,9 @@ export class Panel {
   }
 
   get isJoined(): boolean { return this.joined; }
+
+  /** The closed root, for the shim's own API (the browser probes drive it). */
+  get tree(): ShadowRoot { return this.root; }
 
   destroy(): void { this.host.remove(); }
 }

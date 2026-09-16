@@ -76,7 +76,9 @@ function useTab(tab: TabStorage | null): void {
   });
 }
 
-function harness(href: string, store: FakeStore = makeStore(), tab: TabStorage | null = new Map()): H {
+function harness(
+  href: string, store: FakeStore = makeStore(), tab: TabStorage | null = new Map(), extra: Partial<Platform> = {},
+): H {
   mock.timers.enable({ apis: ['setTimeout'] });
   useTab(tab);
   const dom = installDom(href);
@@ -86,8 +88,11 @@ function harness(href: string, store: FakeStore = makeStore(), tab: TabStorage |
     makeTransport: () => { const t = new FakeTransport(); transports.push(t); return t; },
     createRoom: () => Promise.resolve({ roomId: 'R', secret: 'S' }),
     unreachable: () => null,
+    ...extra,
   };
   const app = start(p);
+  // The root is closed; `shadow` is the fake's way in, as `panelRoot()` is the
+  // real one.
   const all = () => [...(dom.doc.getElementById('videosync-root')!.shadow!.walk())];
   const h: H = {
     dom, app, store, transports,
@@ -502,6 +507,17 @@ describe('the panel', () => {
       assert.deepEqual(chats, ['안녕']);
       assert.equal(input.value, '');
     } finally { dom.uninstall(); }
+  });
+
+  it('keeps its root closed to the page', () => {
+    const h = harness(ROOM_URL);
+    assert.equal(h.root().shadowMode, 'closed', 'page scripts could read the secret and press the buttons');
+    assert.equal(h.app.api.panelRoot(), h.root().shadow as unknown as ShadowRoot);
+  });
+
+  it('is left open only by a build that asks', () => {
+    const h = harness(ROOM_URL, makeStore(), new Map(), { openPanel: true });
+    assert.equal(h.root().shadowMode, 'open');
   });
 
   it('lets the collapse button receive its click', () => {
