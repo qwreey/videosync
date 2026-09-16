@@ -4,6 +4,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"strings"
 
@@ -240,7 +241,14 @@ func table(scs []sim.Scenario, tun vsync.Tunables) [][]sim.Result {
 }
 
 func main() {
+	seeds := flag.Int("seeds", 0, "instead of the table, average every row over seeds 1..N")
+	only := flag.String("strategy", "", "with -seeds: only this strategy")
+	flag.Parse()
 	tun := vsync.DefaultTunables()
+	if *seeds > 0 {
+		averaged(*seeds, *only, tun)
+		return
+	}
 	strats := strategies()
 
 	// anchorErr is the PRIMARY metric: error against the true server clock.
@@ -250,17 +258,20 @@ func main() {
 	// Seeks are split because they do not cost the same thing: an in-buffer
 	// seek is ~free at any network speed, an out-of-buffer seek costs a full
 	// segment fetch and rebuffers for it (docs/BROWSER-FINDINGS.md 2).
-	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %6s %5s\n",
+	// skipped is the other half of the score: anchorErr excludes a stalled
+	// member by construction, so a room that leaves somebody behind and yanks
+	// them forward later scores well on it. skipped is what that cost them.
+	fmt.Printf("%-20s %-16s %9s %9s %6s %6s %8s %8s %6s %5s\n",
 		"scenario", "strategy", "anchorErr", "p95Anchor",
-		"seek/in", "seek/OUT", "rateTime", "gates", "BAD")
-	fmt.Println(strings.Repeat("-", 104))
+		"seek/in", "seek/OUT", "rateTime", "skipped", "gates", "BAD")
+	fmt.Println(strings.Repeat("-", 113))
 
 	scs := scenarios()
 	for i, rows := range table(scs, tun) {
 		for j, r := range rows {
-			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %6d %5d\n",
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %6d %6d %8.0f %8.0f %6d %5d\n",
 				scs[i].Name, strats[j].name, r.MeanAnchorErrMs, r.P95AnchorErrMs,
-				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs,
+				r.InBufferSeeks, r.OutOfBufferSeeks, r.RateTimeMs, r.SkippedMs,
 				r.GatesOpened, r.Misdetections+r.SpuriousCmds)
 			if len(r.ConvergeMs) > 0 {
 				fmt.Printf("%-20s %-15s   converge: %v ms\n", "", "", r.ConvergeMs)
@@ -269,4 +280,35 @@ func main() {
 		fmt.Println()
 	}
 	controlRun(tun)
+}
+
+// averaged prints every row as a mean over seeds 1..n. The table above is one
+// draw of the jitter, and a single seed is not evidence for a comparison
+// (POC-FINDINGS 39): a control-law change can win or lose on it by luck.
+func averaged(n int, only string, tun vsync.Tunables) {
+	fmt.Printf("mean over seeds 1..%d\n", n)
+	fmt.Printf("%-20s %-16s %9s %9s %8s %8s %8s %8s %8s\n",
+		"scenario", "strategy", "anchorErr", "p95Anchor",
+		"seek/in", "seek/OUT", "rateTime", "skipped", "resends")
+	fmt.Println(strings.Repeat("-", 104))
+	for _, sc := range scenarios() {
+		for _, st := range strategies() {
+			if only != "" && st.name != only {
+				continue
+			}
+			var m [7]float64
+			for s := 1; s <= n; s++ {
+				v := sc
+				v.Seed = int64(s)
+				r := sim.Run(v, st.mk(), tun)
+				for k, x := range []float64{r.MeanAnchorErrMs, r.P95AnchorErrMs,
+					float64(r.InBufferSeeks), float64(r.OutOfBufferSeeks), r.RateTimeMs,
+					r.SkippedMs, float64(r.StaleResends)} {
+					m[k] += x / float64(n)
+				}
+			}
+			fmt.Printf("%-20s %-16s %9.0f %9.0f %8.2f %8.2f %8.0f %8.0f %8.2f\n",
+				sc.Name, st.name, m[0], m[1], m[2], m[3], m[4], m[5], m[6])
+		}
+	}
 }
