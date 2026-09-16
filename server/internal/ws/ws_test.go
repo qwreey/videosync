@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -360,6 +361,31 @@ func TestReadBeforeIsNotExtendedByControlFramesOrFragments(t *testing.T) {
 			}
 			t.Fatal("a peer that keeps sending frames outlived ReadBefore by seconds")
 		})
+	}
+}
+
+func TestDialAddressKeepsIPv6LiteralsValid(t *testing.T) {
+	// url.URL.Host keeps an IPv6 literal's brackets, so joining it with a
+	// default port bracketed it twice: "[[::1]]:80", which no dialer accepts.
+	for raw, want := range map[string]string{
+		"ws://[::1]/ws":          "[::1]:80",
+		"wss://[2001:db8::1]/ws": "[2001:db8::1]:443",
+		"ws://[::1]:8080/ws":     "[::1]:8080",
+		"ws://example.com/ws":    "example.com:80",
+		"https://example.com/ws": "example.com:443",
+		"ws://127.0.0.1:9/ws":    "127.0.0.1:9",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := dialAddr(u, u.Scheme == "wss" || u.Scheme == "https")
+		if got != want {
+			t.Errorf("%s: dial address %q, want %q", raw, got, want)
+		}
+		if _, _, err := net.SplitHostPort(got); err != nil {
+			t.Errorf("%s: %q is not a dialable address: %v", raw, got, err)
+		}
 	}
 }
 
