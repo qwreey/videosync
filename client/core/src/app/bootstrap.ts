@@ -149,16 +149,19 @@ export function start(p: Platform): App {
     setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
     clearTimer: (h) => { clearTimeout(h); },
     onChange: (el, href) => {
-      adapter.setTarget(el ? new Html5Adapter(el, 'html5') : null);
       const key = normalizeMediaKey(href) ?? '';
       mediaUrl = watchUrl(href) ?? '';
-      if (key !== mediaKey) {
+      const mediaChanged = key !== mediaKey;
+      if (mediaChanged) {
         mediaKey = key;
-        // The engine has to know before its next evaluation, or it will judge
-        // the new element's position against the old video's timeline.
+        // The engine has to know before the element is retargeted, not just
+        // before its next evaluation: `setTarget` fires `elementreplaced`
+        // synchronously, and an engine that still believes it is on the room's
+        // media puts the new video at the old one's timestamp.
         engine?.setLocalMediaKey(key, mediaUrl);
-        onMediaChanged();
       }
+      adapter.setTarget(el ? new Html5Adapter(el, 'html5') : null);
+      if (mediaChanged) onMediaChanged();
       refreshStatus();
     },
   });

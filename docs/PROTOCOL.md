@@ -48,6 +48,15 @@ Sample every 5 s, plus 5 rapid samples on connect. `serverNow = clientNow + offs
 > difference and **no amount of sampling reveals it**. The sim harness injects asymmetry so we at
 > least know our sensitivity.
 
+> **Amendment: the offset itself can move.** A minimum RTT never improves because the offset
+> changed, so the rule above froze the first estimate for the socket's whole life — and
+> `performance.now()` stands still through a system suspend while the server clock runs on, so a
+> laptop that slept 30 s stayed 30 s wrong until it reconnected. Every sample's offset is within
+> `rtt/2` of the truth whatever the asymmetry, so two samples of one offset differ by at most the
+> sum of their half-RTTs. A sample further than that from the estimate (plus 1 ms for the integer
+> `t0`) proves the offset moved: accept it, and restart the minimum from it. The test is exact, so
+> jitter cannot trip it (`ServerClock.addSample`).
+
 ## 2. Join
 
 Client → `{"t":"hello","room":"<id>","secret":"<join secret>","name":"...","mediaKey":"...","mediaUrl":"..."}`

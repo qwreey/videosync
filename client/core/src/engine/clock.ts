@@ -18,19 +18,47 @@ export interface ClockSample {
   t1: number;
 }
 
+/**
+ * Rounding allowance for the consistency test below: `t0` goes out as an
+ * integer (the wire is int64) while `t1` is fractional.
+ */
+const CONSISTENCY_SLACK_MS = 1;
+
 export class ServerClock {
   private offsetMs = 0;
   private bestRttMs = Number.POSITIVE_INFINITY;
   private samples = 0;
+  /** Samples that proved the kept estimate wrong. See `addSample`. */
+  steps = 0;
 
-  /** @returns whether this sample was accepted (a new minimum RTT). */
+  /**
+   * @returns whether this sample was accepted: a new minimum RTT, or proof
+   * that the offset itself has moved.
+   *
+   * A sample's offset is within rtt/2 of the truth whatever the path's
+   * asymmetry, so two samples of the SAME offset can never be further apart
+   * than the sum of their half-RTTs. Further apart than that, and the offset
+   * has changed under us -- most often because `performance.now()` stood still
+   * through a system suspend while the server's clock ran on. The minimum RTT
+   * never improves just because the offset moved, so without this the stale
+   * estimate survived for as long as the socket did: `when`s fired late by the
+   * length of the sleep and every report was stamped with the wrong instant.
+   * The test is exact rather than a tuned threshold, so path jitter cannot
+   * trip it; slow drift does, eventually, which is also a real change.
+   */
   addSample(s: ClockSample): boolean {
     const rtt = (s.t1 - s.t0) - (s.tSend - s.tRecv);
     this.samples++;
     if (rtt < 0) return false;
-    if (rtt < this.bestRttMs) {
+    const offset = ((s.tRecv - s.t0) + (s.tSend - s.t1)) / 2;
+    const contradicts = Number.isFinite(this.bestRttMs) &&
+      Math.abs(offset - this.offsetMs) > (rtt + this.bestRttMs) / 2 + CONSISTENCY_SLACK_MS;
+    if (rtt < this.bestRttMs || contradicts) {
+      // A contradicting sample restarts the minimum from itself: it may be a
+      // worse sample than the one it replaces, and later ones tighten it again.
+      if (contradicts) this.steps++;
       this.bestRttMs = rtt;
-      this.offsetMs = ((s.tRecv - s.t0) + (s.tSend - s.t1)) / 2;
+      this.offsetMs = offset;
       return true;
     }
     return false;

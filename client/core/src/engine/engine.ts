@@ -10,6 +10,7 @@ import type { PlayerState, ProviderAdapter } from '../adapter/types.ts';
 import { AutoplayBlockedError } from '../adapter/types.ts';
 import { SeekDetector } from '../detector/detector.ts';
 import type { DetectorConfig } from '../detector/types.ts';
+import { DEFAULT_DETECTOR_CONFIG } from '../detector/types.ts';
 import { type Anchor, expectedAt, ServerClock } from './clock.ts';
 import type {
   ClientFrame, CmdKind, HbFrame, MemberInfo, ServerFrame,
@@ -158,6 +159,8 @@ interface Scheduled {
   emittedAtServerMs: number;
   anchor: Anchor;
   kind: string;
+  /** Our own ack, with a later `play` of ours still on its way. See `ownAck`. */
+  beforeOwnPlay?: boolean;
 }
 
 /** Counters, for tests and for a diagnostics panel. */
@@ -235,6 +238,27 @@ const TRANSIENT_UNREADY_MS = 300;
 /** Buffered ahead above which "not ready" is taken to be transient. */
 const TRANSIENT_UNREADY_MIN_AHEAD_S = 1;
 
+/**
+ * How long one of our own commands counts as on its way back.
+ *
+ * An ack returns within a round trip. A command that gets none was dropped --
+ * rate-limited, or a held play superseded -- and must not go on shaping how
+ * later ones are applied. This only decides how a local play is held; nothing
+ * about echo suppression depends on it.
+ */
+const OWN_ACK_WAIT_MS = 5000;
+
+/** What an in-flight applied transition is making the player do. */
+interface Applying {
+  /** Where it is seeking to. */
+  targetMs: number;
+  /** The pause state it leaves behind. */
+  paused: boolean;
+}
+
+/** One of our own commands, sent and not yet acked. */
+interface OwnCmd { reqId: string; kind: CmdKind; at: number }
+
 export class SyncEngine {
   readonly cfg: EngineConfig;
   readonly clock = new ServerClock();
@@ -277,12 +301,29 @@ export class SyncEngine {
 
   /**
    * Backstop only. Echo suppression is structural -- the two-diff test for
-   * seeks, `rebaseline(pos, paused)` for play/pause. This flag exists solely
-   * for the window in which an async seek is in flight, and nothing may be
+   * seeks, `rebaseline(pos, paused)` for play/pause. This is set solely for
+   * the window in which an async seek is in flight, and nothing may be
    * load-bearing on it: syncwatch ships a load-bearing ignore-flag and it
    * deadlocks silently and forever (`content.ts:87-104`).
+   *
+   * It is not a mute either. It says what the engine is doing to the player,
+   * so an observation in that window that is neither the transition's own
+   * effect nor the room's state is still the user's, and is sent. Muting the
+   * window lost every gesture made during a slow seek -- and the rebaseline
+   * at its end then adopted them silently, for the reconciler to undo.
    */
-  private applyingRemote = false;
+  private applyingRemote: Applying | null = null;
+  /** `DetectorConfig.seekThresholdMs`, for judging a seek made mid-apply. */
+  private readonly seekThresholdMs: number;
+  /**
+   * The current room secret: the one joined with, until the room rotates it.
+   * Every reconnect's `hello` is checked against the server's CURRENT secret.
+   */
+  private secret: string;
+  /** Our own commands on their way back, oldest first. See `OWN_ACK_WAIT_MS`. */
+  private unacked: OwnCmd[] = [];
+  /** A click to sync arrived when there was no session to sync to. */
+  private gestureRetryPending = false;
 
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
@@ -313,7 +354,6 @@ export class SyncEngine {
    * a playing room, being seek-corrected forever.
    */
   private applyChain: Promise<void> = Promise.resolve();
-  private draining = false;
   /**
    * Bumped whenever the session ends -- a disconnect, or `stop()`.
    *
@@ -360,12 +400,14 @@ export class SyncEngine {
     this.ev = events;
     this.localMediaKey = cfg.mediaKey;
     this.localMediaUrl = cfg.mediaUrl ?? '';
+    this.secret = cfg.secret;
     this.pendingAdopt = cfg.adoptLocalStateOnJoin;
     this.detector = new SeekDetector(deps.isHidden, {
       ...cfg.detector,
       evalIntervalMs: cfg.evalIntervalMs,
       reportThresholdMs: cfg.reportThresholdMs,
     });
+    this.seekThresholdMs = cfg.detector.seekThresholdMs ?? DEFAULT_DETECTOR_CONFIG.seekThresholdMs;
     // A single-page router replaces the element, and the new one starts at 0.
     // Without this the next evaluation sees a 300 s backward jump that is large
     // in BOTH diffs, calls it a user seek, and drags the whole room to the
@@ -383,9 +425,18 @@ export class SyncEngine {
       // If we are still on the room's media, put the new element where the
       // room is. If we are not, leave it alone -- snapping someone's next
       // episode to the old one's timestamp is worse than doing nothing.
-      if (this.status === 'joined' && this.onRoomMedia()) {
-        void this.serialise(() =>
-          this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused));
+      //
+      // Checked again when the work runs, not only here: this fires inside
+      // `setTarget`, and a navigation retargets the element BEFORE it names the
+      // new media, so at this instant we can still believe we are on the room's.
+      const epoch = this.epoch;
+      if (this.canAim(epoch)) {
+        void this.serialise(async () => {
+          if (!this.canAim(epoch)) return;
+          await this.applyTransition(
+            expectedAt(this.anchor, this.serverNow()), this.anchor.paused,
+            this.cfg.seekToleranceMs, () => this.canAim(epoch));
+        });
       }
     });
     this.unsubscribeAdapter = () => {
@@ -419,6 +470,23 @@ export class SyncEngine {
     return this.localMediaKey === this.anchor.mediaKey;
   }
 
+  /**
+   * Whether the room's position may be put onto the player right now, by work
+   * queued in session `epoch`.
+   *
+   * Asked when the work is queued AND when it runs: a mutation can wait behind
+   * a seek for ten seconds, and in that time the session can end (after which
+   * it would move the player of somebody who left), the clock can be reset by
+   * a reconnect (after which `expected()` of a playing anchor is ~-1.8e12 ms,
+   * which an element clamps to 0), or the member can navigate to other media.
+   * Joined is not enough on its own: `welcome` arrives before the probes that
+   * settle the clock.
+   */
+  private canAim(epoch: number): boolean {
+    return epoch === this.epoch && this.status === 'joined' &&
+      this.clock.ready && this.onRoomMedia();
+  }
+
   // --- lifecycle ------------------------------------------------------------
 
   start(): void {
@@ -439,6 +507,8 @@ export class SyncEngine {
     this.d.clearTimer(this.applyTimer); this.applyTimer = 0;
     this.d.clearTimer(this.reconnectTimer); this.reconnectTimer = 0;
     this.pending = [];
+    this.unacked = [];
+    this.gestureRetryPending = false;
     this.d.transport.close();
     this.setStatus('closed');
   }
@@ -468,7 +538,9 @@ export class SyncEngine {
     this.reconnectAttempt = 0;
     this.setStatus('joining');
     this.tx({
-      t: 'hello', room: this.cfg.room, secret: this.cfg.secret,
+      // Not `cfg.secret`: after a rotation the server accepts only the new one,
+      // and a refused reconnect ends the session for good.
+      t: 'hello', room: this.cfg.room, secret: this.secret,
       name: this.cfg.name,
       // The CURRENT media, not the one we joined with: a reconnect after a
       // navigation would otherwise announce the wrong thing.
@@ -487,6 +559,8 @@ export class SyncEngine {
     this.d.clearTimer(this.timeTimer); this.timeTimer = 0;
     this.d.clearTimer(this.applyTimer); this.applyTimer = 0;
     this.pending = [];
+    // Whatever the old socket was carrying back will never arrive.
+    this.unacked = [];
     if (!this.running || clean || this.status === 'refused') {
       this.setStatus('closed', reason);
       return;
@@ -557,7 +631,10 @@ export class SyncEngine {
         break;
 
       case 'time.reply':
-        this.clock.addSample({ t0: f.t0, tRecv: f.tRecv, tSend: f.tSend, t1: this.d.now() });
+        // A pending transition's timer was converted through the old offset.
+        if (this.clock.addSample({ t0: f.t0, tRecv: f.tRecv, tSend: f.tSend, t1: this.d.now() })) {
+          this.rearm();
+        }
         this.stats.timeSamples++;
         break;
 
@@ -575,7 +652,7 @@ export class SyncEngine {
         // simultaneity the timebase exists to provide.
         this.schedule({
           seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
-          anchor: f.anchor, kind: f.kind,
+          anchor: f.anchor, kind: f.kind, beforeOwnPlay: this.ownAck(f.reqId),
         });
         this.stats.acksApplied++;
         break;
@@ -600,6 +677,7 @@ export class SyncEngine {
         break;
 
       case 'secret':
+        this.secret = f.secret;
         this.ev.onSecretRotated?.(f.secret, f.rotated);
         break;
 
@@ -649,28 +727,31 @@ export class SyncEngine {
       // fire at its `when`; it recovered only because the server's stale-anchor
       // resend eventually replaced it, a second late and unsynchronised. Wait
       // for the clock instead, and re-check at the evaluation rate.
-      this.applyTimer = this.d.setTimer(() => { void this.drain(); }, this.cfg.evalIntervalMs);
+      this.applyTimer = this.d.setTimer(() => this.drain(), this.cfg.evalIntervalMs);
       return;
     }
     const delay = Math.max(0, this.clock.clientTime(next.whenServerMs) - this.d.now());
-    this.applyTimer = this.d.setTimer(() => { void this.drain(); }, delay);
+    this.applyTimer = this.d.setTimer(() => this.drain(), delay);
   }
 
-  private async drain(): Promise<void> {
+  /**
+   * Hand every due transition to the player queue, without waiting for any of
+   * them to finish.
+   *
+   * Waiting here held up the NEXT command's bookkeeping for as long as the
+   * previous one's seek took -- up to ten seconds. Meanwhile the heartbeat
+   * reported the old seq, the anchor said the room was still doing what it had
+   * stopped doing, and when the seek ended the stale transition's play() ran
+   * because nothing newer had been recorded to supersede it.
+   */
+  private drain(): void {
     this.applyTimer = 0;
-    if (this.draining) return; // a frame arriving mid-apply re-arms the timer
     if (!this.clock.ready) { this.rearm(); return; } // nothing can be scheduled yet
-    this.draining = true;
-    try {
-      const serverNow = this.serverNow();
-      while (this.pending.length > 0 && this.pending[0]!.whenServerMs <= serverNow) {
-        const p = this.pending.shift()!;
-        await this.applyScheduled(p);
-      }
-    } finally {
-      this.draining = false;
-      this.rearm();
+    const serverNow = this.serverNow();
+    while (this.pending.length > 0 && this.pending[0]!.whenServerMs <= serverNow) {
+      void this.applyScheduled(this.pending.shift()!);
     }
+    this.rearm();
   }
 
   private applyScheduled(p: Scheduled): Promise<void> {
@@ -690,18 +771,33 @@ export class SyncEngine {
     }
 
     const epoch = this.epoch;
+    const current = (): boolean => this.canAim(epoch) && p.seq === this.lastAppliedSeq;
     return this.serialise(async () => {
-      if (epoch !== this.epoch) {
+      if (epoch === this.epoch && !this.onRoomMedia()) {
+        // The member navigated away while this waited.
+        this.stats.skippedOffMedia++;
+        return;
+      }
+      if (!current()) {
         // The session ended while this was queued -- a reconnect, or the user
-        // left. Acting now would move a player nobody is watching with us.
+        // left -- or something newer took over. Acting now would move a player
+        // nobody is watching with us, or move it backwards into a state the
+        // room has left.
         this.stats.supersededApplies++;
         return;
       }
-      if (p.seq < this.lastAppliedSeq) {
-        // Something newer took over while we were queued. Applying this now
-        // would move the player backwards into a state the room has left.
-        this.stats.supersededApplies++;
-        return;
+      let toleranceMs = this.cfg.seekToleranceMs;
+      if (p.beforeOwnPlay && p.anchor.paused) {
+        // Our own seek or pause, with our own play right behind it -- the
+        // creator's adoption is exactly this. Applied alone, it pauses a player
+        // the user has just set going, only for the play to start it again. In
+        // a room that holds a local play, this pause IS that hold, and it is
+        // aimed as tightly; in one that does not, there is nothing to do.
+        if (!this.holdsLocalPlay()) {
+          this.stats.supersededApplies++;
+          return;
+        }
+        toleranceMs = HOLD_SEEK_TOLERANCE_MS;
       }
       // If `when` has already passed -- the normal case on a slow link -- the
       // room has moved on since. Aim at where it is NOW, never at where it was
@@ -717,19 +813,29 @@ export class SyncEngine {
         this.stats.lateApplies++;
       }
       const targetMs = expectedAt(p.anchor, Math.max(serverNow, p.anchor.atServerMs));
-      await this.applyTransition(targetMs, p.anchor.paused);
+      await this.applyTransition(targetMs, p.anchor.paused, toleranceMs, current);
     });
   }
 
+  /**
+   * @param current asked again once the seek is done. A seek can be parked for
+   *   ten seconds, and whatever superseded this transition in that time has its
+   *   own work queued behind; pressing play or pause now would only be undone
+   *   by it, after the member had seen it.
+   */
   private async applyTransition(
-    targetMs: number, paused: boolean, toleranceMs = this.cfg.seekToleranceMs,
+    targetMs: number, paused: boolean, toleranceMs: number, current: () => boolean,
   ): Promise<void> {
     const a = this.d.adapter;
-    this.applyingRemote = true;
+    this.applyingRemote = { targetMs, paused };
     try {
       const cur = a.readState().positionS * 1000;
       if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
         await a.seekTo(targetMs / 1000).catch(() => { /* a stalled seek is reported, not thrown */ });
+      }
+      if (!current()) {
+        this.stats.supersededApplies++;
+        return;
       }
       if (paused) {
         await a.pause();
@@ -737,11 +843,12 @@ export class SyncEngine {
         await this.tryPlay();
       }
     } finally {
-      this.applyingRemote = false;
+      this.applyingRemote = null;
       const s = a.readState();
       // Rebaseline with what the player ACTUALLY did, including its pause
       // state -- that is what keeps our own transition from coming back around
-      // as user intent.
+      // as user intent. Anything the user did meanwhile was already judged and
+      // sent by `evaluate`, so adopting it here loses nothing.
       this.detector.rebaseline(s.positionS, s.paused);
     }
   }
@@ -780,15 +887,38 @@ export class SyncEngine {
    * could not be corrected, and could not be gated on. The room sat paused
    * waiting for somebody, and that somebody's clicks were being swallowed with
    * no symptom anywhere.
+   *
+   * A click with no session to sync to -- the overlay stays up through a
+   * reconnect -- is remembered rather than acted on: aiming at the room with a
+   * reset clock seeks to the start of the video and plays from there. The
+   * first evaluation that can aim again retries it; the page has had its
+   * gesture by then.
    */
   async resumeAfterGesture(): Promise<void> {
-    if (!this.autoplayBlocked) return;
-    if (this.anchor.paused) {
-      this.autoplayBlocked = false;
+    if (!this.autoplayBlocked) {
+      this.gestureRetryPending = false;
       return;
     }
-    await this.serialise(() =>
-      this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused));
+    if (this.anchor.paused) {
+      this.autoplayBlocked = false;
+      this.gestureRetryPending = false;
+      return;
+    }
+    const epoch = this.epoch;
+    if (!this.canAim(epoch)) {
+      this.gestureRetryPending = true;
+      return;
+    }
+    this.gestureRetryPending = false;
+    await this.serialise(async () => {
+      if (!this.canAim(epoch)) {
+        this.gestureRetryPending = true;
+        return;
+      }
+      await this.applyTransition(
+        expectedAt(this.anchor, this.serverNow()), this.anchor.paused,
+        this.cfg.seekToleranceMs, () => this.canAim(epoch));
+    });
   }
 
   private async applyCorrection(mode: 'seek' | 'nudge', rate?: number): Promise<void> {
@@ -819,12 +949,21 @@ export class SyncEngine {
     // The frame deliberately carries no position: one computed at send time is
     // stale by a downlink delay on arrival.
     this.stats.correctionsSeek++;
+    const epoch = this.epoch;
     await this.serialise(async () => {
-      this.applyingRemote = true;
+      // ...and ask both guards again: this can wait behind a ten-second seek.
+      if (!this.canAim(epoch)) {
+        this.stats.supersededApplies++;
+        return;
+      }
+      const targetMs = expectedAt(this.anchor, this.serverNow());
+      // A correction leaves the pause state alone, so the one it "makes" is
+      // the room's.
+      this.applyingRemote = { targetMs, paused: this.anchor.paused };
       try {
-        await a.seekTo(expectedAt(this.anchor, this.serverNow()) / 1000).catch(() => {});
+        await a.seekTo(targetMs / 1000).catch(() => {});
       } finally {
-        this.applyingRemote = false;
+        this.applyingRemote = null;
         const s = a.readState();
         this.detector.rebaseline(s.positionS, s.paused);
       }
@@ -855,16 +994,27 @@ export class SyncEngine {
       this.pendingAdopt = false;
       this.adoptLocalState(state);
     }
+    // A click to sync that came with no session to sync to. See resumeAfterGesture.
+    if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
 
     const expected = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
     const { observation, report } = this.detector.evaluate(state, expected, now);
 
     const onRoomMedia = this.onRoomMedia();
-    if (!this.applyingRemote && !this.autoplayBlocked && onRoomMedia) {
+    // While a transition is in flight, what it does to the player is not the
+    // user's: its seek lands near its own target (the room may have moved on
+    // since, so the two-diff test alone is not enough there), and its pause
+    // state is the one it was asked for. Anything else is still the user's.
+    const applying = this.applyingRemote;
+    if (!this.autoplayBlocked && onRoomMedia) {
       if (observation.kind === 'seek') {
-        this.send('seek', observation.positionS * 1000);
+        if (!applying ||
+          Math.abs(observation.positionS * 1000 - applying.targetMs) > this.seekThresholdMs) {
+          this.send('seek', observation.positionS * 1000);
+        }
       } else if (observation.kind === 'playstate') {
-        if (observation.paused !== this.anchor.paused) {
+        if (observation.paused !== this.anchor.paused &&
+          (!applying || observation.paused !== applying.paused)) {
           this.send(observation.paused ? 'pause' : 'play', observation.positionS * 1000);
           if (!observation.paused) this.holdForRoom();
         } else {
@@ -889,8 +1039,10 @@ export class SyncEngine {
         this.stats.reconciles++;
         const epoch = this.epoch;
         void this.serialise(async () => {
-          if (epoch !== this.epoch) return;
-          await this.applyTransition(expectedAt(this.anchor, this.serverNow()), this.anchor.paused);
+          if (!this.canAim(epoch)) return;
+          await this.applyTransition(
+            expectedAt(this.anchor, this.serverNow()), this.anchor.paused,
+            this.cfg.seekToleranceMs, () => this.canAim(epoch));
         });
       }
     } else {
@@ -969,18 +1121,52 @@ export class SyncEngine {
    * and the whole lead is available to pay for an in-buffer seek (~100 ms on
    * Laftel). Starting from the anchor is what lets the transition land with no
    * seek. See HOLD_SEEK_TOLERANCE_MS for why not exactly.
+   *
+   * Not while a seek of our own is still on its way back: the anchor here is
+   * the one that seek is about to replace, and holding at it pulled the
+   * picture back to where the room HAD been, then forward again when the ack
+   * landed. That ack holds us instead (see `applyScheduled`).
    */
   private holdForRoom(): void {
-    if (!this.cfg.holdLocalPlay || this.members.length < 2) return;
+    if (!this.holdsLocalPlay()) return;
     this.stats.playsHeld++;
     const epoch = this.epoch;
     const seq = this.lastAppliedSeq;
     void this.serialise(async () => {
       // The room has moved since -- normally our own play landing already.
       // The player is doing what the room says; leave it.
-      if (epoch !== this.epoch || this.lastAppliedSeq !== seq || !this.anchor.paused) return;
-      await this.applyTransition(expectedAt(this.anchor, this.serverNow()), true, HOLD_SEEK_TOLERANCE_MS);
+      if (!this.canAim(epoch) || this.lastAppliedSeq !== seq || !this.anchor.paused) return;
+      if (this.ownPending('seek') || this.ownPending('media')) return;
+      await this.applyTransition(
+        expectedAt(this.anchor, this.serverNow()), true, HOLD_SEEK_TOLERANCE_MS,
+        () => this.canAim(epoch) && this.lastAppliedSeq === seq);
     });
+  }
+
+  /** Whether a local play in this room is held for the room. See `holdLocalPlay`. */
+  private holdsLocalPlay(): boolean {
+    return this.cfg.holdLocalPlay && this.members.length >= 2;
+  }
+
+  /** Whether a command of ours of this kind is still on its way back. */
+  private ownPending(kind: CmdKind): boolean {
+    const now = this.d.now();
+    return this.unacked.some((c) => c.kind === kind && now - c.at < OWN_ACK_WAIT_MS);
+  }
+
+  /**
+   * Settle one of our own commands on its ack, and say whether a `play` of
+   * ours sent after it is still on its way.
+   *
+   * The server applies and acks in order, so anything of ours older than this
+   * that is still unanswered was dropped and is forgotten with it.
+   */
+  private ownAck(reqId: string): boolean {
+    const now = this.d.now();
+    const live = this.unacked.filter((c) => now - c.at < OWN_ACK_WAIT_MS);
+    const i = live.findIndex((c) => c.reqId === reqId);
+    this.unacked = i < 0 ? live : live.slice(i + 1);
+    return i >= 0 && this.unacked.some((c) => c.kind === 'play');
   }
 
   /**
@@ -1010,6 +1196,11 @@ export class SyncEngine {
    *
    * The room lands `CMD_DELAY` behind the still-advancing player, which costs
    * one correction -- the same thing any user seek during playback costs.
+   *
+   * On a fresh `paused@0` room the seek's ack says paused. It is not applied
+   * as a pause while the play is still coming (`beforeOwnPlay`): the creator
+   * was playing, and pausing them only to press play again a moment later
+   * spends a play() that the browser can refuse.
    */
   private adoptLocalState(s: PlayerState): void {
     this.seek(s.positionS);
@@ -1018,6 +1209,9 @@ export class SyncEngine {
 
   private send(kind: CmdKind, positionMs: number, media?: { key: string; url?: string | undefined }): string {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;
+    const now = this.d.now();
+    this.unacked = this.unacked.filter((c) => now - c.at < OWN_ACK_WAIT_MS);
+    this.unacked.push({ reqId, kind, at: now });
     this.tx({
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),
       ...(media === undefined ? {} : { mediaKey: media.key }),
