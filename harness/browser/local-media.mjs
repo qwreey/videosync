@@ -37,13 +37,30 @@ createServer((req, res) => {
 
   const size = statSync(MEDIA).size;
   const m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || '');
-  const start = m && m[1] ? Number(m[1]) : 0;
-  const end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  let start = 0;
+  let end = size - 1;
+  if (m && m[1]) {
+    start = Number(m[1]);
+    if (m[2]) end = Math.min(Number(m[2]), size - 1);
+  } else if (m && m[2]) {
+    // `bytes=-N` is the LAST N bytes, not the first N+1. `bytes=-0` asks for
+    // nothing, which is unsatisfiable.
+    start = Number(m[2]) === 0 ? size : Math.max(size - Number(m[2]), 0);
+  }
+  // A start at or past the end used to reach createReadStream with start > end,
+  // which throws synchronously and took the whole server down -- after which
+  // every video stalls and it reads as a player finding.
+  if (m && start > end) {
+    res.writeHead(416, { 'content-range': `bytes */${size}` });
+    return res.end();
+  }
   res.writeHead(m ? 206 : 200, {
     'content-type': 'video/mp4', 'accept-ranges': 'bytes', 'content-length': end - start + 1,
     ...(m ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
   });
   const stream = createReadStream(MEDIA, { start, end });
+  // A read error ends this response, not the process.
+  stream.on('error', () => res.destroy());
   if (!RATE) return stream.pipe(res);
   // Crude pacing: pause the stream whenever we are ahead of the budget.
   const t0 = Date.now();
