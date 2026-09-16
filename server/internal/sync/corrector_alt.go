@@ -235,6 +235,9 @@ func (c *PICorrector) state(id string) *altClient {
 	return s
 }
 
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *PICorrector) Forget(clientID string) { delete(c.cs, clientID) }
+
 func (c *PICorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	if c.Kp == 0 {
 		c.Kp, c.Ki = 0.25, 0.02 // wn 0.14 rad/s, zeta 0.88
@@ -297,6 +300,9 @@ func (c *PLLCorrector) state(id string) *altClient {
 	}
 	return s
 }
+
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *PLLCorrector) Forget(clientID string) { delete(c.cs, clientID) }
 
 func (c *PLLCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	if c.Wn == 0 {
@@ -370,6 +376,9 @@ func (c *FLLCorrector) state(id string) *altClient {
 	return s
 }
 
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *FLLCorrector) Forget(clientID string) { delete(c.cs, clientID) }
+
 func (c *FLLCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	if c.Kf == 0 {
 		c.Kf = 0.30
@@ -428,6 +437,9 @@ func (c *KalmanCorrector) state(id string) *altClient {
 	}
 	return s
 }
+
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *KalmanCorrector) Forget(clientID string) { delete(c.cs, clientID) }
 
 func (c *KalmanCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	if c.R == 0 {
@@ -515,6 +527,9 @@ func (c *LeadSeekCorrector) state(id string) *altClient {
 	return s
 }
 
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *LeadSeekCorrector) Forget(clientID string) { delete(c.cs, clientID) }
+
 func (c *LeadSeekCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	s := c.state(r.ClientID)
 	s.observeOneWay(r, serverMs)
@@ -585,6 +600,9 @@ func (c *HybridCorrector) state(id string) *altClient {
 	}
 	return s
 }
+
+// Forget drops a member's loop state when it leaves; see ServoCorrector.Forget.
+func (c *HybridCorrector) Forget(clientID string) { delete(c.cs, clientID) }
 
 func (c *HybridCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) Decision {
 	if c.Kf == 0 {
