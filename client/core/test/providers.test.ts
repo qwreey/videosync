@@ -434,6 +434,14 @@ describe('the effective registry', () => {
     assert.equal(continuesMedia('series:/w/a/1', 'series:/w/a/2', both), false);
   });
 
+  it('skips an adopted copy whose id changed under it, with a note', async () => {
+    const renamed = await stored(variant({ id: 'renamed', examples: [{ url: 'https://video.example/watch/a', key: 'renamed:/watch/a' }] }));
+    const reg = buildRegistry({ ...EMPTY, adopted: [{ ...renamed, id: 'example', server: 'https://s.example', replaceBuiltin: false }] }, () => true);
+    assert.equal(reg.byId('renamed'), null);
+    assert.equal(reg.byId('example'), null);
+    assert.ok(reg.notes.some((n) => n.includes('changed its id')), reg.notes.join());
+  });
+
   it('skips a stored descriptor that no longer validates, with a note', () => {
     const reg = buildRegistry({ ...EMPTY, user: [{ source: '{"schema":9}', sha256: 'x' }] }, () => true);
     assert.equal(reg.entries.length, BUILTIN_SOURCES.length);
@@ -509,6 +517,14 @@ describe('what a change widens', () => {
     }
     const restricted = variant({ capabilities: { directSeek: false } });
     assert.equal(widens(restricted, BASE), true, 'a capability given back');
+    const noNudge = variant({ capabilities: { playbackRateNudge: false } });
+    assert.equal(widens(noNudge, BASE), true, 'rate nudging given back');
+    assert.equal(widens(noNudge, variant({ capabilities: { playbackRateNudge: false, directSeek: false } })), false);
+    const cont = { from: '/watch/{id}', to: '/watch/{other}' };
+    const withCont = variant({ continues: [cont] });
+    assert.equal(widens(BASE, withCont), true, 'a new continues rule moves rooms on its own');
+    assert.equal(widens(withCont, BASE), false, 'a continues rule removed');
+    assert.equal(widens(withCont, variant({ continues: [cont] })), false);
     const narrowPages = variant({ pageHosts: ['video.example'] });
     assert.equal(widens(narrowPages, variant({ pageHosts: ['video.example', 'www.video.example'] })), true);
     assert.equal(widens(null, BASE), true, 'a descriptor nobody had');
@@ -564,8 +580,13 @@ describe('what a user can do with descriptors', () => {
     const ok = await adopt(EMPTY, SERVER, e, body, false);
     assert.ok(ok.ok);
     assert.deepEqual(ok.state.adopted.map((a) => [a.id, a.server, a.replaceBuiltin]), [['example', 'https://sync.example', false]]);
-    const swapped = await adopt(EMPTY, SERVER, e, JSON.stringify(variant({ pathFallback: true })), false);
+    // A file other than the one listed, itself perfectly adoptable: only the
+    // hash can tell.
+    const other = JSON.stringify(variant({ version: '1.0.1' }));
+    assert.ok((await adopt(EMPTY, SERVER, await entryFor(other), other, false)).ok, 'control: that file is adoptable');
+    const swapped = await adopt(EMPTY, SERVER, e, other, false);
     assert.equal(swapped.ok, false, 'a file other than the one listed');
+    assert.match(!swapped.ok ? swapped.error : '', /해시/);
     const wrongId = await adopt(EMPTY, SERVER, { ...e, id: 'other' }, body, false);
     assert.equal(wrongId.ok, false);
   });
@@ -623,9 +644,15 @@ describe('what a user can do with descriptors', () => {
     assert.deepEqual(off.applied, [], 'auto-adopt is off by default');
     assert.equal(off.pending.length, 1);
 
-    files.example = wider; // the server lies: the index says narrower
+    // The server lies: the index hashes one narrower copy and serves another,
+    // which would be taken on its own merits.
+    const otherNarrower = JSON.stringify(variant({ version: '1.0.2', video: { exclude: ['.promo'] } }));
+    files.example = otherNarrower;
+    assert.deepEqual((await autoUpdate(on, SERVER, [await entryFor(otherNarrower)], fetchBody)).applied, ['example'],
+      'control: that copy is auto-adoptable');
     const lie = await autoUpdate(on, SERVER, [await entryFor(narrower)], fetchBody);
     assert.deepEqual(lie.applied, []);
+    assert.equal(lie.pending.length, 1);
   });
 
   it('applies an automatic update over what the user changed while it was fetching, and writes only the pin', async () => {
