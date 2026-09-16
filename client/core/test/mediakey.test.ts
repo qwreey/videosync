@@ -250,6 +250,9 @@ describe('the HTML5 adapter', () => {
     const live = new FakeVideoEl(Infinity);
     const b = new Html5Adapter(asEl(live));
     assert.equal(await settlesWithin(b.seekTo(30), 500), 'resolved', 'no finite duration');
+    // ...but the start still clamps: a live stream corrected to a negative
+    // position lands on 0.
+    assert.equal(await settlesWithin(b.seekTo(-5), 500), 'resolved', 'before the start, no finite duration');
     // And a seek that lands somewhere else is still not ours.
     const p = a.seekTo(60, 150);
     p.catch(() => {});
