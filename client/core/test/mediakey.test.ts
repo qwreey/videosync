@@ -306,6 +306,14 @@ describe('the HTML5 adapter', () => {
       [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 0 }, undefined], // nothing decoded yet
       [{ webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, false], // picture, no sound
       [{ webkitAudioDecodedByteCount: 800, webkitVideoDecodedByteCount: 5000 }, true],
+      // Before metadata, Firefox's "no audio" is only "not loaded yet".
+      [{ readyState: 0, mozHasAudio: false }, undefined],
+      [{ readyState: 0, audioTracks: { length: 0 } }, undefined],
+      // Protected media may be decoded where the audio counter is not kept:
+      // no sound counted there is not evidence of no sound.
+      [{ mediaKeys: {}, webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, undefined],
+      [{ mediaKeys: {}, webkitAudioDecodedByteCount: 800, webkitVideoDecodedByteCount: 5000 }, true],
+      [{ mediaKeys: null, webkitAudioDecodedByteCount: 0, webkitVideoDecodedByteCount: 5000 }, false],
     ];
     for (const [props, want] of cases) {
       const el = Object.assign(new FakeVideoEl(), props);
