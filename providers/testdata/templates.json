@@ -1,0 +1,182 @@
+{
+  "_comment": "Shared by client/core/test/providers.test.ts and server/internal/provider/template_test.go, so the two implementations of the template grammar cannot drift. Inputs are already-parsed URL parts (pathname, search), not whole URLs: URL parsing differs between a browser and Go at the edges, the grammar must not.",
+  "path": [
+    {
+      "template": "/player/{series:int}/{episode:int}",
+      "cases": [
+        { "path": "/player/45462/93304", "captures": { "series": "45462", "episode": "93304" } },
+        { "path": "/player/45462/93304/", "captures": { "series": "45462", "episode": "93304" } },
+        { "path": "/player//45462///93304", "captures": { "series": "45462", "episode": "93304" } },
+        { "path": "/player/45462", "captures": null },
+        { "path": "/player/45462/93304/extra", "captures": null },
+        { "path": "/player/45462/x", "captures": null },
+        { "path": "/player/-1/2", "captures": null },
+        { "path": "/player/123456789012345678901/2", "captures": null },
+        { "path": "/Player/1/2", "captures": null },
+        { "path": "/logout", "captures": null },
+        { "path": "/", "captures": null },
+        { "path": "", "captures": null },
+        { "path": "/player/%31/2", "captures": { "series": "1", "episode": "2" } },
+        { "path": "/player/%zz/2", "captures": null }
+      ]
+    },
+    {
+      "template": "/{kind:embed|shorts|live|v}/{id:any}/**",
+      "cases": [
+        { "path": "/embed/abc", "captures": { "kind": "embed", "id": "abc" } },
+        { "path": "/shorts/abc/more/and/more", "captures": { "kind": "shorts", "id": "abc" } },
+        { "path": "/v/a%20b", "captures": { "kind": "v", "id": "a b" } },
+        { "path": "/v/a%2Fb", "captures": { "kind": "v", "id": "a/b" } },
+        { "path": "/watch/abc", "captures": null },
+        { "path": "/embed", "captures": null },
+        { "path": "/EMBED/abc", "captures": null },
+        { "path": "/v/%FF", "captures": null },
+        { "path": "/v/%E2%82%AC", "captures": { "kind": "v", "id": "€" } }
+      ]
+    },
+    {
+      "template": "/**",
+      "cases": [
+        { "path": "/", "captures": {} },
+        { "path": "", "captures": {} },
+        { "path": "/anything/at/all", "captures": {} }
+      ]
+    },
+    {
+      "template": "/",
+      "cases": [
+        { "path": "/", "captures": {} },
+        { "path": "//", "captures": {} },
+        { "path": "/a", "captures": null }
+      ]
+    },
+    {
+      "template": "/{id}/**",
+      "cases": [
+        { "path": "/dQw4w9WgXcQ", "captures": { "id": "dQw4w9WgXcQ" } },
+        { "path": "/a.b~c_d-e", "captures": { "id": "a.b~c_d-e" } },
+        { "path": "/a%20b", "captures": null },
+        { "path": "/a@b", "captures": null },
+        { "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captures": { "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+        { "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "captures": null }
+      ]
+    },
+    {
+      "template": "/watch/{id:any}",
+      "cases": [
+        { "path": "/watch/éé", "captures": { "id": "éé" } },
+        { "path": "/watch/%F0%9F%98%80", "captures": { "id": "😀" } }
+      ]
+    }
+  ],
+  "invalidPath": [
+    "",
+    "player",
+    "/a//b",
+    "/a/",
+    "/**/x",
+    "/**/**",
+    "/a**",
+    "/{x",
+    "/x}",
+    "/{x:}",
+    "/{x}/{x}",
+    "/{1x}",
+    "/{x:a||b}",
+    "/{x:|a}",
+    "/{x:a b}",
+    "/{x:regex(.*)}",
+    "/a b",
+    "/a{x}",
+    "/.",
+    "/..",
+    "/{}",
+    "/1/2/3/4/5/6/7/8/9/10/11/12/13/14/15/16/17"
+  ],
+  "query": [
+    {
+      "template": { "v": "{id:any}" },
+      "cases": [
+        { "search": "?v=abc&t=90", "captures": { "id": "abc" } },
+        { "search": "?t=90&v=abc", "captures": { "id": "abc" } },
+        { "search": "v=abc", "captures": { "id": "abc" } },
+        { "search": "?v=a+b", "captures": { "id": "a b" } },
+        { "search": "?v=a%26b", "captures": { "id": "a&b" } },
+        { "search": "?v=x&v=y", "captures": { "id": "x" } },
+        { "search": "?v=", "captures": null },
+        { "search": "?v", "captures": null },
+        { "search": "?V=abc", "captures": null },
+        { "search": "", "captures": null },
+        { "search": "?list=PL1", "captures": null }
+      ]
+    },
+    {
+      "template": { "type": "episode", "n": "{n:int}" },
+      "cases": [
+        { "search": "?n=3&type=episode", "captures": { "n": "3" } },
+        { "search": "?n=3&type=movie", "captures": null },
+        { "search": "?n=x&type=episode", "captures": null }
+      ]
+    }
+  ],
+  "invalidQuery": [
+    { "{v}": "{id}" },
+    { "v": "" },
+    { "v": "a{id}" },
+    { "v": "{id:foo(}" },
+    { "": "{id}" },
+    { "a": "{x}", "b": "{x}" },
+    { "a": "1", "b": "2", "c": "3", "d": "4", "e": "5", "f": "6", "g": "7", "h": "8", "i": "9" }
+  ],
+  "substitute": [
+    { "template": "/player/{series}/{episode}", "captures": { "series": "1", "episode": "2" }, "encode": false, "out": "/player/1/2" },
+    { "template": "{id}", "captures": { "id": "a b/c" }, "encode": false, "out": "a b/c" },
+    { "template": "https://www.youtube.com/watch?v={id}", "captures": { "id": "a b/c?d&e=f#g" }, "encode": true, "out": "https://www.youtube.com/watch?v=a%20b%2Fc%3Fd%26e%3Df%23g" },
+    { "template": "https://x.example/{id}", "captures": { "id": "!'()*-._~é😀" }, "encode": true, "out": "https://x.example/!'()*-._~%C3%A9%F0%9F%98%80" }
+  ],
+  "hosts": [
+    { "pattern": "laftel.net", "host": "laftel.net", "score": 5 },
+    { "pattern": "laftel.net", "host": "LAFTEL.NET", "score": 5 },
+    { "pattern": "laftel.net", "host": "laftel.net.", "score": 5 },
+    { "pattern": "laftel.net", "host": "www.laftel.net", "score": 0 },
+    { "pattern": "*.laftel.net", "host": "www.laftel.net", "score": 4 },
+    { "pattern": "*.laftel.net", "host": "a.b.laftel.net", "score": 4 },
+    { "pattern": "*.laftel.net", "host": "laftel.net", "score": 0 },
+    { "pattern": "*.laftel.net", "host": "evillaftel.net", "score": 0 },
+    { "pattern": "laftel.net", "host": "laftel.net.evil.example", "score": 0 },
+    { "pattern": "*.laftel.net", "host": "laftel.net.evil.example", "score": 0 },
+    { "pattern": "*.a.laftel.net", "host": "x.a.laftel.net", "score": 6 },
+    { "pattern": "laftel.net", "host": "xn--lftel-2ve.net", "score": 0 },
+    { "pattern": "laftel.net", "host": "laftel.net..", "score": 0 }
+  ],
+  "invalidHosts": [
+    "",
+    "net",
+    "*.net",
+    "*.com.",
+    "Laftel.net",
+    "laftel.net.",
+    "*laftel.net",
+    "la*ftel.net",
+    "*.*.laftel.net",
+    "localhost",
+    "-a.com",
+    "a-.com",
+    "a..com",
+    ".a.com",
+    "lаftel.net",
+    "laftel.net:443",
+    "laftel.net/x",
+    "a_b.com",
+    "*.1.2.3",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+  ],
+  "validHosts": [
+    "laftel.net",
+    "*.laftel.net",
+    "xn--lftel-2ve.net",
+    "a-b.example",
+    "127.0.0.1",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+  ]
+}

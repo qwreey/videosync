@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "id": "yt",
+  "keyPrefix": "yt",
+  "name": "YouTube",
+  "version": "1.0.0",
+  "adapter": "html5",
+  "hosts": [
+    "youtube.com", "*.youtube.com",
+    "youtube-nocookie.com", "*.youtube-nocookie.com",
+    "youtu.be", "*.youtu.be"
+  ],
+  "pageHosts": ["www.youtube.com", "m.youtube.com"],
+  "canonicalHost": "www.youtube.com",
+  "identity": [
+    {
+      "hosts": ["youtu.be", "*.youtu.be"],
+      "path": "/{id:any}/**",
+      "key": "{id}",
+      "watch": "https://www.youtube.com/watch?v={id}"
+    },
+    {
+      "hosts": ["youtube.com", "*.youtube.com", "youtube-nocookie.com", "*.youtube-nocookie.com"],
+      "path": "/**",
+      "query": { "v": "{id:any}" },
+      "key": "{id}",
+      "watch": "https://www.youtube.com/watch?v={id}"
+    },
+    {
+      "hosts": ["youtube.com", "*.youtube.com", "youtube-nocookie.com", "*.youtube-nocookie.com"],
+      "path": "/{kind:embed|shorts|live|v}/{id:any}/**",
+      "key": "{id}",
+      "watch": "https://www.youtube.com/watch?v={id}"
+    }
+  ],
+  "pathFallback": false,
+  "navigation": { "spa": true, "volatileElement": true },
+  "examples": [
+    { "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90s&list=PL1&si=x", "key": "yt:dQw4w9WgXcQ",
+      "watch": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+    { "url": "https://m.youtube.com/watch?v=dQw4w9WgXcQ", "key": "yt:dQw4w9WgXcQ" },
+    { "url": "https://youtu.be/dQw4w9WgXcQ?t=42", "key": "yt:dQw4w9WgXcQ",
+      "watch": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+    { "url": "https://www.youtube.com/embed/dQw4w9WgXcQ", "key": "yt:dQw4w9WgXcQ" },
+    { "url": "https://www.youtube.com/shorts/dQw4w9WgXcQ", "key": "yt:dQw4w9WgXcQ" },
+    { "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", "key": "yt:dQw4w9WgXcQ" },
+    { "url": "https://www.youtube.com/logout?v=abc", "key": "yt:abc",
+      "watch": "https://www.youtube.com/watch?v=abc" },
+    { "url": "https://www.youtube.com/", "key": null },
+    { "url": "https://www.youtube.com/results?search_query=x", "key": null },
+    { "url": "https://www.youtube.com/watch", "key": null },
+    { "url": "https://www.youtube.com/watch?v=", "key": null },
+    { "url": "https://www.youtube.com/@somechannel", "key": null },
+    { "url": "https://youtu.be/", "key": null },
+    { "url": "https://youtu.be/?v=abc", "key": null },
+    { "url": "https://notyoutube.com/watch?v=abc", "key": null },
+    { "url": "https://youtube.com.evil.example/watch?v=abc", "key": null }
+  ],
+  "notes": "Reproduces the rule that was code in mediakey.ts before D7, key for key. ?v= is read on any path, as it always was; only the canonical watch URL makes following that safe. pageHosts leaves out youtu.be (a redirect: no page ever renders there) and youtube-nocookie.com (embeds only, and the shims do not run in frames)."
+}
