@@ -105,3 +105,45 @@ describe('the server address field', () => {
     assert.equal(buttons(app, '살펴보기').length, 0, 'another server\'s offers are not shown under this one');
   });
 });
+
+describe('a server descriptor a later built-in displaced', () => {
+  const pin = () => ({
+    'providers.adopted': JSON.stringify([
+      { id: 'laftel', server: SERVER, source: SERVED, sha256: sha(SERVED), replaceBuiltin: false },
+    ]),
+  });
+
+  it('can be dropped', async () => {
+    const { app, adopted } = await openPage(pin());
+    await fire(button(app, '사용 중지'), 'click');
+    assert.deepEqual(adopted(), []);
+  });
+
+  it('can be confirmed after seeing the difference, without the server', async () => {
+    const { app, adopted, calls } = await openPage(pin());
+    assert.equal(buttons(app, '내장 설명을 이것으로 교체').length, 0, 'nothing is replaced before the difference is shown');
+    await fire(button(app, '차이 보기'), 'click');
+    await fire(button(app, '내장 설명을 이것으로 교체'), 'click');
+    assert.equal(adopted().length, 1);
+    assert.equal(adopted()[0].replaceBuiltin, true);
+    assert.equal(adopted()[0].sha256, sha(SERVED), 'the pinned bytes, not new ones');
+    assert.ok(!calls.some((m) => m.t === 'auth'), 'the stored copy is what was pinned; nothing is fetched');
+    // In force now: listed as the server's, with its own 사용 중지.
+    assert.ok([...app.walk()].some((e) => e.className === 'tag' && e.textContent === '서버'));
+    assert.equal(buttons(app, '차이 보기').length, 0, 'and no longer listed as held back');
+  });
+
+  it('is not shown as in use in the server\'s list, and can be reviewed there', async () => {
+    const index = JSON.stringify({ providers: [
+      { id: 'laftel', name: 'Laftel', version: '1.0.0', sha256: sha(SERVED), hosts: ['laftel.net'] },
+    ] });
+    const { app, adopted } = await openPage({ ...pin(), server: SERVER }, {
+      '/api/providers': index, '/api/providers/laftel.json': SERVED,
+    });
+    const tags = [...app.walk()].filter((e) => e.className.startsWith('tag')).map((e) => e.textContent);
+    assert.ok(!tags.includes('사용 중'), `tags: ${tags.join(', ')}`);
+    await fire(button(app, '살펴보기'), 'click');
+    await fire(button(app, '내장 설명을 이것으로 교체'), 'click');
+    assert.equal(adopted()[0].replaceBuiltin, true);
+  });
+});

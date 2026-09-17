@@ -14,12 +14,13 @@
 import {
   buildRegistry, openOffers, parseIndex, pendingUpdates, readState, serverOrigin, STORE_KEYS, writeState,
 } from '@videosync/core/providers/adoption.ts';
-import type { FieldChange, IndexEntry, ProviderState } from '@videosync/core/providers/adoption.ts';
+import type { AdoptedDescriptor, FieldChange, IndexEntry, ProviderState } from '@videosync/core/providers/adoption.ts';
 import { parseDescriptor } from '@videosync/core/providers/descriptor.ts';
 import type { Descriptor } from '@videosync/core/providers/descriptor.ts';
 import {
   adopt, currentFor, decline, grantedBy, originsFor, removeUser, saveUser, setAutoAdopt, unadopt,
 } from '@videosync/core/providers/manage.ts';
+import { builtinEntries, displacedBuiltins } from '@videosync/core/providers/registry.ts';
 import type { Entry } from '@videosync/core/providers/registry.ts';
 
 import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
@@ -101,8 +102,14 @@ let state: ProviderState = { user: [], adopted: [], servers: {} };
 let serverUrl = '';
 let origins: string[] = [];
 let index: IndexEntry[] | null = null;
-/** An id whose server copy is shown for review, with the difference. */
-let reviewing: { entry: IndexEntry; body: string; changes: FieldChange[]; replace: boolean } | null = null;
+/**
+ * A server copy shown for review, with the difference: one the server list
+ * offers (`offer`), or a pin the registry holds back (`pin`), whose bytes are
+ * already stored. `server` is where it is pinned under when applied.
+ */
+let reviewing: {
+  from: 'offer' | 'pin'; server: string; entry: IndexEntry; body: string; changes: FieldChange[]; replace: boolean;
+} | null = null;
 let draft = '';
 let draftCheck: { changes: FieldChange[]; replaces: boolean } | null = null;
 
@@ -176,6 +183,49 @@ function entryCard(e: Entry): HTMLElement {
       }, '사용 중지')));
 }
 
+/**
+ * A pin `buildRegistry` skips: it would replace a built-in the user never
+ * agreed to replace. That is what a pin taken before an extension update
+ * added a built-in with its id, hosts or key prefix becomes. The rule is
+ * buildRegistry's; the sha still matches the server's, so nothing else on
+ * this page would offer a way out.
+ */
+function heldBack(a: AdoptedDescriptor): Descriptor | null {
+  if (a.replaceBuiltin) return null;
+  const r = parseDescriptor(a.source);
+  if (!r.ok || r.provider.id !== a.id) return null;
+  const replaces = builtinEntries().some((b) => b.provider.id === a.id) || displacedBuiltins(r.provider).length > 0;
+  return replaces ? r.provider.d : null;
+}
+
+function heldBackCard(a: AdoptedDescriptor, d: Descriptor): HTMLElement {
+  const isReviewing = reviewing?.from === 'pin' && reviewing.server === a.server && reviewing.entry.id === a.id;
+  return h('div', { class: 'card' },
+    h('h3', {},
+      h('span', {}, d.name),
+      h('code', {}, d.id),
+      h('span', { class: 'tag' }, TIER.server ?? 'server'),
+      h('span', { class: 'tag' }, `v${d.version}`),
+      h('span', { class: 'tag', title: a.sha256 }, `sha256 ${short(a.sha256)}`),
+      h('span', { class: 'tag warn' }, '적용 안 됨')),
+    h('div', { class: 'hosts' }, `받은 곳: ${a.server} · 주소: ${d.hosts.join(', ')}`),
+    h('p', { class: 'muted' }, '받은 뒤에 같은 사이트를 맡는 내장 설명이 생겼어요. 지금은 내장 설명이 쓰여요. ' +
+      '이 설명을 계속 쓰려면 차이를 확인하고 교체하세요.'),
+    h('div', { class: 'row' },
+      h('button', { onclick: () => { void reviewPin(a, d); } }, '차이 보기'),
+      h('button', {
+        class: 'danger',
+        onclick: async () => {
+          state = unadopt(state, a.id);
+          if (isReviewing) reviewing = null;
+          await saveState(state);
+          status(`${d.name}: 서버 설명을 더 이상 쓰지 않아요.`, 'ok');
+          render();
+        },
+      }, '사용 중지')),
+    isReviewing ? reviewPanel() : null);
+}
+
 function effectiveSection(): HTMLElement {
   const reg = buildRegistry(state, grantedBy(origins));
   return h('section', {},
@@ -183,6 +233,7 @@ function effectiveSection(): HTMLElement {
     h('p', { class: 'muted' }, '같은 id면 내가 추가한 것 > 서버에서 받은 것 > 내장 순으로 쓰여요. ' +
       '내장이 아닌 설명은 사이트 권한을 허용한 곳에서만 방이 멤버를 데려갈 수 있어요.'),
     ...reg.entries.map(entryCard),
+    ...state.adopted.flatMap((a) => { const d = heldBack(a); return d ? [heldBackCard(a, d)] : []; }),
     reg.notes.length ? h('div', { class: 'card' }, h('h3', {}, '적용하지 않은 것'),
       ...reg.notes.map((n) => h('div', { class: 'muted' }, n))) : null);
 }
@@ -254,23 +305,49 @@ async function loadIndex(): Promise<void> {
   render();
 }
 
-async function review(entry: IndexEntry): Promise<void> {
-  const r = await fetchFromServer(`/api/providers/${entry.id}.json`);
-  if (!r.ok) { status(`파일을 받지 못했어요: ${r.error ?? `HTTP ${r.status}`}`, 'err'); return; }
-  const parsed = parseDescriptor(r.body);
-  if (!parsed.ok) { status(`서버의 설명을 쓸 수 없어요:\n${parsed.errors.join('\n')}`, 'err'); return; }
-  const out = await adopt(state, serverUrl, entry, r.body, false);
+/** Show what adopting `body` would change; nothing is applied yet. */
+async function startReview(from: 'offer' | 'pin', server: string, entry: IndexEntry, body: string): Promise<void> {
+  const out = await adopt(state, server, entry, body, false);
   const changes = out.ok ? out.changes : (out.changes ?? []);
   if (!out.ok && !out.needsReplaceConfirmation) { status(out.error, 'err'); return; }
-  reviewing = { entry, body: r.body, changes, replace: !out.ok };
+  reviewing = { from, server, entry, body, changes, replace: !out.ok };
   status(out.ok ? `${entry.name}: 차이를 확인하고 적용하세요.` : out.error, out.ok ? '' : 'warn');
   render();
 }
 
+async function review(entry: IndexEntry): Promise<void> {
+  const server = serverUrl;
+  const r = await fetchFromServer(`/api/providers/${entry.id}.json`);
+  if (!r.ok) { status(`파일을 받지 못했어요: ${r.error ?? `HTTP ${r.status}`}`, 'err'); return; }
+  const parsed = parseDescriptor(r.body);
+  if (!parsed.ok) { status(`서버의 설명을 쓸 수 없어요:\n${parsed.errors.join('\n')}`, 'err'); return; }
+  await startReview('offer', server, entry, r.body);
+}
+
+/**
+ * A held-back pin is confirmed from the bytes already pinned, not a fresh
+ * copy: those are what the user took on, the hash still checks them, and
+ * the server need not be reachable or even be the one typed in above.
+ */
+function reviewPin(a: AdoptedDescriptor, d: Descriptor): Promise<void> {
+  const entry: IndexEntry = { id: a.id, name: d.name, version: d.version, sha256: a.sha256, hosts: d.hosts };
+  return startReview('pin', a.server, entry, a.source);
+}
+
+function reviewPanel(): HTMLElement | null {
+  if (!reviewing) return null;
+  return h('div', {},
+    diffTable(reviewing.changes),
+    h('div', { class: 'row' },
+      h('button', { class: 'primary', onclick: () => { void applyReviewed(); } },
+        reviewing.replace ? '내장 설명을 이것으로 교체' : '적용'),
+      h('button', { onclick: () => { reviewing = null; render(); } }, '닫기')));
+}
+
 async function applyReviewed(): Promise<void> {
   if (!reviewing) return;
-  const { entry, body, replace } = reviewing;
-  const out = await adopt(state, serverUrl, entry, body, replace);
+  const { server, entry, body, replace } = reviewing;
+  const out = await adopt(state, server, entry, body, replace);
   if (!out.ok) { status(out.error, 'err'); return; }
   state = out.state;
   reviewing = null;
@@ -284,17 +361,19 @@ function offerCard(e: IndexEntry): HTMLElement {
   const origin = serverOrigin(serverUrl);
   const pinned = state.adopted.find((a) => a.id === e.id && a.server === origin);
   const update = pinned && pinned.sha256 !== e.sha256;
+  // Pinned but not in force: it can still be reviewed, and replace the built-in from there.
+  const held = pinned !== undefined && heldBack(pinned) !== null;
   const offered = openOffers(state, serverUrl, [e]).length > 0;
-  const label = pinned ? (update ? '업데이트 있음' : '사용 중') : offered ? '새 설명' : '거절함';
-  const isReviewing = reviewing?.entry.id === e.id;
+  const label = pinned ? (update ? '업데이트 있음' : held ? '적용 안 됨' : '사용 중') : offered ? '새 설명' : '거절함';
+  const isReviewing = reviewing?.from === 'offer' && reviewing.entry.id === e.id;
   return h('div', { class: 'card' },
     h('h3', {},
       h('span', {}, e.name), h('code', {}, e.id), h('span', { class: 'tag' }, `v${e.version}`),
       h('span', { class: 'tag', title: e.sha256 }, `sha256 ${short(e.sha256)}`),
-      h('span', { class: `tag ${update || offered ? 'warn' : ''}` }, label)),
+      h('span', { class: `tag ${update || offered || held ? 'warn' : ''}` }, label)),
     h('div', { class: 'hosts' }, `주소: ${e.hosts.join(', ')}`),
     h('div', { class: 'row' },
-      (!pinned || update) && h('button', { onclick: () => { void review(e); } }, update ? '차이 보기' : '살펴보기'),
+      (!pinned || update || held) && h('button', { onclick: () => { void review(e); } }, update ? '차이 보기' : '살펴보기'),
       !pinned && offered && h('button', {
         onclick: async () => {
           state = decline(state, serverUrl, e);
@@ -302,12 +381,7 @@ function offerCard(e: IndexEntry): HTMLElement {
           render();
         },
       }, '거절')),
-    isReviewing && reviewing ? h('div', {},
-      diffTable(reviewing.changes),
-      h('div', { class: 'row' },
-        h('button', { class: 'primary', onclick: () => { void applyReviewed(); } },
-          reviewing.replace ? '내장 설명을 이것으로 교체' : '적용'),
-        h('button', { onclick: () => { reviewing = null; render(); } }, '닫기'))) : null);
+    isReviewing ? reviewPanel() : null);
 }
 
 function serverSection(): HTMLElement {
@@ -342,7 +416,7 @@ function serverSection(): HTMLElement {
   input.addEventListener('change', () => {
     serverUrl = input.value.trim();
     index = null;
-    reviewing = null;
+    if (reviewing?.from === 'offer') reviewing = null;
     fill();
   });
   fill();
