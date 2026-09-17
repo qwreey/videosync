@@ -1578,4 +1578,18 @@ describe('an address change on the same video (N5)', () => {
     assert.ok(replaced > 0, 'a single-page navigation reusing the element is a new media');
     assert.notEqual(h.app.api.adapter.current, wrapped);
   });
+
+  it('wraps the same element again once its adapter was taken away', async () => {
+    const h = harness(ROOM_URL);
+    const v = await putVideo(h);
+    // Something other than the watcher cleared the target; the element and
+    // the media key are what they were.
+    h.app.api.adapter.setTarget(null);
+    h.dom.loc.href = `${ROOM_URL}#t=5`;
+    await h.tick(1000);
+    assert.equal(h.app.api.mediaKey(), ROOM_KEY, 'control: the same media');
+    assert.ok(h.app.api.adapter.current, 'the video on the page is left unwrapped');
+    v.currentTime = 7;
+    assert.equal(h.app.api.adapter.readState().positionS, 7, 'wrapped something other than the video');
+  });
 });
