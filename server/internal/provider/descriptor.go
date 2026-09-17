@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/url"
 	"regexp"
@@ -550,15 +551,48 @@ func parseURL(href string) (parsedURL, bool) {
 	if scheme != "http" && scheme != "https" {
 		return parsedURL{}, false
 	}
-	path := u.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
+	path := removeDotSegments(u.EscapedPath())
 	search := ""
 	if u.RawQuery != "" {
 		search = "?" + u.RawQuery
 	}
 	return parsedURL{scheme: scheme, hostname: strings.ToLower(u.Hostname()), pathname: path, search: search}, true
+}
+
+// removeDotSegments does to an escaped path what the WHATWG path state does
+// for an http(s) URL, which net/url leaves alone: "." and ".." segments,
+// percent-encoded dots included, are resolved, and one that ends the path
+// leaves a trailing slash. Without it an example like /watch/../watch/abc
+// keys differently here than in every client.
+func removeDotSegments(escaped string) string {
+	if escaped == "" {
+		return "/"
+	}
+	isDots := func(seg string, n int) bool {
+		seg = strings.ReplaceAll(strings.ToLower(seg), "%2e", ".")
+		return seg == strings.Repeat(".", n)
+	}
+	segs := strings.Split(strings.TrimPrefix(escaped, "/"), "/")
+	out := make([]string, 0, len(segs))
+	for i, seg := range segs {
+		last := i == len(segs)-1
+		switch {
+		case isDots(seg, 2):
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+			if last {
+				out = append(out, "")
+			}
+		case isDots(seg, 1):
+			if last {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, seg)
+		}
+	}
+	return "/" + strings.Join(out, "/")
 }
 
 func (pr *Provider) match(u parsedURL) (*compiledRule, map[string]string) {
@@ -709,8 +743,14 @@ func (pr *Provider) runExamples() []string {
 				out = append(out, fmt.Sprintf("%s: %s has no watch URL that names the same media", w, *e.URL))
 			case watchNull && watch != "":
 				out = append(out, fmt.Sprintf("%s: %s gives watch %q, expected null", w, *e.URL, watch))
-			case e.Watch != nil && watch != *e.Watch:
-				out = append(out, fmt.Sprintf("%s: %s gives watch %q, expected %q", w, *e.URL, watch, *e.Watch))
+			case e.Watch != nil && (watch != *e.Watch || watch == ""):
+				// Here "" is "no watch URL"; the client has null for that
+				// and never gives "", so `"watch": ""` fails there always.
+				got := fmt.Sprintf("%q", watch)
+				if watch == "" {
+					got = "null"
+				}
+				out = append(out, fmt.Sprintf("%s: %s gives watch %s, expected %q", w, *e.URL, got, *e.Watch))
 			}
 			continue
 		}
@@ -755,7 +795,9 @@ func Parse(data []byte) (*Provider, error) {
 	if err := dec.Decode(&tree); err != nil {
 		return nil, invalid(fmt.Sprintf("descriptor: not JSON (%v)", err))
 	}
-	if dec.More() {
+	// Not dec.More(): it reports false before a stray '}' or ']', which
+	// JSON.parse refuses, so the server would list a file no client takes.
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, invalid("descriptor: trailing data after the JSON value")
 	}
 	return compileTree(tree)

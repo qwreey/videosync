@@ -65,6 +65,13 @@ describe('the template grammar (shared vectors)', () => {
     }
   });
 
+  it('resolves dot segments the way the Go port does', () => {
+    // The Go port parses whole URLs with net/url and resolves dot segments
+    // itself; these pin what URL.pathname gives, which the client matches on.
+    assert.ok(v.pathnames.length > 0);
+    for (const c of v.pathnames) assert.equal(new URL(c.url).pathname, c.pathname, c.url);
+  });
+
   it('rejects malformed query templates', () => {
     for (const q of v.invalidQuery) {
       assert.throws(() => parseQueryTemplate(q), undefined, JSON.stringify(q));

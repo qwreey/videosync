@@ -231,3 +231,65 @@ func TestADirectoryOffersAtMostMaxFiles(t *testing.T) {
 		t.Fatal("the operator was not told")
 	}
 }
+
+func TestStorePollFollowsSymlinks(t *testing.T) {
+	// The layout a Kubernetes ConfigMap mount has: the listed name is a
+	// link through ..data, and an update swaps ..data. The link itself
+	// never changes, so a stamp built from it never does either.
+	dir := t.TempDir()
+	link := func(target, name string) {
+		t.Helper()
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v1 := filepath.Join(dir, "..2024_01")
+	os.Mkdir(v1, 0o755)
+	write(t, v1, "laftel.json", builtin(t, "laftel.json"))
+	link("..2024_01", "..data")
+	link(filepath.Join("..data", "laftel.json"), "laftel.json")
+	s := Open(dir, nil)
+	if e, ok := s.Get("laftel"); !ok || e.Version != "1.0.0" {
+		t.Fatalf("first load: %+v %v", e, ok)
+	}
+	if s.ReloadIfChanged() {
+		t.Error("reloaded with nothing changed")
+	}
+
+	v2 := filepath.Join(dir, "..2024_02")
+	os.Mkdir(v2, 0o755)
+	changed := strings.Replace(string(builtin(t, "laftel.json")), `"version": "1.0.0"`, `"version": "1.20.0"`, 1) // a new size, as a real update has
+	write(t, v2, "laftel.json", []byte(changed))
+	link("..2024_02", "..data_tmp")
+	if err := os.Rename(filepath.Join(dir, "..data_tmp"), filepath.Join(dir, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(v1)
+	if !s.ReloadIfChanged() {
+		t.Fatal("the swap was not noticed")
+	}
+	if e, _ := s.Get("laftel"); e == nil || e.Version != "1.20.0" {
+		t.Errorf("after the swap: %+v", e)
+	}
+
+	// A link that dangles is reported, and noticed when it resolves again.
+	var log logSink
+	s = Open(dir, log.logf)
+	os.Rename(filepath.Join(dir, "..data"), filepath.Join(dir, "..data_gone"))
+	if !s.ReloadIfChanged() {
+		t.Fatal("a link that now dangles was not noticed")
+	}
+	if _, ok := s.Get("laftel"); ok || !log.has("skipping laftel.json") {
+		t.Errorf("dangling link: served %v, log %q", ok, log.lines)
+	}
+	if s.ReloadIfChanged() {
+		t.Error("a link that still dangles reloaded again")
+	}
+	os.Rename(filepath.Join(dir, "..data_gone"), filepath.Join(dir, "..data"))
+	if !s.ReloadIfChanged() {
+		t.Fatal("a link that resolves again was not noticed")
+	}
+	if _, ok := s.Get("laftel"); !ok {
+		t.Error("not served once the link resolves")
+	}
+}

@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by client/core/test/providers.test.ts and server/internal/provider/template_test.go, so the two implementations of the template grammar cannot drift. Inputs are already-parsed URL parts (pathname, search), not whole URLs: URL parsing differs between a browser and Go at the edges, the grammar must not.",
+  "_comment": "Shared by client/core/test/providers.test.ts and server/internal/provider/template_test.go, so the two implementations of the template grammar cannot drift. Inputs are already-parsed URL parts (pathname, search), not whole URLs: URL parsing differs between a browser and Go at the edges, the grammar must not. The one exception is \"pathnames\": the Go port resolves dot segments itself (net/url does not), so it must give what URL.pathname gives.",
   "path": [
     {
       "template": "/player/{series:int}/{episode:int}",
@@ -107,7 +107,19 @@
         { "search": "?v", "captures": null },
         { "search": "?V=abc", "captures": null },
         { "search": "", "captures": null },
-        { "search": "?list=PL1", "captures": null }
+        { "search": "?list=PL1", "captures": null },
+        { "search": "?v=%FF%FE", "captures": { "id": "\ufffd\ufffd" } },
+        { "search": "?v=%E2%82A", "captures": { "id": "\ufffdA" } },
+        { "search": "?v=%E2%82%E2%82%AC", "captures": { "id": "\ufffd€" } },
+        { "search": "?v=%F0%9F%98", "captures": { "id": "\ufffd" } },
+        { "search": "?v=%ED%A0%80", "captures": { "id": "\ufffd\ufffd\ufffd" } },
+        { "search": "?v=%C0%AFx", "captures": { "id": "\ufffd\ufffdx" } },
+        { "search": "?v=a%F4%90%80%80", "captures": { "id": "a\ufffd\ufffd\ufffd\ufffd" } },
+        { "search": "?v=%E0%80%80", "captures": { "id": "\ufffd\ufffd\ufffd" } },
+        { "search": "?v=%EF%BB%BFx", "captures": { "id": "\ufeffx" } },
+        { "search": "?v=%F0%9F%98%80%FF", "captures": { "id": "😀\ufffd" } },
+        { "search": "?v=%E2%82%AC+%zz", "captures": { "id": "€ %zz" } },
+        { "search": "?v=%F0%9F%98%F0%9F%98%80", "captures": { "id": "\ufffd😀" } }
       ]
     },
     {
@@ -118,6 +130,24 @@
         { "search": "?n=x&type=episode", "captures": null }
       ]
     }
+  ],
+  "pathnames": [
+    { "url": "https://x", "pathname": "/" },
+    { "url": "https://x/a/b/..", "pathname": "/a/" },
+    { "url": "https://x/a/./b", "pathname": "/a/b" },
+    { "url": "https://x/..", "pathname": "/" },
+    { "url": "https://x/a/%2E%2e/b", "pathname": "/b" },
+    { "url": "https://x/a/.%2E", "pathname": "/" },
+    { "url": "https://x/a/b/.", "pathname": "/a/b/" },
+    { "url": "https://x/a/%2e/", "pathname": "/a/" },
+    { "url": "https://x/a/../../b/", "pathname": "/b/" },
+    { "url": "https://x/watch/../watch/abc", "pathname": "/watch/abc" },
+    { "url": "https://x/a//../b", "pathname": "/a/b" },
+    { "url": "https://x/./", "pathname": "/" },
+    { "url": "https://x/a/..?q=1", "pathname": "/" },
+    { "url": "https://x/a/..b/...", "pathname": "/a/..b/..." },
+    { "url": "https://x/a%2F../b", "pathname": "/a%2F../b" },
+    { "url": "https://x/a/b/", "pathname": "/a/b/" }
   ],
   "invalidQuery": [
     { "{v}": "{id}" },
