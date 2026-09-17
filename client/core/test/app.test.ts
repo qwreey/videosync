@@ -545,6 +545,41 @@ describe('leaving', () => {
   });
 });
 
+describe('a page restored from the back/forward cache (N20)', () => {
+  /** What the browser fires on the page's window; the fake only records listeners. */
+  function fire(h: H, type: string, persisted: boolean): void {
+    const ls = (h.dom.win as unknown as { listeners: Map<string, Set<(e: unknown) => void>> }).listeners;
+    for (const fn of [...(ls.get(type) ?? [])]) fn({ type, persisted });
+  }
+
+  it('comes back out of the room, the way a reload of it would, not "connection lost"', async () => {
+    const h = harness(HOME);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await h.tick(2000);
+    assert.deepEqual(h.dom.loc.assigned, [ROOM_URL], 'control: the member followed the room away');
+    const record = h.store.data.get('rejoin');
+    fire(h, 'pagehide', true);
+    assert.equal(h.tr().closed, true, 'control: leaving the page leaves the room');
+    fire(h, 'pageshow', true);
+    assert.equal(h.app.api.engine(), null, 'a stopped engine that never reconnects');
+    assert.doesNotMatch(h.status().text, /끊겼/);
+    assert.equal(h.button('참가')!.disabled, false, 'the member can join again');
+    assert.equal(h.button('나가기')!.disabled, true);
+    assert.equal(h.store.data.get('rejoin'), record, 'the page the member was sent to may still be loading it');
+    await h.tick(60_000);
+    assert.equal(h.transports.length, 1, 'nothing reconnected behind the member\'s back');
+  });
+
+  it('control: the pageshow of an ordinary load leaves the session alone', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    fire(h, 'pageshow', false);
+    assert.equal(h.app.api.engine()?.state, 'joined');
+  });
+});
+
 describe('a rotated secret', () => {
   it('is saved with its own room, never paired with another tab\'s', async () => {
     const h = harness(ROOM_URL);

@@ -1015,6 +1015,21 @@ export function start(p: Platform): App {
   // room does not hold the readiness gate for them until GATE_TIMEOUT.
   const onPageHide = () => { engine?.stop(); };
   window.addEventListener('pagehide', onPageHide);
+  // A page kept in the back/forward cache comes back with no script re-run and
+  // with the engine `pagehide` stopped for good, which read as a network
+  // failure that never recovers -- and the server dropped the member long ago
+  // (N20). Come back as a reload of this page would: out of the room, with its
+  // fields still filled in. Not rejoined: the member left this page, and one
+  // that is not the room's media would follow the room forward again.
+  const onPageShow = (e: PageTransitionEvent) => {
+    if (!e.persisted || !engine) return;
+    // A follow's record belongs to the page it sent the member to, which may
+    // still be about to consume it; a reload of this page leaves it too.
+    ownRejoin = '';
+    leave();
+    panel.setStatus('페이지를 떠나서 방에서 나왔어요 — 다시 참가하려면 참가를 누르세요.', 'warn');
+  };
+  window.addEventListener('pageshow', onPageShow);
 
   refreshStatus();
 
@@ -1143,6 +1158,7 @@ export function start(p: Platform): App {
       adapter.destroy();
       panel.destroy();
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
     },
   };
 }
