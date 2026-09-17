@@ -68,7 +68,9 @@ export function normalizeMediaKey(href: string, reg: ProviderRegistry = builtinR
  * The one place this is decided: the descriptor's `continues` rules (D7),
  * read through the registry in force (Laftel: same series).
  */
-export function continuesMedia(prevKey: string, nextKey: string, reg: ProviderRegistry = builtinRegistry()): boolean {
+export function continuesMedia(
+  prevKey: string, nextKey: string, reg: ProviderRegistry = builtinRegistry(), pageHost?: string,
+): boolean {
   if (!prevKey || !nextKey || prevKey === nextKey) return false;
   const colon = prevKey.indexOf(':');
   if (colon <= 0 || !nextKey.startsWith(prevKey.slice(0, colon + 1))) return false;
@@ -82,14 +84,22 @@ export function continuesMedia(prevKey: string, nextKey: string, reg: ProviderRe
   // site's generic namespace. A key does not say which of the two minted it,
   // so there as well nothing continues -- otherwise that descriptor would
   // move rooms on a host it does not describe and nobody granted.
+  //
+  // Reading that off the key alone has a blind spot: a single-label host
+  // ("nas", a MagicDNS short name) is keyed under its bare name, which looks
+  // like any descriptor's id. So when the caller knows the page `nextKey` was
+  // read on, the descriptor decides only if it is the one describing that page.
   const owners = reg.entries.filter((e) => e.provider.keyPrefix === prefix);
-  return owners.length === 1 && !genericMints(prefix, reg) &&
-    owners[0]!.provider.continues(prevKey, nextKey);
+  if (owners.length !== 1) return false;
+  const owner = owners[0]!;
+  if (pageHost !== undefined ? entryFor(pageHost, reg) !== owner : genericMints(prefix, reg)) return false;
+  return owner.provider.continues(prevKey, nextKey);
 }
 
 /** Whether the generic path rule gives some host the key prefix `prefix`. */
 function genericMints(prefix: string, reg: ProviderRegistry): boolean {
-  // Only a host can be named that way; ids and built-in prefixes have no dot.
+  // Only a dotted name is recognisable as a host from the key alone; a
+  // single-label host is caught by `continuesMedia`'s `pageHost` instead.
   if (!prefix.includes('.') && prefix !== 'localhost') return false;
   return [prefix, `www.${prefix}`].some((h) => {
     const l = reg.lookup(h);

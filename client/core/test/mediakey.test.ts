@@ -517,12 +517,30 @@ describe('which media continues which (the next episode)', () => {
       assert.equal(k('/watch/81'), 'shows.example:/watch/81', 'setup: the generic rule on www');
       assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg), false, 'www.shows.example');
     }
+    // A single-label host (a LAN name, a MagicDNS short name) is keyed under
+    // its own dot-less name, so a dot-less prefix is no exemption.
+    {
+      const reg = withServer('nas');
+      const k = (path: string) => normalizeMediaKey(`http://nas${path}`, reg)!;
+      assert.equal(k('/watch/81'), 'nas:/watch/81', 'setup: the generic rule on a single-label host');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg, 'nas'), false, 'a descriptor continued media on http://nas');
+      // Control: the same keys, read on a page that descriptor describes.
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg, 'shows.example'), true, 'control: on shows.example');
+    }
+    // Control: a built-in's prefix is still decided by the built-in, on its page.
+    {
+      const reg = withServer('shows');
+      const k = (url: string) => normalizeMediaKey(url, reg)!;
+      assert.equal(continuesMedia(k('https://laftel.net/player/45462/93304'),
+        k('https://laftel.net/player/45462/93305'), reg, 'laftel.net'), true, 'control: a built-in prefix');
+    }
     // Control: the same rules continue in a namespace only that descriptor
     // mints -- its own id, or a host it describes, all routes to it included.
     for (const [prefix, hosts] of [['shows', ['shows.example']], ['shows.example', ['shows.example', 'www.shows.example']]] as const) {
       const reg = withServer(prefix, [...hosts]);
       const k = (path: string) => normalizeMediaKey(`https://shows.example${path}`, reg)!;
       assert.equal(continuesMedia(k('/watch/81'), k('/watch/82'), reg), true, `control: prefix ${prefix}`);
+      assert.equal(continuesMedia(k('/watch/81'), k('/watch/82'), reg, 'shows.example'), true, `control: prefix ${prefix} on its page`);
     }
   });
 });
