@@ -81,6 +81,12 @@ func Empty() *Store {
 
 // dirStamp summarises the directory's *.json files by name, size and mtime,
 // so a poll can tell whether anything changed without reading them.
+//
+// The stat follows symlinks, as loading does: DirEntry.Info describes the
+// link, and a ConfigMap-style mount (name -> ..data/name, update = swap
+// ..data) never changes the link. A name that cannot be stat'ed still goes
+// to loadFile, which says why it is skipped, and is stamped so that it is
+// noticed once it resolves.
 func (s *Store) dirStamp() (string, []string, error) {
 	ents, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -92,12 +98,13 @@ func (s *Store) dirStamp() (string, []string, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		info, err := e.Info()
+		names = append(names, e.Name())
+		info, err := os.Stat(filepath.Join(s.dir, e.Name()))
 		if err != nil {
+			fmt.Fprintf(&b, "%s\x00error\n", e.Name())
 			continue
 		}
-		names = append(names, e.Name())
-		fmt.Fprintf(&b, "%s\x00%d\x00%d\n", e.Name(), info.Size(), info.ModTime().UnixNano())
+		fmt.Fprintf(&b, "%s\x00%d\x00%d\x00%v\n", e.Name(), info.Size(), info.ModTime().UnixNano(), info.Mode())
 	}
 	sort.Strings(names)
 	return b.String(), names, nil
@@ -138,11 +145,20 @@ func (s *Store) Reload() {
 }
 
 func (s *Store) loadFile(name string) (*Entry, error) {
-	f, err := os.Open(filepath.Join(s.dir, name))
+	path := filepath.Join(s.dir, name)
+	// Stat before opening: opening a FIFO blocks until a writer appears,
+	// and the first load runs before the listener starts.
+	if info, err := os.Stat(path); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	// Again on the open file: the name may have been swapped in between.
 	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
