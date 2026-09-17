@@ -69,15 +69,17 @@ function strings(v: unknown): string[] {
 
 /**
  * Whether something in front of the server that answered `status` is asking
- * for a login: a redirect (an opaque one reads as 0), a page served as if it
- * were the answer, or a refusal. An error page -- nginx's 502 while videosyncd
+ * for a login: a redirect, a page served as if it were the answer, or a
+ * refusal. A redirect is known by `redirected`, never guessed from a status 0:
+ * an opaque one reads as 0, and so does an answer that says nothing. An error page -- nginx's 502 while videosyncd
  * restarts, a 504, a 503 from a rate limit, a 404 for an endpoint a server
  * without -auth does not have -- asks nobody to sign in. Read as a sign-in it
  * stopped every member's engine for good (a refusal is final) while their
  * device tokens were still good.
  */
-export function gatewayWantsLogin(status: number): boolean {
-  return status < 400 || status === 401 || status === 403 || status === 407;
+export function gatewayWantsLogin(status: number, redirected = false): boolean {
+  if (redirected) return true;
+  return (status > 0 && status < 400) || status === 401 || status === 403 || status === 407;
 }
 
 export class ServerAuth {
@@ -165,7 +167,7 @@ export class ServerAuth {
     // A gateway's page is not our answer, whatever its status: a 200 login
     // page is a request to sign in, not a ticket. An error page is not one
     // either, though -- see `gatewayWantsLogin`.
-    if (r.gateway && !gatewayWantsLogin(r.status)) {
+    if (r.gateway && !gatewayWantsLogin(r.status, r.redirected)) {
       // Whatever answered, it was not the server we asked /healthz about: a
       // restart may have changed what it needs (a missing /api/ticket is a
       // server now running without -auth), so ask again next time.

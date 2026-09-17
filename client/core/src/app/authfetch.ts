@@ -65,6 +65,11 @@ export interface AuthResponse {
    * a page that is not our JSON. A gateway that wants a browser login.
    */
   gateway?: boolean;
+  /**
+   * With `gateway`: that answer was a redirect. An opaque one reads as status
+   * 0, which is also what an answer that says nothing reads as.
+   */
+  redirected?: boolean;
   error?: string;
 }
 
@@ -171,7 +176,7 @@ export function makeAuthFetch(http: RawHttp, tokens: TokenStore): AuthFetch {
     if (!isOurs(r)) {
       // Not videosyncd's answer, so it says nothing about our token: a gateway
       // refusing a path it should have left open must not sign the device out.
-      return { status: r.status, body: '', gateway: true };
+      return { status: r.status, body: '', gateway: true, redirected: r.redirected };
     }
 
     if (path === '/api/ticket' && r.status === 401 && sent && (await tokens.get(origin)) === sent) {

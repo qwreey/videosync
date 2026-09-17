@@ -75,6 +75,18 @@ describe('a gateway answering in the server\'s place', () => {
     }
   });
 
+  it('is an outage when it answers with no status and no redirect', async () => {
+    // Status 0 is what an opaque redirect reads as, and also what an answer
+    // that says nothing does; only `redirected` separates a login from that.
+    const r = rig(['token'], 'all');
+    await r.auth.signIn(SERVER, { key: KEY });
+    r.server.override = (p) => (p === '/api/ticket' ? { status: 0, body: '', contentType: '', redirected: false } : undefined);
+    const err = await r.auth.ticket(SERVER, 'join').then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof Error && !(err instanceof AuthRequiredError), `${String(err)}: a status 0 was guessed to be a login`);
+    r.server.override = (p) => (p === '/api/ticket' ? { status: 0, body: '', contentType: '', redirected: true } : undefined);
+    await assert.rejects(r.auth.ticket(SERVER, 'join'), AuthRequiredError, 'control: a refused redirect is a login');
+  });
+
   it('that is a bare 404 asks the server again what it needs', async () => {
     // Restarted without -auth: /api/ticket is not registered, Go answers
     // text/plain 404, and /healthz now says access control is off.
