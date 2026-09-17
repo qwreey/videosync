@@ -154,6 +154,21 @@ describe('SeekDetector', () => {
       at(d, [[2000, { positionS: 17 }, 12], [2030, { positionS: 17 }, 12.03], [2100, { positionS: 22 }, 12.1]]);
       assert.equal(d.seekDetections, 2, 'the second of two quick seeks was absorbed');
     }
+
+    // A long stall, then a skip shorter than the stall. What the element
+    // "could have played" while it read frozen is bounded by the frozen
+    // reading the allowance is for (~1 s), not by how long it buffered.
+    for (const stallS of [5, 20]) {
+      const d = new SeekDetector(visible);
+      const n = stallS * 10;
+      at(d, [
+        ...Array.from({ length: 20 }, (_, i) => [i * 100, { positionS: 10 + i * 0.1 }, 10 + i * 0.1] as Frame),
+        ...Array.from({ length: n }, (_, i) => [2000 + i * 100, { positionS: 12, ...unready }, 12 + i * 0.1] as Frame),
+      ]);
+      const t = 2000 + n * 100;
+      const kinds = at(d, [[t, { positionS: 15 }, 12 + stallS], [t + 100, { positionS: 15.1 }, 12.1 + stallS]]);
+      assert.equal(d.seekDetections, 1, `${stallS} s stall: a 3 s skip out of it was absorbed: ${kinds.join(',')}`);
+    }
   });
 
   test('a frozen reading that catches up is not a seek', () => {

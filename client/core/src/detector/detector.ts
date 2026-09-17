@@ -2,6 +2,13 @@ import type { PlayerState } from '../adapter/types.ts';
 import type { DetectorConfig, DetectorReport, Observation } from './types.ts';
 import { DEFAULT_DETECTOR_CONFIG } from './types.ts';
 
+/**
+ * The most media an element may have played while its reading stood still:
+ * Firefox + Widevine holds currentTime for ~1 s after a seek, then jumps to
+ * where the picture is (BROWSER-FINDINGS §23). Some headroom over that.
+ */
+const MAX_FROZEN_READ_MS = 1500;
+
 interface Sample { readonly t: number; readonly res: number }
 
 /**
@@ -191,8 +198,12 @@ export class SeekDetector {
       // Kept for the resume below. A frozen *reading* is not always frozen
       // playback: Firefox + Widevine holds currentTime for ~1 s after a seek,
       // then jumps to where the picture already is (BROWSER-FINDINGS §23).
+      // Capped at that reading's length, not the stall's: a real buffering
+      // stall plays nothing, and an uncapped reach grows with every frozen
+      // sample until any skip shorter than the stall is absorbed on resume.
       this.stallReach = seeked ? posMs
-        : Math.max(posMs, wasStalled ? this.stallReach + (s.paused ? 0 : dt * Math.max(0, s.rate)) : hi);
+        : Math.min(posMs + MAX_FROZEN_READ_MS,
+          Math.max(posMs, wasStalled ? this.stallReach + (s.paused ? 0 : dt * Math.max(0, s.rate)) : hi));
     } else {
       let playerDiff: number;
       if (wasStalled) {
