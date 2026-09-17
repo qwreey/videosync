@@ -2250,6 +2250,14 @@ describe('a command lost with the connection', () => {
     assert.equal(m.player.paused, true);
   });
 
+  it('control: a seek sent more than OWN_ACK_WAIT_MS before the drop is not sent again', async () => {
+    // Nothing reverts a seek the room never took, so the player still shows
+    // it: only the age says it is not the lost command's to resend.
+    const m = await lostWithLink((p) => { p.readState(); p.positionS = 300; p.emit('seeked'); }, { dropAfterMs: 8000 });
+    assert.deepEqual(kinds(m.tr), ['seek']);
+    assert.ok(m.player.positionS > 290, `at ${m.player.positionS}`);
+  });
+
   it('control: a command sent long before the drop is the reconciler\'s business', async () => {
     const m = await lostWithLink(pause, { dropAfterMs: 20_000 });
     assert.deepEqual(kinds(m.tr), ['pause']);
@@ -2301,6 +2309,13 @@ describe('a joiner welcomed inside a play\'s lead', () => {
     await m.vt.advance(1000);
     assert.ok(Math.abs(m.player.positionS * 1000 - m.room()) <= DEFAULT_ENGINE_CONFIG.seekToleranceMs,
       `at ${m.player.positionS * 1000}, the room at ${m.room()}`);
+  });
+
+  it('does not wait out an anchor further ahead than any command lead', async () => {
+    // 10 s out is a clock error, not a lead: CMD_DELAY is at most 2 s.
+    const m = await joinDuringLead({ positionMs: 30_000, atServerMs: OFFSET + 10_000, paused: false, mediaKey: 'yt:abc' });
+    await m.vt.advance(3000);
+    assert.equal(m.player.paused, false, 'still waiting for an anchor 10 s out');
   });
 
   it('control: an anchor already due is conformed at once', async () => {
@@ -2415,6 +2430,88 @@ describe('a command of ours still on its way is where the room is going', () => 
     }
     assert.ok(h.tr.sentOf('cmd').every((c) => c.kind === 'play'));
     assert.ok(Math.abs(h.player.positionS - 10) <= 0.08, `held at ${h.player.positionS}`);
+  });
+
+  it('a play of ours that never got an ack stops counting after OWN_ACK_WAIT_MS', async () => {
+    // The gate held it and then dropped it, or it was rate-limited: the room
+    // never started, so a press after that is a press, not an echo.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    h.tr.sent.length = 0;
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(150);
+    assert.equal(h.player.paused, true);
+    await h.vt.advance(5000 + 500);                  // OWN_ACK_WAIT_MS, and no ack
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(150);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play', 'play'],
+      'the press was taken for an echo of a play the room never took');
+  });
+
+  it('somebody else\'s command applied first ends the prediction', async () => {
+    const h = await playingRoom();
+    await h.player.pause();
+    h.player.emit('pause');
+    await h.vt.advance(80);
+    // Another member's seek lands before our pause does: the room plays on
+    // from there, and so does the player.
+    const t = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when: t, emittedAt: t, by: 'other-1', kind: 'seek',
+      anchor: { positionMs: 50_000, atServerMs: t, paused: false, mediaKey: 'yt:abc' },
+    });
+    await h.vt.advance(200);
+    assert.equal(h.player.paused, false);
+    await h.player.pause();
+    h.player.emit('pause');
+    await h.vt.advance(80);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause', 'pause'],
+      'the pause was judged against our own superseded one');
+  });
+
+  it('a seek during a held play is judged against the paused anchor, not the start to come', async () => {
+    // A play starts the room at `when`, from where it is paused; until then
+    // the room stands still, and so does the held player.
+    const h = harness({ paused: true, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+    await h.vt.advance(500);
+    h.tr.sent.length = 0;
+    const pressedAt = h.vt.now;
+    await h.player.play();
+    h.player.emit('play');
+    await h.vt.advance(3000);                        // the gate is holding it
+    const [play] = h.tr.sentOf('cmd');
+    assert.equal(h.player.paused, true);
+    // Scrubbed to exactly where the play would have taken the room had it
+    // started at once: a seek all the same.
+    h.player.readState();
+    h.player.positionS = (play!.positionMs + (h.vt.now - pressedAt)) / 1000;
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play', 'seek']);
+  });
+
+  it('reports still measure against the anchor while a seek of ours is on its way', async () => {
+    // The report names `lastAppliedSeq`, and the server judges it against
+    // that anchor: a residual against the prediction would say "on time"
+    // for a member 5 s off the room it is still on.
+    const h = await playingRoom();
+    h.player.readState();
+    h.player.positionS += 5;
+    h.player.emit('seeked');
+    await h.vt.advance(100);
+    ack(h, h.tr.sentOf('cmd')[0]!, 1, 1500, false);
+    h.tr.sent.length = 0;
+    await h.vt.advance(1200);
+    const hbs = h.tr.sentOf('hb');
+    assert.ok(hbs.length > 0, 'no report');
+    for (const hb of hbs) {
+      assert.equal(hb.lastAppliedSeq, 0);
+      assert.ok(Math.abs(hb.residualMs - 5000) < 300, `residual ${hb.residualMs}`);
+    }
   });
 
   it('control: a pause alone is sent once and holds', async () => {
