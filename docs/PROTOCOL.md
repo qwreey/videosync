@@ -696,6 +696,13 @@ device token and nothing else: a client's ticket request carries a bearer header
 cookie gateway would reject, so the gateway must leave that path open — and "came through the
 proxy" is then true of every request.
 
+**An answer that is not videosyncd's JSON is a gateway's** — a redirect, or any other content type —
+and says nothing about the device token, which it never drops. *(Review 3:)* on `/api/ticket` it
+asks for the login tab only when it is a redirect (reported by the shim, since an opaque one reads
+as status 0), a page served as the answer (1-399), or 401/403/407. A gateway's error page (5xx, a
+bare 404) or a status 0 with no redirect is an outage the client retries, re-reading `/healthz`
+first; taken for a sign-in, a restart behind nginx ended every member's session for good.
+
 **And only for the privileged side** *(integration review)*. On `/api/session` the proxy's word
 counts only with `X-VideoSync-Device: 1`. A gateway that admits by network (an address allowlist,
 a VPN or tailnet identity) lets through any page the user has open, a bodiless POST is a simple
