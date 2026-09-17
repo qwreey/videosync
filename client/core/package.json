@@ -8,7 +8,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build:probe": "esbuild src/probe-entry.ts --bundle --format=iife --global-name=VSCore --outfile=../../harness/browser/dist/core.js",
-    "test": "node --test --test-timeout=30000 --experimental-strip-types test/detector.test.ts test/engine.test.ts test/mediakey.test.ts test/app.test.ts test/acquire.test.ts test/reach.test.ts test/resolve.test.ts test/authfetch.test.ts test/auth.test.ts test/sharedstore.test.ts test/engine-ticket.test.ts test/providers.test.ts",
+    "test": "node --test --test-timeout=30000 --experimental-strip-types test/detector.test.ts test/engine.test.ts test/mediakey.test.ts test/app.test.ts test/acquire.test.ts test/reach.test.ts test/resolve.test.ts test/authfetch.test.ts test/auth.test.ts test/gm.test.ts test/sharedstore.test.ts test/engine-ticket.test.ts test/providers.test.ts",
     "test:e2e": "node --test --test-timeout=30000 --experimental-strip-types test/e2e.test.ts",
     "test:all": "node --test --test-timeout=30000 --experimental-strip-types test/*.test.ts"
   },

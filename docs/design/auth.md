@@ -210,7 +210,9 @@ what it left open:
 - Does the extension background's `fetch` send cached proxy Basic credentials or gateway cookies?
 - tinyauth's answer (302 vs 401 + `X-Tinyauth-Location`) to a non-navigating client.
 - Real Tampermonkey `GM_xmlhttpRequest` (still unverified in this project), including whether it
-  honours `redirect: 'manual'` and how `@connect *` asks.
+  honours `redirect: 'manual'` and how `@connect *` asks. Until it is measured, the userscript
+  takes an `onload` with status 0 for a redirect (`gmxhr.ts`): a failed request comes back
+  through `onerror`/`ontimeout`/`onabort` instead, and `fetch`'s opaque redirect reads as 0.
 - Nothing of the client flow has run in a browser: the extension background's IndexedDB and
   `tabs.create` (Chromium and Firefox MV2), the panel's sign-in section, and a real IdP. All of it
   is tested against fakes and, for the wire, against a real `videosyncd` (`test-e2e`).
