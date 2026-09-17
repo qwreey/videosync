@@ -18,6 +18,9 @@ type HTTPConfig struct {
 	// upgrade. The room secret is the real credential -- it travels in the
 	// `hello` frame, not in a cookie, so this is not CSRF protection -- but a
 	// self-hoster who knows their extension's origin should be able to say so.
+	// "<extension scheme>://*" admits every extension of that browser: the
+	// extension calls with its own Origin, and Firefox's is per install
+	// (originAllowed).
 	AllowedOrigins []string
 	// HandshakeTimeout bounds the whole wait for `hello` after the upgrade,
 	// however many frames the peer sends meanwhile. A socket that never
@@ -154,6 +157,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// originAllowed matches exactly, except for "*" and "<extension scheme>://*".
+// The extension's background makes every call with its own Origin, and a
+// Firefox install's moz-extension:// host is a random UUID per install, so a
+// list of sites alone would lock every extension user out and nothing short
+// of "*" could let them back in. Only an extension scheme takes the wildcard:
+// a page cannot send one (auth.ExtensionOrigin).
 func originAllowed(allowed []string, origin string) bool {
 	if len(allowed) == 0 {
 		return true
@@ -161,6 +170,12 @@ func originAllowed(allowed []string, origin string) bool {
 	for _, a := range allowed {
 		if a == "*" || strings.EqualFold(a, origin) {
 			return true
+		}
+		scheme, wild := strings.CutSuffix(a, "://*")
+		if wild && auth.ExtensionOrigin(a) && auth.ExtensionOrigin(origin) {
+			if got, _, _ := strings.Cut(origin, "://"); strings.EqualFold(got, scheme) {
+				return true
+			}
 		}
 	}
 	return false

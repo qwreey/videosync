@@ -181,3 +181,41 @@ func TestAllowedOriginsAreTrimmedAndBlanksDropped(t *testing.T) {
 		t.Fatal("a list of blanks was accepted")
 	}
 }
+
+// Only "*" and "<extension scheme>://*" are patterns. Anything else with a
+// star would be compared literally and match nothing, refusing what the
+// operator meant to admit with no word at startup.
+func TestAllowedOriginsRefuseAPatternThatMatchesNothing(t *testing.T) {
+	for _, bad := range []string{"https://*.example.com", "https://*", "*.example.com"} {
+		if _, err := parseOrigins("https://laftel.net, " + bad); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+	for _, good := range []string{"*", "moz-extension://*", "chrome-extension://*", "safari-web-extension://*"} {
+		if _, err := parseOrigins("https://laftel.net, " + good); err != nil {
+			t.Errorf("%q: %v", good, err)
+		}
+	}
+}
+
+// The extension's calls carry the extension's Origin. A list of sites alone
+// locks every extension user out while userscript users work, so the server
+// says so when it starts that way.
+func TestAnAllowlistWithoutExtensionsSaysSo(t *testing.T) {
+	for list, want := range map[string]bool{
+		"https://www.youtube.com, https://laftel.net":                      true,
+		"https://laftel.net, moz-extension://*":                            true, // Chrome is still out
+		"https://laftel.net, moz-extension://*, chrome-extension://*":      false,
+		"https://laftel.net, moz-extension://*, chrome-extension://abcdef": false,
+		"*": false,
+		"":  false,
+	} {
+		allowed, err := parseOrigins(list)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := originsNote(allowed) != ""; got != want {
+			t.Errorf("%q: warned = %v, want %v (%q)", list, got, want, originsNote(allowed))
+		}
+	}
+}

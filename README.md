@@ -157,6 +157,14 @@ device signs in once.
   the server must not be reachable except through it.
 - The userscript makes these calls with `GM_xmlhttpRequest`; Tampermonkey asks
   you once to allow your server's domain.
+- **`-allowed-origins`** (not access control — the room key is the credential)
+  limits which pages may open a socket or read an API answer. The extension
+  calls with its *own* origin, not the site's, so list it too:
+  `-allowed-origins "https://www.youtube.com, https://laftel.net,
+  chrome-extension://*, moz-extension://*"` (a Chrome extension may be listed by
+  its id instead; a Firefox one cannot, its origin differs per install). A list
+  of sites alone locks out every extension user while userscript users work,
+  and the server warns at startup when it is started that way.
 
 The design, and what is still unmeasured, is in `docs/design/auth.md`.
 
