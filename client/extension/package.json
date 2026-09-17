@@ -6,7 +6,8 @@
   "description": "Chrome MV3 + Firefox shim. Exists because an extension's service worker can reach a server on your own machine and a userscript cannot.",
   "scripts": {
     "build": "node build.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test manifest.test.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",

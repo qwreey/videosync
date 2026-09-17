@@ -39,12 +39,6 @@ function hydrate(): Promise<Store> {
   return sharedStore(chromeArea(), PREFIX, KEYS);
 }
 
-function wsUrl(serverUrl: string): string {
-  const u = new URL('/ws', serverUrl);
-  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-  return u.toString();
-}
-
 /**
  * False in every shipped build. harness/browser/local-ext.mjs rewrites the
  * first string in a copy of the built bundle, so its probe build -- and only
@@ -57,7 +51,7 @@ async function platform(store: Store): Promise<Platform> {
     store,
     providers: await providerHooks(store),
     openPanel: OPEN_PANEL,
-    makeTransport: (serverUrl) => new PortTransport(wsUrl(serverUrl)),
+    makeTransport: (serverUrl) => new PortTransport(serverUrl),
     /** The worker makes the call, and holds the device token. */
     authFetch: authCall,
     /** Through the worker: a tab it opens is not the popup blocker's business. */

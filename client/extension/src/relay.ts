@@ -13,11 +13,19 @@
  * inside the measured round trip, where min-RTT sampling already accounts for
  * it and it simply widens `uncertaintyMs` by half the hop.
  */
+import { serverOrigin } from '@videosync/core/app/authfetch.ts';
 import type { AuthPath, AuthRequest, AuthResponse } from '@videosync/core/app/authfetch.ts';
 import type { ClientFrame, ServerFrame } from '@videosync/core/engine/protocol.ts';
 
+/**
+ * `open` names a server, never a socket URL: the worker builds the URL itself
+ * (`socketUrl`). It is the one context Chromium lets reach loopback and the
+ * LAN, so taking a whole URL let any content-script context -- a page that
+ * compromised its renderer -- talk JSON to any WebSocket there, past the
+ * boundary the HTTP relay draws with its path allowlist.
+ */
 export type ToWorker =
-  | { t: 'open'; url: string }
+  | { t: 'open'; server: string }
   | { t: 'send'; frame: ClientFrame }
   | { t: 'close' };
 
@@ -50,6 +58,19 @@ export type WorkerRequest =
 export type WorkerAuthReply = AuthResponse;
 
 export const PORT_NAME = 'videosync';
+
+/**
+ * The sync socket of a server: `ws(s)://<origin>/ws`, or null when `server`
+ * is not an http(s) URL. Everything past the origin is dropped, as
+ * `new URL('/ws', server)` always did.
+ */
+export function socketUrl(server: unknown): string | null {
+  const origin = typeof server === 'string' ? serverOrigin(server) : null;
+  if (!origin) return null;
+  const u = new URL('/ws', origin);
+  u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+  return u.toString();
+}
 
 export interface GrantedReply { origins: string[] }
 export interface SyncReply { patterns: string[]; error?: string }
