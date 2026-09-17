@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
-import { start } from '../src/app/bootstrap.ts';
+import { rewriteInviteSecret, start } from '../src/app/bootstrap.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
@@ -529,11 +529,55 @@ describe('an invite link', () => {
     }
   });
 
+  it('left in the address bar carries a rotated secret (N37)', async () => {
+    const h = harness(`${ROOM_URL}&t=5#videosync=R.S`);
+    h.dom.history.state = { app: 'the site\'s' };
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S/2', rotated: 'other' });
+    await flush();
+    assert.equal(h.dom.loc.href, `${ROOM_URL}&t=5#videosync=R.S%2F2`,
+      'a reload would prefill the old secret over the stored one, and be refused');
+    assert.deepEqual(h.dom.history.replaced, [[{ app: 'the site\'s' }, h.dom.loc.href]],
+      'replaced, not pushed, and the site\'s own history state kept');
+  });
+
+  it('for another room is left alone when this room\'s secret rotates', async () => {
+    const h = harness(`${ROOM_URL}#videosync=Q.S`);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    await flush();
+    assert.equal(h.store.data.get('secret'), 'S2', 'control: the rotation was handled');
+    assert.equal(h.dom.loc.href, `${ROOM_URL}#videosync=Q.S`);
+    assert.deepEqual(h.dom.history.replaced, []);
+  });
+
   it('does not leak its secret through dump()', () => {
     const h = harness(`${ROOM_URL}#videosync=R1.SUPERSECRET`);
     const d = h.app.api.dump();
     assert.ok(!d.includes('SUPERSECRET'), 'the dump is meant to be pasted into an issue');
     assert.match(JSON.parse(d).url as string, /watch\?v=abc/, 'the page itself is still worth knowing');
+  });
+});
+
+describe('rewriteInviteSecret', () => {
+  const U = 'https://laftel.net/player/1/2?videosync=R.q';
+  it('rewrites only the secret, keeping the rest of the fragment', () => {
+    assert.equal(rewriteInviteSecret(`${U}#t=10&videosync=R.old&x=1`, 'R', 'new'),
+      `${U}#t=10&videosync=R.new&x=1`);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=R%20x.old`, 'R x', 'a&b.c'),
+      `${U}#videosync=R%20x.a%26b.c`);
+  });
+  it('leaves a link to another room, or no link, alone', () => {
+    assert.equal(rewriteInviteSecret(`${U}#videosync=Q.old`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=RR.old`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(U, 'R', 'new'), null, 'the query is not the fragment');
+    assert.equal(rewriteInviteSecret(`${U}#t=10`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=%E0.old`, 'R', 'new'), null);
+  });
+  it('has nothing to do when the secret is already the new one', () => {
+    assert.equal(rewriteInviteSecret(`${U}#videosync=R.new`, 'R', 'new'), null);
   });
 });
 

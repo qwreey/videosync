@@ -183,6 +183,28 @@ export function redactInvite(href: string): string {
 }
 
 /**
+ * `href` with the secret of its invite for `roomId` replaced by `secret`, or
+ * null if its fragment carries no invite for that room or already this one.
+ * Only the fragment is looked at, and only the secret in it changes. An invite
+ * left in the address bar wins over the stored secret on the next load, so
+ * after a rotation a reload would join with the old one and be refused.
+ */
+export function rewriteInviteSecret(href: string, roomId: string, secret: string): string | null {
+  const at = href.indexOf('#');
+  if (at < 0) return null;
+  const hash = href.slice(at);
+  const m = /([#&]videosync=)([^.&]+)\.([^&]+)/.exec(hash);
+  if (!m || !m[1] || !m[2]) return null;
+  try {
+    if (decodeURIComponent(m[2]) !== roomId) return null;
+  } catch {
+    return null;
+  }
+  const next = `${hash.slice(0, m.index)}${m[1]}${m[2]}.${encodeURIComponent(secret)}${hash.slice(m.index + m[0].length)}`;
+  return next === hash ? null : href.slice(0, at) + next;
+}
+
+/**
  * What a refused join tells the user to do. Only `join_refused` is about the
  * ID or the secret; a full room was reached with both right, and sending that
  * user off to re-check them is sending them the wrong way. (`auth_required`
@@ -866,7 +888,15 @@ export function start(p: Platform): App {
         if (session && p.store.load('server', '') === session.server && p.store.load('room', '') === session.roomId) {
           p.store.save('secret', sec);
         }
-        if (session) session = { ...session, secret: sec };
+        if (session) {
+          session = { ...session, secret: sec };
+          const href = rewriteInviteSecret(location.href, session.roomId, sec);
+          // `replaceState` fires neither `hashchange` nor `popstate`, and the
+          // site's own state goes back as it was.
+          if (href) {
+            try { history.replaceState(history.state, '', href); } catch { /* the link just stays stale */ }
+          }
+        }
         refreshRejoin();
         panel.addChat('', by === engine?.id
           ? '비밀키를 교체했어요. 예전 링크로는 아무도 들어올 수 없어요.'
