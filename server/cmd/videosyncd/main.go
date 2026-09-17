@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -26,7 +27,9 @@ func main() {
 		os.Exit(hashPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	addr := flag.String("addr", ":8787", "listen address")
-	origins := flag.String("allowed-origins", "", "comma-separated Origin allowlist for the WebSocket upgrade (empty = any)")
+	origins := flag.String("allowed-origins", "",
+		"comma-separated Origin allowlist (e.g. \"https://www.youtube.com, https://laftel.net\") for the "+
+			"WebSocket upgrade and for CORS on the /api endpoints (empty = any)")
 	idle := flag.Duration("idle-ttl", 3*time.Minute, "delete a room this long after its last member leaves")
 	maxMembers := flag.Int("max-members", 32, "members per room")
 	maxRooms := flag.Int("max-rooms", 10000, "rooms held in memory")
@@ -64,9 +67,11 @@ func main() {
 	}
 
 	hcfg := hub.DefaultHTTPConfig()
-	if *origins != "" {
-		hcfg.AllowedOrigins = strings.Split(*origins, ",")
+	allowed, err := parseOrigins(*origins)
+	if err != nil {
+		log.Fatal(err)
 	}
+	hcfg.AllowedOrigins = allowed
 
 	authServer, notes, err := af.build()
 	if err != nil {
@@ -131,6 +136,28 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+}
+
+// parseOrigins reads -allowed-origins. Entries are trimmed, as -oidc-allow's
+// are: the hub compares them to the Origin header exactly, so " https://b"
+// from "a, b" would match nothing and refuse that site with no word at
+// startup. Blank entries are dropped, because an empty one matches a request
+// that sends no Origin. A flag that names nothing but blanks is an error,
+// not "any origin": it was meant to restrict.
+func parseOrigins(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, o := range strings.Split(s, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("-allowed-origins %q names no origin (leave it out to allow any)", s)
+	}
+	return out, nil
 }
 
 type timeouts struct{ header, read, idle time.Duration }

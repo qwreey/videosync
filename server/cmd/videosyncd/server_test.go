@@ -145,3 +145,25 @@ func TestAWebSocketOutlivesTheRequestTimeout(t *testing.T) {
 		t.Fatal("no answer to a time request")
 	}
 }
+
+// "a, b" is how a person writes a list, and -oidc-allow already accepts it.
+// An entry kept with its space matches no Origin, so that site's /ws upgrade
+// is refused and its fetches get no CORS header, with nothing said at
+// startup; an empty entry matches a request with no Origin at all.
+func TestAllowedOriginsAreTrimmedAndBlanksDropped(t *testing.T) {
+	got, err := parseOrigins(" https://www.youtube.com, https://laftel.net ,,")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "https://www.youtube.com|https://laftel.net" {
+		t.Fatalf("parseOrigins = %q", got)
+	}
+	if got, err := parseOrigins(""); err != nil || got != nil {
+		t.Fatalf("empty flag = %q, %v; want nil (any origin)", got, err)
+	}
+	// A flag that names only blanks was meant to restrict something; reading
+	// it as "any origin" would widen what the operator asked for.
+	if _, err := parseOrigins(" , "); err == nil {
+		t.Fatal("a list of blanks was accepted")
+	}
+}
