@@ -2049,10 +2049,14 @@ export class SyncEngine {
    */
   private sendOfflineChanges(now: number, state: PlayerState): void {
     const o = this.offline;
-    if (!o || !this.clock.ready) return;
+    // An apply from before the drop can still be running -- a seek parked
+    // for ten seconds outlives a reconnect. The player is not the member's
+    // to read until it settles, so ask again then rather than spend the only
+    // record of what they did.
+    if (!o || !this.clock.ready || this.applyingRemote) return;
     this.offline = null;
     if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
-    if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
+    if (this.acq.state !== 'steady' || this.autoplayBlocked) return;
     // A lost command's press came before the drop, and is evidence enough --
     // for the change that command made, and nothing else. A site's own move
     // during the outage (an autoplay, an ad's pause, a resume seek) is not

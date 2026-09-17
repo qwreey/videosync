@@ -615,6 +615,35 @@ describe('reconnect', () => {
     assert.ok(Math.abs(cmds[0]!.positionMs - 301_400) < 500, `seeked to ${cmds[0]!.positionMs}`);
   });
 
+  it('sends a pause made while reconnecting once an apply from before the drop settles', async () => {
+    // A correction seek parked when the link went is still running at the
+    // welcome. The first evaluation then must not spend the offline snapshot:
+    // it is the only record of the pause, and the reconciler undoes it.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(2000);
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await h.vt.advance(100);
+    assert.equal(parked.length, 1);
+    h.tr.drop('link blip');
+    await h.vt.advance(200);
+    await h.player.pause();                       // the member pauses offline
+    await h.vt.advance(800);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { mediaKey: 'yt:abc', positionMs: 10_000, atServerMs: OFFSET, paused: false },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(600);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'sent while our own seek was still landing');
+    parked[0]!.release();
+    await h.vt.advance(300);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause'], 'the offline pause never reached the room');
+  });
+
   it('control: a player that just kept playing sends nothing', async () => {
     const h = await changedWhileAway(() => {});
     assert.deepEqual(h.tr.sentOf('cmd'), []);
