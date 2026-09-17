@@ -492,7 +492,7 @@ function landsAt(targetMs: number, durationS: number): number {
 }
 
 /** One of our own commands, sent and not yet acked. */
-interface OwnCmd { reqId: string; kind: CmdKind; at: number }
+interface OwnCmd { reqId: string; kind: CmdKind; at: number; positionMs: number }
 
 export class SyncEngine {
   readonly cfg: EngineConfig;
@@ -595,8 +595,14 @@ export class SyncEngine {
   private offline: {
     at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
     seq: number; anchor: Anchor;
-    /** A command of ours was unanswered at the drop; the snapshot is the room's. See `onClose`. */
-    lost: boolean;
+    /**
+     * Commands of ours unanswered at the drop, so the snapshot is the room's
+     * (see `onClose`): the last lost seek, and the pause state the last lost
+     * play or pause asked for. What they did to the player is the member's
+     * own change even without an input after the drop; nothing else is.
+     */
+    lostSeek: OwnCmd | null;
+    lostPaused: boolean | null;
     /** ...and the last press among them was a play the player was held for. */
     playLost: boolean;
   } | null = null;
@@ -1060,7 +1066,8 @@ export class SyncEngine {
         at, rate: s.rate,
         positionS: room ? roomMs / 1000 : s.positionS,
         paused: room ? this.anchor.paused : s.paused,
-        lost: room,
+        lostSeek: room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null,
+        lostPaused: room && lastPress ? lastPress.kind === 'pause' : null,
         playLost: room && lastPress?.kind === 'play' && this.anchor.paused && s.paused,
         media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
       } : null;
@@ -1934,6 +1941,8 @@ export class SyncEngine {
    * Only in `steady`, and with gesture evidence only if an input came after
    * the drop: nothing is evaluated offline, so no gesture window applies, and
    * a site's own move in that time is left for the reconciler to put back.
+   * The one exception is the change a command lost with the link made (see
+   * `onClose`): same kind, same value, and nothing more.
    *
    * Only if the room did not move meanwhile, either: the anchor and `seq`
    * are the ones the drop left. Anybody else's command is newer than what
@@ -1947,8 +1956,13 @@ export class SyncEngine {
     this.offline = null;
     if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
     if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
-    // A lost command's press came before the drop, and is evidence enough.
-    if (this.d.gestures && this.d.gestures.lastInputAt() < o.at && !o.lost) return;
+    // A lost command's press came before the drop, and is evidence enough --
+    // for the change that command made, and nothing else. A site's own move
+    // during the outage (an autoplay, an ad's pause, a resume seek) is not
+    // the member's because a command of ours was lost meanwhile, and the lost
+    // one may have been the engine's own adoption, pressed by nobody.
+    const input = !this.d.gestures || this.d.gestures.lastInputAt() >= o.at;
+    if (!input && !o.lostSeek && o.lostPaused === null) return;
     const a = this.anchor;
     if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
       a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
@@ -1958,15 +1972,28 @@ export class SyncEngine {
     const hi = ran ? lo + (now - o.at) * Math.max(0, o.rate, state.rate) : lo;
     const jump = pos < lo ? lo - pos : pos > hi ? pos - hi : 0;
     const expected = expectedAt(this.anchor, this.serverNow());
-    if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs) {
+    if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs &&
+      (input || this.fromLostSeek(o.lostSeek, pos, now, Math.max(o.rate, state.rate), state.durationS))) {
       this.act({ kind: 'seek', positionS: state.positionS }, state);
     }
     // A player still held for a lost play is, as far as the member is
     // concerned, playing.
     const paused = state.paused && !o.playLost;
-    if (paused !== o.paused && !(paused && this.detector.browserPaused(state))) {
+    if (paused !== o.paused && !(paused && this.detector.browserPaused(state)) &&
+      (input || paused === o.lostPaused)) {
       this.act({ kind: 'playstate', paused, positionS: state.positionS }, state);
     }
+  }
+
+  /**
+   * Whether a player at `posMs` is still where a lost seek put it: at the
+   * target, or anywhere playback could have taken it since.
+   */
+  private fromLostSeek(c: OwnCmd | null, posMs: number, now: number, rate: number, durationS: number): boolean {
+    if (!c) return false;
+    const lo = landsAt(c.positionMs, durationS);
+    const hi = lo + (now - c.at) * Math.max(0, rate);
+    return posMs >= lo - this.seekThresholdMs && posMs <= hi + this.seekThresholdMs;
   }
 
   /** The effect of our own in-flight transition, or agreement with the room. */
@@ -2360,7 +2387,7 @@ export class SyncEngine {
     const reqId = `${this.selfId || 'x'}-${++this.reqSeq}`;
     const now = this.d.now();
     this.unacked = this.unacked.filter((c) => now - c.at < OWN_ACK_WAIT_MS);
-    this.unacked.push({ reqId, kind, at: now });
+    this.unacked.push({ reqId, kind, at: now, positionMs });
     this.intended = this.predict(reqId, kind, positionMs);
     this.tx({
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),

@@ -2121,7 +2121,11 @@ describe('a command lost with the connection', () => {
    */
   async function lostWithLink(
     act: (p: FakePlayer) => Promise<void> | void,
-    o: { dropAfterMs?: number; room?: Partial<Anchor>; seq?: number; paused?: boolean; gestures?: boolean } = {},
+    o: {
+      dropAfterMs?: number; room?: Partial<Anchor>; seq?: number; paused?: boolean; gestures?: boolean;
+      /** What the site does to the player while the link is down, with nobody touching anything. */
+      offline?: (p: FakePlayer) => Promise<void> | void;
+    } = {},
   ) {
     const vt = new VirtualTime();
     const paused = o.paused ?? false;
@@ -2157,7 +2161,9 @@ describe('a command lost with the connection', () => {
     assert.ok(sent >= 1, 'the change never became a command');
     await vt.advance(o.dropAfterMs ?? 200);
     tr.drop('link was dead');
-    await vt.advance(600);
+    await vt.advance(300);
+    await o.offline?.(player);
+    await vt.advance(300);
     tr.open();
     welcome({ ...anchor, ...o.room }, o.seq ?? 0);
     await vt.advance(600);
@@ -2184,6 +2190,37 @@ describe('a command lost with the connection', () => {
   it('a pause is sent again with gesture evidence, whose press came before the drop', async () => {
     const m = await lostWithLink(pause, { gestures: true });
     assert.deepEqual(kinds(m.tr), ['pause', 'pause']);
+  });
+
+  it('with gesture evidence, a site\'s own seek during the outage is not sent with a lost pause', async () => {
+    // Resume-from-history, or an ad break's return: nobody pressed anything
+    // after the drop, and the lost command was a pause, not a seek.
+    const m = await lostWithLink(pause, {
+      gestures: true, offline: (p) => { p.readState(); p.positionS = 300; },
+    });
+    assert.deepEqual(kinds(m.tr), ['pause', 'pause']);
+  });
+
+  it('with gesture evidence, a site\'s own pause during the outage is not sent with a lost seek', async () => {
+    const m = await lostWithLink((p) => { p.readState(); p.positionS = 300; p.emit('seeked'); }, {
+      gestures: true, offline: async (p) => { await p.pause(); },
+    });
+    assert.deepEqual(kinds(m.tr), ['seek', 'seek']);
+  });
+
+  it('with gesture evidence, a site\'s own seek during the outage is not taken for a lost seek', async () => {
+    // The lost command is a seek, but not to where the site put the player.
+    const m = await lostWithLink((p) => { p.readState(); p.positionS = 300; p.emit('seeked'); }, {
+      gestures: true, offline: (p) => { p.readState(); p.positionS = 1200; },
+    });
+    assert.deepEqual(kinds(m.tr), ['seek']);
+  });
+
+  it('control: with gesture evidence, a site\'s own play during the outage cancels a lost pause', async () => {
+    // Paused, lost, and then the site started playback again by itself: the
+    // player now agrees with the room, and nothing the member asked for is left.
+    const m = await lostWithLink(pause, { gestures: true, offline: async (p) => { await p.play(); } });
+    assert.deepEqual(kinds(m.tr), ['pause']);
   });
 
   it('a seek is sent again', async () => {
