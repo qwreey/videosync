@@ -1,6 +1,9 @@
 package room
 
-import "net/url"
+import (
+	"net/url"
+	"strings"
+)
 
 // maxMediaURL bounds what a member can make the server store and repeat to
 // everyone. A canonical watch URL is well under this.
@@ -30,14 +33,40 @@ func SanitizeMediaKey(k string) string {
 // client sends: another scheme (`javascript:`, `data:`), credentials in the
 // authority, a fragment (which is where invite secrets live), and anything
 // oversized.
+//
+// What comes back is u itself, never Go's re-encoding of it. The client's
+// check parses with WHATWG rules, which leave "|" and a stray "%" in a path
+// as they are; Go writes the first as %7C and refuses the second, and either
+// way the room's own URL stopped normalising to the room's key.
 func SanitizeMediaURL(u string) string {
-	if u == "" || len(u) > maxMediaURL {
+	if u == "" || len(u) > maxMediaURL || strings.Contains(u, "#") {
 		return ""
 	}
-	p, err := url.Parse(u)
+	p, err := url.Parse(escapeStrayPercent(u))
 	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" ||
-		p.User != nil || p.Fragment != "" || p.Opaque != "" {
+		p.User != nil || p.Opaque != "" || strings.Contains(p.Host, "%") {
 		return ""
 	}
-	return p.String()
+	return u
+}
+
+// escapeStrayPercent writes every "%" that does not start an escape as "%25",
+// which is how WHATWG reads it, so that only the check parses it strictly.
+func escapeStrayPercent(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && (i+2 >= len(s) || !isHex(s[i+1]) || !isHex(s[i+2])) {
+			b.WriteString("%25")
+			continue
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func isHex(c byte) bool {
+	return '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
 }

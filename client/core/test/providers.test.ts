@@ -821,11 +821,15 @@ describe("a descriptor's capability mask on the HTML5 adapter", () => {
     e.dispatchEvent(new Event('seeked'));
     await p;
     const b = new Html5Adapter(e, 'html5', { seek: { timeoutMs: 1000 } });
-    const t0 = Date.now();
     const q = b.seekTo(10);
     e.currentTime = 8.5;
     e.dispatchEvent(new Event('seeked'));
-    await assert.rejects(q, /within 1000ms/);
+    // Outside the default tolerance, and nothing is seeking any more: it did
+    // not land, and there is nothing left to wait for.
+    await assert.rejects(q, /landed at 8.5s/);
+    // A seek that never reports waits for this provider's timeout.
+    const t0 = Date.now();
+    await assert.rejects(b.seekTo(20), /within 1000ms/);
     assert.ok(Date.now() - t0 < 3000, 'the descriptor timeout, not the 10 s default');
     a.destroy();
     b.destroy();

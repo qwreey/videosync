@@ -751,7 +751,7 @@ export function start(p: Platform): App {
       isHidden: () => document.hidden,
       ticket: () => joinTicket(serverUrl),
       gestures,
-      continues: (prev, next) => continuesMedia(prev, next, reg),
+      continues: (prev, next) => continuesMedia(prev, next, reg, location.hostname),
     }, {
       ...DEFAULT_ENGINE_CONFIG,
       room: roomId, secret, name: name || '익명', mediaKey, mediaUrl,

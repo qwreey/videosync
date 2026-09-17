@@ -7,6 +7,8 @@ import { pickVideo } from '../src/adapter/resolve.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, VirtualTime } from './fakes.ts';
 import type { VideoLike } from '../src/adapter/resolve.ts';
+import { compileDescriptor } from '../src/providers/descriptor.ts';
+import { builtinEntries, ProviderRegistry } from '../src/providers/registry.ts';
 
 describe('mediaKey normalization', () => {
   it('identifies a YouTube video by its id, whatever the route in', () => {
@@ -226,8 +228,9 @@ describe('an adapter whose element gets replaced', () => {
 
 /**
  * Just enough of an HTMLVideoElement for Html5Adapter. A seek clamps the way
- * the spec says (past the end lands on the duration); `fireSeeked` false models
- * an element torn down mid-seek, which never reports it.
+ * the spec says (past the end lands on the duration), sets `seeking`, and
+ * aborts a seek still running, whose `seeked` then never fires; `fireSeeked`
+ * false models an element torn down mid-seek, which never reports it.
  */
 class FakeVideoEl extends EventTarget {
   private pos = 0;
@@ -238,12 +241,22 @@ class FakeVideoEl extends EventTarget {
   volume = 1;
   duration: number;
   fireSeeked = true;
+  seeking = false;
+  seekMs = 5;
+  private seekTimer: ReturnType<typeof setTimeout> | undefined;
   buffered = { length: 0, start: () => 0, end: () => 0 };
   constructor(duration = 120) { super(); this.duration = duration; }
   get currentTime(): number { return this.pos; }
   set currentTime(t: number) {
     this.pos = Number.isFinite(this.duration) ? Math.min(Math.max(t, 0), this.duration) : Math.max(t, 0);
-    if (this.fireSeeked) setTimeout(() => this.dispatchEvent(new Event('seeked')), 5);
+    this.seeking = true;
+    clearTimeout(this.seekTimer);
+    if (this.fireSeeked) {
+      this.seekTimer = setTimeout(() => {
+        this.seeking = false;
+        this.dispatchEvent(new Event('seeked'));
+      }, this.seekMs);
+    }
   }
 }
 const asEl = (f: FakeVideoEl) => f as unknown as HTMLVideoElement;
@@ -281,6 +294,30 @@ describe('the HTML5 adapter', () => {
     assert.equal(await settlesWithin(p, 1), 'pending', 'a seeked at another position resolved ours');
     a.destroy();
     b.destroy();
+  });
+
+  it('gives up a seek that a newer one aborted', async () => {
+    // Per spec a currentTime write while seeking aborts the running seek, and
+    // only the newer one reports `seeked`, at its own position. Ours never
+    // matches, so it waited out the whole timeout -- and every pause or play
+    // queued behind it waited with it, while the element had long landed.
+    const el = new FakeVideoEl(600);
+    el.seekMs = 300;
+    const a = new Html5Adapter(asEl(el));
+    const p = a.seekTo(100);
+    p.catch(() => {});
+    setTimeout(() => { el.currentTime = 250; }, 100); // the user drags the scrubber
+    assert.equal(await settlesWithin(p, 1000), 'rejected', 'a superseded seek waited for its timeout');
+
+    // Control: a stale `seeked` that arrives while ours is still running is
+    // neither ours nor a sign that ours was aborted.
+    el.seekMs = 50;
+    const q = a.seekTo(300);
+    (el as unknown as { pos: number }).pos = 10;
+    el.dispatchEvent(new Event('seeked'));
+    (el as unknown as { pos: number }).pos = 300;
+    assert.equal(await settlesWithin(q, 500), 'resolved', 'a stale seeked settled a running seek');
+    a.destroy();
   });
 
   it('settles a pending seek when it is destroyed', async () => {
@@ -387,6 +424,26 @@ describe('where a room\'s media can be opened', () => {
       'https://video.example/v/2'), 'https://video.example/v/1');
   });
 
+  it('keeps a member on an unknown site on the origin they are on', () => {
+    // The generic key names neither scheme nor port, and the URL keeps the
+    // sender's origin. Comparing hostnames alone let one member send everyone
+    // from https to plain http, or to another service on another port.
+    const here = 'https://video.example/v/1';
+    for (const u of [
+      'http://video.example:8080/v/2',
+      'http://video.example/v/2',
+      'https://video.example:9443/v/2',
+    ]) {
+      assert.equal(normalizeMediaKey(u), 'video.example:/v/2', `setup: ${u}`);
+      assert.equal(followableUrl(u, 'video.example:/v/2', here), null, u);
+    }
+    // Control: the same origin is followed, plain http included where the
+    // member already is.
+    assert.equal(followableUrl('https://video.example/v/2', 'video.example:/v/2', here), 'https://video.example/v/2');
+    assert.equal(followableUrl('http://127.0.0.1:8898/v/2', '127.0.0.1:/v/2', 'http://127.0.0.1:8898/v/1'),
+      'http://127.0.0.1:8898/v/2');
+  });
+
   it('refuses what no honest member sends', () => {
     const room = 'laftel:/player/1/2';
     const here = 'https://laftel.net/';
@@ -425,6 +482,66 @@ describe('which media continues which (the next episode)', () => {
 
   it('is never anything on a site no rule knows', () => {
     assert.equal(continuesMedia(key('http://127.0.0.1:8898/watch/1'), key('http://127.0.0.1:8898/watch/2')), false);
+  });
+
+  it('is decided by a descriptor only in a key namespace nothing else mints', () => {
+    // A key prefix may contain dots, so a server descriptor can name another
+    // site's generic namespace as its own. Choosing the deciding descriptor by
+    // prefix alone then let it continue -- move the whole room -- on a host it
+    // does not describe and the user never granted.
+    const withServer = (keyPrefix: string, hosts = ['shows.example']) => {
+      const r = compileDescriptor({
+        schema: 1, id: 'shows', keyPrefix, name: 'Shows', version: '1.0.0', adapter: 'html5',
+        hosts, canonicalHost: 'shows.example', identity: [], pathFallback: true,
+        continues: [{ from: '/**', to: '/**' }],
+        examples: [{ url: 'https://shows.example/watch/81', key: `${keyPrefix}:/watch/81` }],
+      });
+      if (!r.ok) throw new Error(`setup: ${r.errors.join("; ")}`);
+      return new ProviderRegistry([
+        ...builtinEntries(),
+        { provider: r.provider, tier: 'server', sha256: 'x', granted: () => false },
+      ]);
+    };
+    for (const host of ['example.org', 'www.example.org']) {
+      const reg = withServer('example.org');
+      const k = (path: string) => normalizeMediaKey(`https://${host}${path}`, reg)!;
+      assert.equal(k('/browse'), 'example.org:/browse', 'setup: an undescribed host keeps the generic rule');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg), false,
+        `${host}: a descriptor for shows.example continued media on ${host}`);
+    }
+    // ...and so is a host's own name, if the generic rule still has a route
+    // to it: www.shows.example is keyed "shows.example" too.
+    {
+      const reg = withServer('shows.example');
+      const k = (path: string) => normalizeMediaKey(`https://www.shows.example${path}`, reg)!;
+      assert.equal(k('/watch/81'), 'shows.example:/watch/81', 'setup: the generic rule on www');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg), false, 'www.shows.example');
+    }
+    // A single-label host (a LAN name, a MagicDNS short name) is keyed under
+    // its own dot-less name, so a dot-less prefix is no exemption.
+    {
+      const reg = withServer('nas');
+      const k = (path: string) => normalizeMediaKey(`http://nas${path}`, reg)!;
+      assert.equal(k('/watch/81'), 'nas:/watch/81', 'setup: the generic rule on a single-label host');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg, 'nas'), false, 'a descriptor continued media on http://nas');
+      // Control: the same keys, read on a page that descriptor describes.
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg, 'shows.example'), true, 'control: on shows.example');
+    }
+    // Control: a built-in's prefix is still decided by the built-in, on its page.
+    {
+      const reg = withServer('shows');
+      const k = (url: string) => normalizeMediaKey(url, reg)!;
+      assert.equal(continuesMedia(k('https://laftel.net/player/45462/93304'),
+        k('https://laftel.net/player/45462/93305'), reg, 'laftel.net'), true, 'control: a built-in prefix');
+    }
+    // Control: the same rules continue in a namespace only that descriptor
+    // mints -- its own id, or a host it describes, all routes to it included.
+    for (const [prefix, hosts] of [['shows', ['shows.example']], ['shows.example', ['shows.example', 'www.shows.example']]] as const) {
+      const reg = withServer(prefix, [...hosts]);
+      const k = (path: string) => normalizeMediaKey(`https://shows.example${path}`, reg)!;
+      assert.equal(continuesMedia(k('/watch/81'), k('/watch/82'), reg), true, `control: prefix ${prefix}`);
+      assert.equal(continuesMedia(k('/watch/81'), k('/watch/82'), reg, 'shows.example'), true, `control: prefix ${prefix} on its page`);
+    }
   });
 });
 
