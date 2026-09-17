@@ -13,7 +13,7 @@
  */
 import {
   bestHostScore, LIMITS, matchPath, matchQuery, normHost, parsePathTemplate, parseQueryTemplate,
-  parseTextTemplate, substitute, validHostPattern,
+  parseTextTemplate, substitute, validHostPattern, aceLabel,
 } from './template.ts';
 import type { Captures, PathTemplate, QueryTemplate, TextTemplate } from './template.ts';
 
@@ -568,7 +568,7 @@ export function parseDescriptor(text: string): CompileResult {
 /**
  * A URL written the way both ports read alike: `http(s)://host[:port]`, a
  * path, query and fragment of printable ASCII that neither parser rewrites,
- * and a host that is a name or a dotted-quad address. Outside it net/url and
+ * and a host that is a name (no `xn--` label) or a dotted-quad address. Outside it net/url and
  * URL disagree -- URL strips tabs and newlines, reads a backslash as `/`, takes
  * `https:host`, re-reads a numeric host as an address and refuses a port over
  * 65535; net/url re-escapes `|` and `^` -- so the server would list a
@@ -593,7 +593,7 @@ const PLAIN_URL = new RegExp(
 function plainHost(host: string): boolean {
   const name = host.endsWith('.') ? host.slice(0, -1) : host;
   const labels = name.split('.');
-  if (labels.some((l) => l === '')) return false;
+  if (labels.some((l) => l === '' || aceLabel(l))) return false;
   // URL reads a host whose last label is a number as an IPv4 address and
   // rewrites it (`1.2.3` is 1.2.0.3); net/url keeps the text. Only the form
   // both leave alone is taken.

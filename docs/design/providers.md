@@ -131,6 +131,16 @@ them URL by URL.
   reimplements that and `encodeURIComponent` by hand. URL *parsing* is not shared: the server
   uses `net/url`, which differs from WHATWG at the edges (dot segments, IDN), so the vectors pin
   the grammar on already-parsed parts, and the built-ins' examples are plain URLs.
+- **No IDN hosts.** No label of a descriptor host (`hosts`, `pageHosts`, `identity[].hosts`,
+  `canonicalHost`, a `watch` host) or of an example URL's host may start with `xn--`, in any case.
+  Node's URL and Go's `net/url` take any such label as text, but a browser runs UTS46 and refuses
+  one that is not valid punycode of a valid name (`xn--a` decodes to a disallowed U+0080, `xn--` to
+  nothing), so the server and the test suite would accept a descriptor every real client refuses.
+  Telling the valid labels apart needs the IDNA mapping tables in both ports; refusing them all is
+  the simple safe rule. It costs nothing today (no target site has an IDN host) and still keeps a
+  homograph from equalling a descriptor host, since a look-alike reaches a page as `xn--...`.
+  Other `--` labels (`ab--c`) are plain: the URL standard turns hyphen checks off. Vectors: `invalidHosts`
+  and `urls` in `templates.json`, and the `xn--` cases in `descriptors.json`.
 - A hostname is lowercased and one trailing dot is dropped before matching, so `laftel.net.` is
   Laftel (an example says so). Before, it fell to the unknown-host branch with its own key.
 

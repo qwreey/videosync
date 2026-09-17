@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared by client/core/test/providers.test.ts and server/internal/provider/template_test.go, so the two implementations of the template grammar cannot drift. Inputs are already-parsed URL parts (pathname, search), not whole URLs: URL parsing differs between a browser and Go at the edges, the grammar must not. The one exception is \"pathnames\": the Go port resolves dot segments itself (net/url does not), so it must give what URL.pathname gives. \"urls\" are whole URLs: only a plain URL (a grammar both ports check the same way) may appear in an example or a watch template, and for a plain one this port's parse must give what URL gives. Outside it net/url and WHATWG disagree (tabs, backslashes, \"|\", ports over 65535, numeric hosts).",
+  "_comment": "Shared by client/core/test/providers.test.ts and server/internal/provider/template_test.go, so the two implementations of the template grammar cannot drift. Inputs are already-parsed URL parts (pathname, search), not whole URLs: URL parsing differs between a browser and Go at the edges, the grammar must not. The one exception is \"pathnames\": the Go port resolves dot segments itself (net/url does not), so it must give what URL.pathname gives. \"urls\" are whole URLs: only a plain URL (a grammar both ports check the same way) may appear in an example or a watch template, and for a plain one this port's parse must give what URL gives. Outside it net/url and WHATWG disagree (tabs, backslashes, \"|\", ports over 65535, numeric hosts). No descriptor host or plain URL may have an \"xn--\" label: Node and net/url take \"xn--a\" or \"xn--\" as text, a browser runs UTS46 and refuses them.",
   "path": [
     {
       "template": "/player/{series:int}/{episode:int}",
@@ -159,6 +159,7 @@
     {"url": "https://video.example/?", "plain": true, "hostname": "video.example", "pathname": "/", "search": ""},
     {"url": "https://a.1a/x", "plain": true, "hostname": "a.1a", "pathname": "/x", "search": ""},
     {"url": "https://video.example:65535/x", "plain": true, "hostname": "video.example", "pathname": "/x", "search": ""},
+    {"url": "https://ab--c.video.example/x", "plain": true, "hostname": "ab--c.video.example", "pathname": "/x", "search": ""},
     {"url": "https://www.youtube.com/watch\t?v=abc", "plain": false},
     {"url": "https://www.youtube.com\\watch?v=abc", "plain": false},
     {"url": " https://www.youtube.com/watch?v=abc", "plain": false},
@@ -192,6 +193,10 @@
     {"url": "https://user@video.example/", "plain": false},
     {"url": "HTTPS://video.example/", "plain": false},
     {"url": "ftp://video.example/", "plain": false},
+    {"url": "https://xn--a.video.example/watch/abc", "plain": false},
+    {"url": "https://a.xn--.video.example/watch/abc", "plain": false},
+    {"url": "https://XN--lftel-2ve.net/", "plain": false},
+    {"url": "https://xn--p1ai.example/", "plain": false},
     {"url": "https://video.example/x#a b", "plain": false},
     {"url": "https://video.example/x#%zz", "plain": false},
     {"url": "https://video.example/x?a'b", "plain": false},
@@ -251,12 +256,17 @@
     "laftel.net/x",
     "a_b.com",
     "*.1.2.3",
+    "xn--lftel-2ve.net",
+    "xn--a.example",
+    "a.xn--.example",
+    "*.xn--p1ai",
+    "xn--p1ai.example",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
   ],
   "validHosts": [
     "laftel.net",
     "*.laftel.net",
-    "xn--lftel-2ve.net",
+    "a--b.example",
     "a-b.example",
     "127.0.0.1",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"

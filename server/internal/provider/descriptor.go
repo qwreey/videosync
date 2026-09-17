@@ -555,8 +555,8 @@ func (pr *Provider) ID() string { return pr.D.ID }
 
 // plainURL reports whether href is written the way net/url and a browser's
 // URL read alike: http(s)://host[:port], then a path, query and fragment of
-// printable ASCII neither rewrites, on a host that is a name or a
-// dotted-quad address. Outside it they disagree (URL strips tabs, reads a
+// printable ASCII neither rewrites, on a host that is a name with no "xn--"
+// label or a dotted-quad address. Outside it they disagree (URL strips tabs, reads a
 // backslash as "/", takes "https:host", rewrites a numeric host and refuses
 // a port over 65535; net/url re-escapes "|"), so this port would list a
 // descriptor every client refuses (N11). Only an author's examples and
@@ -578,7 +578,7 @@ func plainHost(host string) bool {
 	name := strings.TrimSuffix(host, ".")
 	labels := strings.Split(name, ".")
 	for _, l := range labels {
-		if l == "" {
+		if l == "" || aceLabel(l) {
 			return false
 		}
 	}

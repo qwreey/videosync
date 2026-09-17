@@ -459,8 +459,15 @@ func substitute(t *textTemplate, caps map[string]string, encode bool) string {
 	return b.String()
 }
 
+// aceLabel reports an IDNA "xn--" label. net/url and Node take any such label
+// as text; a browser runs UTS46 and refuses one that is not valid punycode of
+// a valid name ("xn--a", "xn--"), so the ports would disagree with it. Telling
+// the valid ones apart needs the IDNA tables, so a descriptor may not name an
+// IDN host at all. The client's aceLabel is the same rule.
+func aceLabel(l string) bool { return strings.HasPrefix(strings.ToLower(l), "xn--") }
+
 // validHostPattern: lowercase ASCII LDH, exact or a leading "*.", at least two
-// labels, and no wildcard over an address.
+// labels, no wildcard over an address, and no "xn--" label (see aceLabel).
 func validHostPattern(p string) bool {
 	wild := strings.HasPrefix(p, "*.")
 	base := p
@@ -475,7 +482,7 @@ func validHostPattern(p string) bool {
 		return false
 	}
 	for _, l := range labels {
-		if !reLabel.MatchString(l) {
+		if !reLabel.MatchString(l) || aceLabel(l) {
 			return false
 		}
 	}
