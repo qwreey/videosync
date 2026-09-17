@@ -570,23 +570,29 @@ describe('reconnect', () => {
   /**
    * A member playing with a room of two at 10 s loses its link, `offline`
    * does something to the player 200 ms later, and the session comes back
-   * 800 ms after that into the room as `anchor` says.
+   * 800 ms after that into the room as `anchor` and `seq` say -- by default,
+   * exactly the room it left. `beforeDrop` runs in the same instant as the
+   * drop, so nothing evaluates in between.
    */
   async function changedWhileAway(
-    offline: (p: FakePlayer) => void,
-    anchor: Partial<Anchor> = { positionMs: 10_000, atServerMs: OFFSET, paused: false },
+    offline: (p: FakePlayer, h: Harness) => void,
+    o: { anchor?: Partial<Anchor>; seq?: number; beforeDrop?: (p: FakePlayer) => void } = {},
   ) {
     const h = harness({ paused: false, positionS: 10 });
     await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
     await h.vt.advance(2000);
+    o.beforeDrop?.(h.player);
     h.tr.drop('link blip');
     await h.vt.advance(200);
-    offline(h.player);
+    offline(h.player, h);
     await h.vt.advance(800);
     h.tr.open();
     h.tr.deliver({
-      t: 'welcome', you: 'me-1', seq: 0,
-      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: 'yt:abc', ...anchor },
+      t: 'welcome', you: 'me-1', seq: o.seq ?? 0,
+      anchor: {
+        mediaKey: 'yt:abc',
+        ...(o.anchor ?? { positionMs: 10_000, atServerMs: OFFSET, paused: false }),
+      },
       members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
       serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
     });
@@ -618,9 +624,45 @@ describe('reconnect', () => {
     assert.deepEqual(h.tr.sentOf('cmd'), [], 'a stall offline dragged the room back');
   });
 
+  it('does not send a jump offline that lands where the room is', async () => {
+    // Behind the room when the link went, then moved onto it: that is
+    // catching up, and the room has nowhere to be sent.
+    const h = await changedWhileAway((p, hh) => {
+      p.readState();
+      p.positionS = (hh.vt.now + 10_000) / 1000;
+    }, { beforeDrop: (p) => { p.readState(); p.positionS = 5; } });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'a member catching up to the room sent the room a seek');
+    assert.ok(Math.abs(h.player.positionS * 1000 - (h.vt.now + 10_000)) < 300, `at ${h.player.positionS}`);
+  });
+
+  it('control: the same member jumping elsewhere sends the seek', async () => {
+    const h = await changedWhileAway((p) => { p.readState(); p.positionS = 300; },
+      { beforeDrop: (p) => { p.readState(); p.positionS = 5; } });
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['seek']);
+  });
+
+  it('follows a room another member moved while away, over its own pause', async () => {
+    // Somebody seeked the playing room to 50 s while this member was
+    // offline pausing: the room's move is newer, and the pause is dropped.
+    const moved = { positionMs: 50_000, atServerMs: OFFSET + 2700, paused: false };
+    const h = await changedWhileAway((p) => { p.paused = true; }, { anchor: moved, seq: 1 });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an older offline pause overrode the room');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+    assert.equal(h.player.paused, false, 'the member was left paused against the room');
+    const room = 50_000 + (h.vt.now + OFFSET - moved.atServerMs);
+    assert.ok(Math.abs(h.player.positionS * 1000 - room) < 500, `at ${h.player.positionS}, room at ${room}`);
+  });
+
+  it('follows a room another member moved while away, over its own seek', async () => {
+    const moved = { positionMs: 50_000, atServerMs: OFFSET + 2700, paused: true };
+    const h = await changedWhileAway((p) => { p.positionS = 300; }, { anchor: moved, seq: 1 });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an older offline seek overrode the room');
+  });
+
   it('control: a room that moved while away is followed, not overridden', async () => {
     const h = await changedWhileAway(() => {},
-      { positionMs: 50_000, atServerMs: OFFSET + 3000, paused: true });
+      { anchor: { positionMs: 50_000, atServerMs: OFFSET + 3000, paused: true }, seq: 1 });
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
     assert.deepEqual(h.tr.sentOf('cmd'), []);
     assert.equal(h.player.paused, true);

@@ -89,9 +89,7 @@ export class SeekDetector {
     const wasSuspended = this.suspended;
     // readyState 4 with a full buffer is what separates this from buffering,
     // where readyState drops below 3 and the buffer drains.
-    this.suspended =
-      s.paused && this.isHidden() && !this.everAudible &&
-      s.readyState >= this.cfg.minReadyState;
+    this.suspended = this.browserPaused(s);
     if (this.suspended) {
       if (!wasSuspended) this.suspensions++;
       this.lastKnownPos = posMs;
@@ -228,6 +226,15 @@ export class SeekDetector {
     this.haveLastKnown = true;
     this.history = [];
     if (paused !== undefined) this.lastPaused = paused;
+  }
+
+  /**
+   * Whether a player paused like this is the browser's background pause of a
+   * hidden tab that never made a sound, not anybody's doing. Audibility is
+   * what `evaluate` has seen so far.
+   */
+  browserPaused(s: PlayerState): boolean {
+    return s.paused && this.isHidden() && !this.everAudible && s.readyState >= this.cfg.minReadyState;
   }
 
   /** Forget everything measured against a connection that no longer exists. */

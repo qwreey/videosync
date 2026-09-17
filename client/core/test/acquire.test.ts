@@ -944,19 +944,30 @@ async function rejoin(h: H, seq: number, anchor: Partial<Anchor>) {
 }
 
 describe('a pause made while the session is down', () => {
-  async function pausedAway(pressed: boolean) {
+  const ROOM = { positionMs: 100_000, atServerMs: OFFSET, paused: false };
+
+  /**
+   * Playing in a playing room, the link drops; 200 ms later the player is
+   * paused -- by a press if `pressed`, else by nobody we saw. `hidden` hides
+   * the tab first, and `muted` makes the playback one that never made a
+   * sound. The session comes back into `room` at `seq`.
+   */
+  async function pausedAway(pressed: boolean, o: {
+    hidden?: boolean; muted?: boolean; room?: Partial<Anchor>; seq?: number;
+  } = {}) {
     const h = harness({ player: { paused: false, positionS: 100 } });
-    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    h.player.muted = o.muted ?? false;
+    await h.join(ROOM);
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
     assert.equal(h.engine.acquisition, 'steady');
-    const at = h.vt.now;
     h.tr.drop();
     await h.vt.advance(200);
     if (pressed) h.g.press();
+    if (o.hidden) h.tab.hidden = true;
+    h.player.readState();
     h.player.paused = true;
     h.player.emit('pause');
-    // The room is where it was: still playing.
-    await rejoin(h, 0, { positionMs: 100_000 + (h.vt.now + 1000 - at), paused: false });
+    await rejoin(h, o.seq ?? 0, o.room ?? ROOM);
     return h;
   }
 
@@ -970,6 +981,29 @@ describe('a pause made while the session is down', () => {
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
     assert.deepEqual(h.kinds(), []);
     assert.equal(h.player.paused, false);
+  });
+
+  it('is not sent when it is the browser\'s pause of a hidden tab that never made a sound', async () => {
+    // The member clicked, then switched tabs; the browser paused the muted
+    // playback. Live, the detector calls that `suspended` and sends nothing.
+    const h = await pausedAway(true, { hidden: true, muted: true });
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the browser\'s background pause paused the room');
+  });
+
+  it('control: a pause in a hidden tab that has made a sound is the member\'s (a media key)', async () => {
+    const h = await pausedAway(true, { hidden: true });
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('is not sent over a room somebody else moved meanwhile', async () => {
+    const moved = { positionMs: 400_000, atServerMs: OFFSET + 1000, paused: false };
+    const h = await pausedAway(true, { room: moved, seq: 1 });
+    assert.deepEqual(h.kinds(), [], 'an older offline pause overrode the room');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.player.paused, false, 'the member did not follow the room');
+    assert.ok(h.player.positionS > 390, `left at ${h.player.positionS}`);
   });
 });
 

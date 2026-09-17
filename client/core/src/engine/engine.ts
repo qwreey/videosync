@@ -546,6 +546,7 @@ export class SyncEngine {
    */
   private offline: {
     at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
+    seq: number; anchor: Anchor;
   } | null = null;
 
   /** True once `play()` was refused for lack of a user gesture. */
@@ -981,7 +982,7 @@ export class SyncEngine {
       const s = this.d.adapter.readState();
       this.offline = this.onRoomMedia() ? {
         at: this.d.now(), positionS: s.positionS, paused: s.paused, rate: s.rate,
-        media: this.acq.id, key: this.localMediaKey,
+        media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
       } : null;
     }
     this.detector.reset();
@@ -1766,6 +1767,12 @@ export class SyncEngine {
    * Only in `steady`, and with gesture evidence only if an input came after
    * the drop: nothing is evaluated offline, so no gesture window applies, and
    * a site's own move in that time is left for the reconciler to put back.
+   *
+   * Only if the room did not move meanwhile, either: the anchor and `seq`
+   * are the ones the drop left. Anybody else's command is newer than what
+   * this member did offline, so the member follows the room. And never a
+   * pause the detector would have called `suspended`: the browser's own pause
+   * of a hidden tab that never made a sound pauses nobody else.
    */
   private sendOfflineChanges(now: number, state: PlayerState): void {
     const o = this.offline;
@@ -1774,6 +1781,9 @@ export class SyncEngine {
     if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
     if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
     if (this.d.gestures && this.d.gestures.lastInputAt() < o.at) return;
+    const a = this.anchor;
+    if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
+      a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
     const pos = state.positionS * 1000;
     const lo = o.positionS * 1000;
     const ran = !o.paused || !state.paused;
@@ -1783,7 +1793,7 @@ export class SyncEngine {
     if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs) {
       this.act({ kind: 'seek', positionS: state.positionS }, state);
     }
-    if (state.paused !== o.paused) {
+    if (state.paused !== o.paused && !(state.paused && this.detector.browserPaused(state))) {
       this.act({ kind: 'playstate', paused: state.paused, positionS: state.positionS }, state);
     }
   }
