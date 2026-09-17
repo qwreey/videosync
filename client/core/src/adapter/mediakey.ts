@@ -157,6 +157,11 @@ export function followableUrl(
   if (!known && !sameSite) return null;
   // Never downgrade: a described provider is https, whatever the URL says.
   if (e && u.protocol !== 'https:') return null;
+  // An undescribed site keeps the sender's scheme and port (`watchUrl`), and
+  // its key names neither, so "the site the member is on" has to mean the
+  // origin: otherwise one member moves everyone to plain http, or to
+  // whatever else listens on another port of that host.
+  if (!e && here?.origin !== u.origin) return null;
   const target = watchUrl(u.href, reg);
   if (!target || !e) return target;
   // The canonical host has to be followable too, not only the host the

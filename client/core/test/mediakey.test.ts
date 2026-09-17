@@ -424,6 +424,26 @@ describe('where a room\'s media can be opened', () => {
       'https://video.example/v/2'), 'https://video.example/v/1');
   });
 
+  it('keeps a member on an unknown site on the origin they are on', () => {
+    // The generic key names neither scheme nor port, and the URL keeps the
+    // sender's origin. Comparing hostnames alone let one member send everyone
+    // from https to plain http, or to another service on another port.
+    const here = 'https://video.example/v/1';
+    for (const u of [
+      'http://video.example:8080/v/2',
+      'http://video.example/v/2',
+      'https://video.example:9443/v/2',
+    ]) {
+      assert.equal(normalizeMediaKey(u), 'video.example:/v/2', `setup: ${u}`);
+      assert.equal(followableUrl(u, 'video.example:/v/2', here), null, u);
+    }
+    // Control: the same origin is followed, plain http included where the
+    // member already is.
+    assert.equal(followableUrl('https://video.example/v/2', 'video.example:/v/2', here), 'https://video.example/v/2');
+    assert.equal(followableUrl('http://127.0.0.1:8898/v/2', '127.0.0.1:/v/2', 'http://127.0.0.1:8898/v/1'),
+      'http://127.0.0.1:8898/v/2');
+  });
+
   it('refuses what no honest member sends', () => {
     const room = 'laftel:/player/1/2';
     const here = 'https://laftel.net/';
