@@ -95,13 +95,7 @@ func main() {
 		}()
 	}
 
-	srv := &http.Server{
-		Addr:    *addr,
-		Handler: h.Handler(hcfg),
-		// No WriteTimeout: a hijacked WebSocket outlives any request deadline,
-		// and the connection sets its own (internal/ws).
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := newHTTPServer(*addr, h.Handler(hcfg), defaultTimeouts)
 
 	go func() {
 		if *tlsCert != "" {
@@ -137,4 +131,31 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+}
+
+type timeouts struct{ header, read, idle time.Duration }
+
+// Every body this server reads is a few KiB of JSON or form, so 30 s is
+// generous for the slowest link; two minutes idle outlasts a panel's pauses
+// between API calls without holding a descriptor per departed browser.
+var defaultTimeouts = timeouts{header: 10 * time.Second, read: 30 * time.Second, idle: 2 * time.Minute}
+
+// newHTTPServer bounds everything that happens before a handler can decide
+// anything, all of it unauthenticated: without ReadTimeout a body that never
+// arrives holds its handler forever (MaxBytesReader caps size, not time), and
+// without IdleTimeout -- which falls back to ReadTimeout, and zero there is no
+// limit -- neither does a kept-alive connection that never sends again.
+func newHTTPServer(addr string, h http.Handler, t timeouts) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: h,
+		// No WriteTimeout: a hijacked WebSocket outlives any request deadline,
+		// and the connection sets its own (internal/ws). ReadTimeout is safe
+		// for it for the same reason: Hijack keeps the request's read
+		// deadline, but ws.Conn.ReadMessage sets (or clears) its own before
+		// every frame.
+		ReadHeaderTimeout: t.header,
+		ReadTimeout:       t.read,
+		IdleTimeout:       t.idle,
+	}
 }
