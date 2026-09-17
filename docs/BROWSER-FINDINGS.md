@@ -1242,6 +1242,14 @@ room and A must not be paused; (3) a cut with nobody doing anything.
   the room, playing, gap −2 / −67 ms; A stayed playing. (3) nothing sent, gap −127 / −155 ms five
   seconds after the reconnect.
 
+The existing probes again on `ext-r3c`: `probe-laftel-room.mjs` (`laftel-room-r3c.json`) presser
+509–517 ms, the other 521–548 ms, re-aim in 4 of 6 (84–191 ms), 0 correction seeks, gap −182 to
++168 ms; `probe-acquire.mjs SCEN=CONTROL` (`acquire-CONTROL-r3c.json`) as before in eleven cases.
+In N1 both members this time reached the end close enough together that **both** sent the
+continuation: A's `media` won, B's was refused `media_stale` (no `seq` taken) and B followed; both
+ended on episode 11, playing. That is the compare-and-set doing its job, which §21/§22 had not
+happened to exercise live.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
