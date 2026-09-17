@@ -30,6 +30,12 @@ function run<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<
     const req = fn(tx.objectStore(STORE));
     tx.oncomplete = () => { db.close(); resolve(req.result); };
     tx.onerror = () => { db.close(); reject(tx.error ?? new Error('indexedDB transaction failed')); };
+    // A failure at commit (QuotaExceededError, a disk error, a forced close)
+    // aborts a transaction whose request already succeeded, so it fires
+    // `abort` and no `error`. Without this the promise never settles and the
+    // memory fallback never runs: a sign-in the server already consumed hangs.
+    // After an `error` the transaction aborts too; the second reject is a no-op.
+    tx.onabort = () => { db.close(); reject(tx.error ?? new Error('indexedDB transaction aborted')); };
   }));
 }
 

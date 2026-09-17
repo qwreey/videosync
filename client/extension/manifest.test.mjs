@@ -13,6 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { loadBuiltins, matchPatterns } from '../core/scripts/providers.mjs';
 import { chromeManifest, firefoxManifest } from './manifest.mjs';
 
+// `mise run test` names this file alone; the shim's other no-browser tests
+// run with it, so each is imported here (`npm test` runs the same file).
+import './test/tokens.test.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const base = JSON.parse(readFileSync(join(here, 'manifest.json'), 'utf8'));
 const patterns = matchPatterns(loadBuiltins());
