@@ -23,6 +23,11 @@ type Sink interface {
 // live for weeks; without this the state map only grows.
 type Forgetter interface{ Forget(clientID string) }
 
+// RateReleaser is implemented by correctors that model the rate a member runs.
+// RateReleased says the member's element is back at 1.0 without the corrector
+// having asked for it.
+type RateReleaser interface{ RateReleased(clientID string) }
+
 // Member is one participant, as the room sees them.
 type Member struct {
 	ID   string
@@ -596,7 +601,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 		// it swallowed the same nudge on return for up to rateRefreshMs as
 		// already held, while the member ran 1.0 behind the room and the servo
 		// wound the missing rate into its bias.
-		m.lastRate, m.lastRateAt = 1.0, now
+		r.rateReleased(m, now)
 	}
 	m.ReadyState = rep.ReadyState
 	m.BufferedAheadS = rep.BufferedAheadS
@@ -643,6 +648,10 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	if m.Acquiring {
 		r.AcquiringReports++
 		r.markGated(m, now)
+		// Its element has been through the load algorithm, which resets
+		// playbackRate: whatever it was nudged to is gone, exactly as for an
+		// absent member, and nothing judges it until it arrives.
+		r.rateReleased(m, now)
 	}
 
 	if rep.LastAppliedSeq < r.seq {
@@ -848,6 +857,15 @@ func (r *Room) GateState() (Gate, bool) {
 
 // Held reports whether the gate is currently holding a command.
 func (r *Room) Held() bool { return r.held != nil }
+
+// rateReleased records that m's element is back at rate 1.0 without the room
+// having said so, in both places that model its rate.
+func (r *Room) rateReleased(m *Member, now int64) {
+	m.lastRate, m.lastRateAt = 1.0, now
+	if rr, ok := r.corrector.(RateReleaser); ok {
+		rr.RateReleased(m.ID)
+	}
+}
 
 // rateAlreadyHeld reports whether telling this client to run at `rate` would
 // change nothing.

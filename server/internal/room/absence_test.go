@@ -50,6 +50,43 @@ func runAbsence(t *testing.T, absentFrom, absentTo int64) map[int64]float64 {
 	return rates
 }
 
+// A member acquiring media has been through the element's load algorithm,
+// which resets playbackRate, so the nudge it was running is gone without any
+// absence. Both halves of the room's model have to know: the servo, or it
+// reads the missing nudge as a frequency error over the whole acquisition and
+// winds its bias; and the "already told them" record, or the same nudge sent
+// again is swallowed as held while the member runs 1.0.
+func TestAMemberBackFromAcquiringIsNudgedAsBefore(t *testing.T) {
+	anchor := vsync.Anchor{PositionMs: 100_000, AtServerMs: 0}
+	r, s := newRoom(&vsync.ServoCorrector{}, anchor)
+	r.Join(0, "a", "a")
+	behind := func(now int64) Report {
+		// 1200 ms behind and out of buffer: a nudge the clamp does not cap.
+		rep := report(0, -1200)
+		rep.PositionMs = anchor.Expected(now) - 1200
+		rep.BufferedAheadS, rep.BufferedBehindS = 1.0, 1.0
+		return rep
+	}
+	r.OnReport(1000, "a", behind(1000))
+	first := of[Correct](s, "a")
+	if len(first) != 1 || first[0].Mode != "nudge" || first[0].Rate <= 1 || first[0].Rate >= 1.09 {
+		t.Fatalf("setup: %+v, want one unclamped nudge", first)
+	}
+	acq := acquiringReport(0)
+	r.OnReport(2000, "a", acq)
+	r.OnReport(2500, "a", acq)
+	// Loaded and conformed, still behind, running 1.0: the slope is 0.
+	r.OnReport(3500, "a", behind(3500))
+	got := of[Correct](s, "a")[1:]
+	if len(got) != 1 || got[0].Mode != "nudge" {
+		t.Fatalf("back from acquiring and still behind, sent %+v; want the nudge again", got)
+	}
+	if d := got[0].Rate - first[0].Rate; d > 0.001 || d < -0.001 {
+		t.Fatalf("nudged to %.4f after acquiring, %.4f before: the servo read the reset rate as a frequency error",
+			got[0].Rate, first[0].Rate)
+	}
+}
+
 // The servo assumes an absent member's rate was handed back. The room's
 // "already told them" record did not, so the first nudge after a short
 // absence -- the same rate as before it -- was swallowed as already held: the

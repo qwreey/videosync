@@ -38,7 +38,8 @@ type servoState struct {
 	// every nudge, and there the phase nudge winds rateBias to its clamp --
 	// harmless, since the only thing rateBias gates besides the rate is the
 	// "settled" reset, and that member is corrected by seeks alone; and a
-	// member gone absent, whose engine resets the rate, which Decide handles.
+	// member whose element's rate was reset -- absent, or acquiring media --
+	// which RateReleased handles.
 	phaseRate float64
 	lastAt    int64
 }
@@ -88,10 +89,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 		// the settled branch records. Left as it was, the first report after
 		// the absence read the missing nudge as a frequency error and wound
 		// the bias to the clamp -- integrated over the whole absence, too.
-		if s, ok := c.st[r.ClientID]; ok {
-			s.phaseRate = -s.rateBias
-			s.lastAt = 0
-		}
+		c.RateReleased(r.ClientID)
 		return Decision{Action: ActionNone, Why: "suspended"}
 	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
@@ -131,7 +129,13 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// over, and the report that triggers a seek usually carries the step in
 	// its slope.
 	running := s.phaseRate + s.rateBias
-	if absF(r.SlopeMsPerS) <= t.RampMaxSlope {
+	// A paused element's residual does not move whatever rate it holds, so
+	// its slope of 0 says nothing about frequency. Read as one, it took the
+	// last phase nudge for a frequency error of the opposite sign and wound
+	// the bias of a paused member sitting exactly on the anchor -- to the
+	// clamp over the acquisition that follows a media command -- which then
+	// played ahead of the room by what the loop took to unwind.
+	if !r.Paused && absF(r.SlopeMsPerS) <= t.RampMaxSlope {
 		freqErr := r.SlopeMsPerS/1000 - s.phaseRate
 		s.rateBias += -freqErr * gain * dt
 		s.rateBias = clampF(s.rateBias, -0.06, 0.06)
@@ -201,3 +205,17 @@ func (s *servoState) dropBias(running float64) {
 // Forget drops per-client state when a member leaves. A simulation exits after
 // two minutes; a real room lives for weeks and this map would only ever grow.
 func (c *ServoCorrector) Forget(clientID string) { delete(c.st, clientID) }
+
+// RateReleased records that the member's element is back at rate 1.0 without
+// this loop having said so: an absent member's engine hands the rate back
+// (engine.ts releaseRate), and a member acquiring media has been through the
+// element's load algorithm, which resets playbackRate. What was last
+// commanded is no longer in effect, so the client is where the settled branch
+// leaves it, and dt restarts. Left as it was, the first report after read the
+// missing nudge as a frequency error, integrated over the whole gap.
+func (c *ServoCorrector) RateReleased(clientID string) {
+	if s, ok := c.st[clientID]; ok {
+		s.phaseRate = -s.rateBias
+		s.lastAt = 0
+	}
+}
