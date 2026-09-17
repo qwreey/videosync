@@ -1891,7 +1891,7 @@ export class SyncEngine {
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === this.anchor.paused || (!!applying && o.paused === applying.paused);
+      return o.paused === this.anchor.paused || (!!applying && (o.paused === applying.paused || !!o.unready));
     }
     return true;
   }
@@ -1901,7 +1901,11 @@ export class SyncEngine {
     // While a transition is in flight, what it does to the player is not the
     // user's: its seek lands near its own target (the room may have moved on
     // since, so the two-diff test alone is not enough there), and its pause
-    // state is the one it was asked for. Anything else is still the user's.
+    // state is the one it was asked for. Anything else is still the user's --
+    // except a play state that changed while the element was unready: our
+    // seek is what made it unready, and a site reacting to that seek pauses
+    // the element under our play() (the AbortError in `tryPlay`). Left to the
+    // transition's rebaseline and the reconciler, as before review 4 N4.
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       if (!applying ||
@@ -1911,7 +1915,7 @@ export class SyncEngine {
       }
     } else if (o.kind === 'playstate') {
       if (o.paused !== this.anchor.paused &&
-        (!applying || o.paused !== applying.paused)) {
+        (!applying || (o.paused !== applying.paused && !o.unready))) {
         if (o.paused && state.ended) {
           // The end of the media pauses the element, and it is nobody's
           // pause: sent, the first member to finish stops the room at its own

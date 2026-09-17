@@ -203,7 +203,7 @@ export class SeekDetector {
       // readiness does: `browserPaused` only knows it at readyState 3.
       if (!seeked && !(s.paused && this.isHidden() && !this.everAudible)) {
         if (this.lastPaused !== null && this.lastPaused !== s.paused) {
-          observation = { kind: 'playstate', paused: s.paused, positionS: s.positionS };
+          observation = { kind: 'playstate', paused: s.paused, positionS: s.positionS, unready: true };
         }
         this.lastPaused = s.paused;
       }

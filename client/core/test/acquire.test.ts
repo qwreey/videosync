@@ -1702,3 +1702,83 @@ describe('a press made while the element is unready', () => {
     assert.deepEqual(h.kinds(), []);
   });
 });
+
+describe('a site that pauses the element right after our own seek', () => {
+  // Our seek leaves the element unready, and a site's own logic reacting to it
+  // can pause the element while our play() is pending (the AbortError in
+  // tryPlay). Seen while the transition is applying, that pause is ours, not
+  // the member's: sent, it paused the whole room (review 4 fix check).
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    it(`does not pause the room, and is put back${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: false, positionS: 100 } });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+      assert.equal(h.engine.acquisition, 'steady');
+      const p = h.player;
+      let fights = 1;
+      const seekTo = p.seekTo.bind(p);
+      const play = p.play.bind(p);
+      p.seekTo = async (s: number) => { await seekTo(s); if (fights > 0) p.readyState = 1; };
+      p.play = async () => {
+        if (fights-- <= 0) { p.readyState = 4; return play(); }
+        p.paused = true;
+        p.emit('pause');
+        throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+      };
+      await h.state({ positionMs: 400_000, paused: false }, 'seek');
+      await h.vt.advance(300);
+      p.readyState = 4;
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+      assert.deepEqual(h.kinds(), [], 'the site\'s pause was sent to the room');
+      assert.equal(p.paused, false, 'the member was left paused in a playing room');
+      assert.equal(h.engine.stats.playFailures, 1);
+    });
+  }
+
+  it('is not a press that ends acquiring, even right after a gesture', async () => {
+    // The same pause during the conform step: it is the conform's, so a
+    // recent click does not make it the member's and end acquiring on it.
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    const p = h.player;
+    const seekTo = p.seekTo.bind(p);
+    p.seekTo = async (s: number) => { await seekTo(s); p.readyState = 1; };
+    p.play = async () => {
+      p.paused = false;
+      p.emit('play');
+      p.paused = true;
+      p.emit('pause');
+      throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+    };
+    h.tr.autoAnswerTime(OFFSET);
+    h.engine.start();
+    h.g.press();
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 30_000, atServerMs: OFFSET, paused: false, mediaKey: KEY },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    await h.vt.advance(200);
+    assert.ok(p.seeks >= 1, 'never conformed');
+    assert.equal(h.engine.stats.playFailures, 1);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.engine.stats.gesturedIntents, 0, 'the site\'s pause was taken for the member\'s press');
+    assert.notEqual(h.engine.acquisition, 'steady');
+  });
+
+  it('control: the same pause pressed during a buffering stall is sent', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    h.player.readyState = 1;
+    await h.vt.advance(300);
+    h.g.press();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+});
