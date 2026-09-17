@@ -209,6 +209,92 @@ func TestAPauseOutsideAnyLeadStopsWhereThePauserStopped(t *testing.T) {
 	}
 }
 
+// rtt has every listed member report round trip rtt at now.
+func rtt(r *Room, now, ms int64, ids ...string) {
+	for _, id := range ids {
+		rep := report(r.Seq(), 0)
+		rep.RTTMs = ms
+		r.OnReport(now, id, rep)
+	}
+}
+
+// CMD_DELAY is not monotonic: it follows RTT and is 0 for a room of one. A
+// command inside an earlier one's lead, sent after the delay shrank, used to
+// be due BEFORE the earlier one -- and a play projected the room's anchor
+// backwards to reach that earlier instant.
+func TestACommandInsideALeadIsNeverDueBeforeIt(t *testing.T) {
+	type step func(r *Room)
+	for _, tc := range []struct {
+		name  string
+		start vsync.Anchor
+		// first issues the command whose lead the second lands in; shrink
+		// then lowers CMD_DELAY; second is the command under test.
+		first, shrink, second step
+	}{
+		{
+			name:   "play, rtt drops, play",
+			start:  vsync.Anchor{PositionMs: 60_000, AtServerMs: 0, Paused: true},
+			first:  func(r *Room) { rtt(r, 900, 1000, "a", "b"); r.OnCmd(1000, "b", Cmd{Kind: "play"}) },
+			shrink: func(r *Room) { rtt(r, 1100, 100, "a", "b") },
+			second: func(r *Room) { r.OnCmd(1300, "a", Cmd{Kind: "play"}) },
+		},
+		{
+			name:   "play, member leaves, play",
+			start:  vsync.Anchor{PositionMs: 0, AtServerMs: 0, Paused: true},
+			first:  func(r *Room) { r.OnCmd(1000, "b", Cmd{Kind: "play"}) },
+			shrink: func(r *Room) { r.Leave(1100, "b") },
+			second: func(r *Room) { r.OnCmd(1200, "a", Cmd{Kind: "play"}) },
+		},
+		{
+			name:   "seek while playing, rtt drops, play",
+			start:  vsync.Anchor{PositionMs: 100_000, AtServerMs: 0},
+			first:  func(r *Room) { rtt(r, 900, 1000, "a", "b"); r.OnCmd(1000, "b", Cmd{Kind: "seek", PositionMs: 600_000}) },
+			shrink: func(r *Room) { rtt(r, 1100, 100, "a", "b") },
+			second: func(r *Room) { r.OnCmd(1300, "a", Cmd{Kind: "play"}) },
+		},
+		{
+			name:   "seek while playing, rtt drops, seek",
+			start:  vsync.Anchor{PositionMs: 100_000, AtServerMs: 0},
+			first:  func(r *Room) { rtt(r, 900, 1000, "a", "b"); r.OnCmd(1000, "b", Cmd{Kind: "seek", PositionMs: 600_000}) },
+			shrink: func(r *Room) { rtt(r, 1100, 100, "a", "b") },
+			second: func(r *Room) { r.OnCmd(1300, "a", Cmd{Kind: "seek", PositionMs: 700_000}) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := newRoom(&scripted{}, tc.start)
+			r.Join(0, "a", "a")
+			r.Join(0, "b", "b")
+			tc.first(r)
+			before := r.Anchor()
+			firstWhen := before.AtServerMs
+			tc.shrink(r)
+			// Every second command is sent at 1200 or 1300; unless the delay
+			// now ends before the first command is due, this measures nothing.
+			if 1300+r.CmdDelay() >= firstWhen {
+				t.Fatalf("delay %d does not undercut the first command due at %d", r.CmdDelay(), firstWhen)
+			}
+			tc.second(r)
+			got := r.Anchor()
+			if got.AtServerMs < firstWhen {
+				t.Fatalf("second command due at %d, before the first one's %d", got.AtServerMs, firstWhen)
+			}
+			if r.lastCmdWhen < firstWhen {
+				t.Fatalf("lastCmdWhen %d, before the first command's %d", r.lastCmdWhen, firstWhen)
+			}
+			if got.PositionMs < 0 {
+				t.Fatalf("anchor at a negative position: %+v", got)
+			}
+			// Where the first command put the room at its own instant is still
+			// where the room is then, unless the second one moved it on purpose.
+			if tc.name != "seek while playing, rtt drops, seek" {
+				if e, w := got.Expected(firstWhen), before.Expected(firstWhen); e != w {
+					t.Fatalf("at %d the room is at %d, the first command said %d (anchor %+v)", firstWhen, e, w, got)
+				}
+			}
+		})
+	}
+}
+
 // --- the gate and an emptying room -------------------------------------------
 
 // holdPlay leaves a room of a and b with b buffering and a's play held.

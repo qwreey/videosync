@@ -24,6 +24,13 @@ type netSink struct {
 }
 
 func (s *netSink) Send(clientID string, m room.Msg) {
+	if _, ok := m.(room.Members); ok {
+		// The roster is for display, and no simulated client reads it. The
+		// join and leave rosters are the hub's and never reached the
+		// harness either; queuing these would only reshuffle every later
+		// jitter draw and make tables incomparable across the change.
+		return
+	}
 	s.net.Send(s.now, clientID, "server", clientID, false, m)
 }
 

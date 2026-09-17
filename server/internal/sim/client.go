@@ -669,6 +669,16 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	// allows (minReportIntervalMs); the heartbeat goes regardless. So does a
 	// change in acquiring, which is what holds and releases a play (engine.ts).
 	acq := c.acquiring(serverMs)
+	// Other media, or a finished element, is absent like a suspended tab --
+	// unless it is on its way (acquiring).
+	absent := c.suspended || (c.P.hasEpisode() && !acq && (!c.onRoomMedia() || c.finished()))
+	if absent {
+		// An absent member hands back the rate the servo left on it before
+		// going quiet (engine.ts releaseRate), on every evaluation and not
+		// only when a report is due. The servo is written for that; a
+		// harness that kept the rate measured a client that does not ship.
+		c.appliedRate = 1.0
+	}
 	if acq != c.reportedAcquiring || c.suspended != c.reportedSuspended {
 		force = true
 	}
@@ -686,17 +696,15 @@ func (c *Client) Evaluate(serverMs int64, t vsync.Tunables, force bool) (vsync.R
 	c.reportedAcquiring = acq
 	c.reportedSuspended = c.suspended
 	return vsync.Report{
-		Acquiring:      acq,
-		ClientID:       c.P.ID,
-		ResidualMs:     int64(res),
-		SlopeMsPerS:    c.slope(),
-		PositionMs:     int64(c.posMs),
-		Paused:         c.paused,
-		ReadyState:     c.readyState,
-		BufferedAheadS: c.bufferedS,
-		// Other media, or a finished element, is absent like a suspended
-		// tab -- unless it is on its way (acquiring).
-		Suspended:       c.suspended || (c.P.hasEpisode() && !acq && (!c.onRoomMedia() || c.finished())),
+		Acquiring:       acq,
+		ClientID:        c.P.ID,
+		ResidualMs:      int64(res),
+		SlopeMsPerS:     c.slope(),
+		PositionMs:      int64(c.posMs),
+		Paused:          c.paused,
+		ReadyState:      c.readyState,
+		BufferedAheadS:  c.bufferedS,
+		Suspended:       absent,
 		Finished:        c.P.hasEpisode() && c.finished(),
 		BufferedBehindS: math.Min(10, c.posMs/1000),
 		LastAppliedSeq:  c.lastAppliedSeq,

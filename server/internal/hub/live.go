@@ -170,9 +170,22 @@ func (l *Live) handle(c *conn, m room.Msg) {
 			l.deferCmd(c, v, now)
 			return
 		}
-		// Anything still deferred is older than this, and superseded by it.
+		if len(c.pending) == 0 {
+			l.room.OnCmd(now, c.id, v)
+			return
+		}
+		// Anything still deferred is older than this. It is folded, not
+		// dropped -- see coalesce -- and goes out now, ahead of this, in the
+		// order it was sent.
+		batch := coalesce(c.pending, v)
 		c.pending = nil
-		l.room.OnCmd(now, c.id, v)
+		if c.retry != nil {
+			c.retry.Stop()
+			c.retry = nil
+		}
+		for _, cmd := range batch {
+			l.room.OnCmd(now, c.id, cmd)
+		}
 	case room.Report:
 		if !c.hb.allow(now) {
 			return // silently dropped: a report is advisory, and telling a
@@ -201,20 +214,30 @@ func (l *Live) handle(c *conn, m room.Msg) {
 	}
 }
 
-// deferCmd keeps a command the cmd bucket refused, replacing any older one,
-// and applies it once the bucket allows. Called with l.mu held.
+// deferCmd keeps a command the cmd bucket refused, folded onto any older one
+// (coalesce), and applies them once the bucket allows. Called with l.mu held.
 //
 // Dropping it was wrong for the one burst a person really produces: holding
 // an arrow key or scrubbing is a stream of seeks ~100 ms apart, and past the
 // burst every other one was refused. When the LAST one was refused the room
 // stayed on an earlier skip, nothing resent the user's final position, and
 // the ack for that earlier skip then sought the user's own player back to it.
-// Coalescing keeps the limit -- still one command per window, whatever the
-// sender does -- while the newest intent wins, the same rule the readiness
-// gate applies to the command it holds. Nothing is sent on deferral: the
-// command will be applied, and its ack says so.
+// Coalescing keeps the limit -- one batch per window, and a batch is at most
+// three commands whatever the sender does -- while the newest intent of each
+// kind wins, the same rule the readiness gate applies to the command it holds.
+// Nothing is sent on deferral: the command will be applied or refused, and its
+// ack or error says so. A command folded away gets no answer of its own; the
+// client forgets it on the ack of a later one (engine.ts ownAck), or after
+// OWN_ACK_WAIT_MS if that later one is refused -- see coalesce.
 func (l *Live) deferCmd(c *conn, v room.Cmd, now int64) {
-	c.pending = &v
+	switch v.Kind {
+	case "play", "pause", "seek", "media":
+	default:
+		// Nothing to fold; it would only be refused as bad_kind later.
+		l.Send(c.id, room.Error{Code: "rate_limited", Msg: "too many commands"})
+		return
+	}
+	c.pending = coalesce(c.pending, v)
 	if c.retry == nil {
 		c.retry = time.AfterFunc(time.Duration(c.cmd.waitMs(now))*time.Millisecond,
 			func() { l.retryCmd(c) })
@@ -225,7 +248,7 @@ func (l *Live) retryCmd(c *conn) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	c.retry = nil
-	if c.pending == nil || l.conns[c.id] != c {
+	if len(c.pending) == 0 || l.conns[c.id] != c {
 		return
 	}
 	now := l.hub.clock.NowMs()
@@ -234,9 +257,67 @@ func (l *Live) retryCmd(c *conn) {
 			func() { l.retryCmd(c) })
 		return
 	}
-	v := *c.pending
+	batch := c.pending
 	c.pending = nil
-	l.room.OnCmd(now, c.id, v)
+	for _, v := range batch {
+		l.room.OnCmd(now, c.id, v)
+	}
+}
+
+// coalesce folds v onto the deferred commands in pending. The result holds at
+// most one `media`, one seek and one of play/pause, in the order they were
+// sent.
+//
+// "Newest wins" is only true between commands of one kind. A `play` carries
+// no position and a `pause` inside a lead anchors on the room's schedule, so
+// letting either replace a deferred seek threw the seek's target away: scrub,
+// press space, and the room started from an earlier skip. And a `media` that
+// anything later replaced was never applied or refused at all. So:
+//   - `media` resets position, pause state and identity, so it replaces
+//     everything before it, and nothing after it may drop it;
+//   - a seek replaces a seek;
+//   - `play` and `pause` replace each other.
+//
+// The one that replaces takes the place of the newest, never the oldest: the
+// batch is the sequence the sender made, minus what a later command made moot.
+// Order matters to the sender, not only to the room. engine.ts ownAck forgets
+// every unanswered command of ours older than the one acked, and treats a
+// paused ack as the hold for a play only if that play was sent after it; a
+// batch reordered to [seek][play] from "play, then seek" acked the seek as if
+// the play had never been pressed.
+//
+// Every command dropped here has a later one in the batch, and its sender
+// forgets it on that one's ack -- if there is one. A refusal sends no ack: when
+// the later command is a `media` refused as media_stale or bad_cmd, nothing in
+// the batch is acked, and the dropped command stays in the sender's unacked
+// list until it ages out (engine.ts OWN_ACK_WAIT_MS, 5 s), or until an ack for
+// a newer command of its own arrives, whichever is first.
+func coalesce(pending []room.Cmd, v room.Cmd) []room.Cmd {
+	group := func(kind string) string {
+		if kind == "pause" {
+			return "play"
+		}
+		return kind
+	}
+	switch v.Kind {
+	case "media":
+		return []room.Cmd{v}
+	case "seek", "play", "pause":
+	default:
+		// Folds nothing and is folded by nothing. deferCmd never defers such a
+		// command, but one the bucket admits still comes through here, and it
+		// must reach OnCmd after the batch to be refused (bad_kind) as it is
+		// when nothing is deferred -- returning pending alone dropped it with
+		// no answer at all.
+		return append(pending[:len(pending):len(pending)], v)
+	}
+	out := make([]room.Cmd, 0, len(pending)+1)
+	for _, c := range pending {
+		if group(c.Kind) != group(v.Kind) {
+			out = append(out, c)
+		}
+	}
+	return append(out, v)
 }
 
 // truncateUTF8 cuts to at most n bytes without splitting a rune -- a truncated

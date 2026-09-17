@@ -103,8 +103,9 @@ anything that is not http(s), has credentials or a fragment, or is over 512 byte
 
 `mediaKey` and `name` are bounded too, because both are repeated to every member: the key in every
 `state`, `ack` and `welcome`, the name in every roster and chat line. A `mediaKey` over 512 bytes
-names nothing when it comes from `POST /api/rooms` or a first `hello` (its `mediaUrl` goes with it),
-and a `media` command carrying one is refused with `bad_cmd`. A `name` is truncated to 64 bytes on
+names nothing when it comes from `POST /api/rooms` (its `mediaUrl` goes with it), and a `media`
+command carrying one is refused with `bad_cmd`. (A `hello`'s key names nothing whatever its size;
+see the D8 amendment below.) A `name` is truncated to 64 bytes on
 a rune boundary, like chat text.
 
 The URL comes from a member, so a client **checks it before following it**: it must normalise to
@@ -139,6 +140,11 @@ on no media is absent, and nobody is conformed, corrected or gated.
 Membership changes are broadcast:
 `{"t":"members","members":[{"id","name","suspended","ready"}],"joined":"<id>"|"left":"<id>"}`.
 The joiner gets the roster in its `welcome` instead, so it is excluded from that broadcast.
+
+*(Amendment, 2026-09-17.)* So is a change in a member's `suspended` or `ready`, as its reports
+reveal it: the same frame with neither `joined` nor `left`, to everyone. The roster used to be sent
+on join and leave only, so a member who went away was never shown away, and one who came back kept
+the tag until somebody else joined or left. A heartbeat that changes neither flag sends nothing.
 
 ## 3. Commands (§2, §5)
 
@@ -621,7 +627,7 @@ natural rates and starving the clock bucket would degrade the timebase itself.
 
 | bucket | burst | sustained | cooldown | on refusal |
 |---|---|---|---|---|
-| `cmd` | 10 | 5/s | 4 s | **coalesced**: the newest refused `cmd` replaces any older one and is applied when the bucket allows; its `ack` arrives then. Nothing is sent on deferral |
+| `cmd` | 10 | 5/s | 4 s | **coalesced per kind**: a refused `cmd` is deferred and folded onto what is already deferred (below), and the batch is applied when the bucket allows, or ahead of the next `cmd` it admits; each surviving command's `ack` arrives then. Nothing is sent on deferral |
 | `rotate` | (shares `cmd`'s bucket) | | | `error{code:"rate_limited"}` |
 | `chat` | 4 | 1/s | 4 s | `error{code:"rate_limited"}` |
 | `hb` | 40 | 20/s | 2 s | dropped silently — a report is advisory, and answering would add traffic |
@@ -631,8 +637,34 @@ Why `cmd` is coalesced rather than refused: the one burst a person really produc
 arrow key or scrubbing — seeks ~100 ms apart, of which every other one was refused past the burst.
 When the *last* one was refused the room stayed on an earlier skip, nothing resent the final
 position, and the `ack` for that earlier skip sought the user's own player back to it. Coalescing
-keeps the rate (one command per window whatever the sender does) and lets the newest intent win, as
+keeps the rate (one batch per window whatever the sender does) and lets the newest intent win, as
 the readiness gate does for the command it holds.
+
+The newest intent wins **per kind**, not overall. A `play` carries no position and a `pause` inside
+a lead anchors on the room's schedule, so letting either replace a deferred seek threw the seek's
+target away (scrub, press space, and the room started from an earlier skip), and a deferred `media`
+that anything replaced was never applied or refused at all. The fold:
+
+- a `media` drops everything deferred before it, and nothing after it drops it;
+- a seek replaces a deferred seek;
+- `play` and `pause` replace each other.
+
+The batch is therefore at most one `media`, one seek and one `play`/`pause`, **in the order they
+were sent**; a command that replaces another takes the place of the newer one. The order is for the
+sender as much as for the room: a client forgets every unanswered command of its own older than the
+one acked, and treats a paused `ack` as the hold for its own `play` only while that play was sent
+after it (`engine.ts` `ownAck`). A batch reordered to seek-before-play answered "play, then seek" as
+if the play had not been pressed. A folded command gets no `ack`. It always has a later command in
+the batch, and its sender forgets it on that one's `ack` — when there is one. A refusal carries no
+`ack`: if the later command is a `media` refused as `media_stale` or `bad_cmd`, nothing in the batch
+is acked, and the folded command stays among the sender's unanswered ones until it ages out after
+`OWN_ACK_WAIT_MS` (5 s, `engine.ts`) or an `ack` for a newer command of the sender's arrives. Until
+then it still counts as on its way back, and shapes how the sender holds a local `play`
+(`ownPending`, `ownAck`).
+
+A command of a kind the fold does not know is never deferred (it is refused `rate_limited` when the
+bucket is empty). When the bucket admits one while others are deferred, it goes out after the
+deferred batch and is refused `bad_kind`, exactly as with nothing deferred.
 
 ### Errors
 

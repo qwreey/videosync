@@ -265,13 +265,16 @@ func (r *Room) Leave(now int64, id string) {
 func (r *Room) MemberList() []MemberInfo {
 	out := make([]MemberInfo, 0, len(r.ids))
 	for _, id := range r.ids {
-		m := r.members[id]
-		out = append(out, MemberInfo{
-			ID: m.ID, Name: m.Name, Suspended: m.Suspended,
-			Ready: m.ReadyState >= r.tun.MinReadyState && !m.Acquiring,
-		})
+		out = append(out, r.info(r.members[id]))
 	}
 	return out
+}
+
+func (r *Room) info(m *Member) MemberInfo {
+	return MemberInfo{
+		ID: m.ID, Name: m.Name, Suspended: m.Suspended,
+		Ready: m.ReadyState >= r.tun.MinReadyState && !m.Acquiring,
+	}
 }
 
 func (r *Room) send(id string, m Msg) {
@@ -472,6 +475,15 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 	when := now + r.CmdDelay()
 	if leavesRoomStopped(m.Kind, r.anchor) {
 		when = now
+	} else if when < r.lastCmdWhen {
+		// Never due before a command still waiting for its instant. CMD_DELAY
+		// is not monotonic -- it follows RTT and is 0 for a room of one -- so
+		// a command inside an earlier one's lead could otherwise be due first.
+		// A play would then project the earlier command's anchor BACKWARDS to
+		// reach that instant: the room started up to CMD_DELAY early, before a
+		// seek target or a paused position, or at a negative position. And
+		// commit's "later commands are never due earlier" would not hold.
+		when = r.lastCmdWhen
 	}
 
 	switch m.Kind {
@@ -570,12 +582,22 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 
 	m.LastSeenMs = now
 	m.LastAppliedSeq = rep.LastAppliedSeq
+	was := r.info(m)
 	// Finished is absent to everything below, exactly like suspended: the
 	// corrector sees Suspended and leaves the member alone.
 	rep.Suspended = rep.Suspended || rep.Finished
 	m.Suspended = rep.Suspended
 	m.Finished = rep.Finished
 	m.Acquiring = rep.Acquiring && !rep.Suspended
+	if rep.Suspended {
+		// An absent member's engine hands back the rate it was running
+		// (engine.ts releaseRate), and the servo already counts on that. The
+		// "already told them" record has to as well: left at the old nudge,
+		// it swallowed the same nudge on return for up to rateRefreshMs as
+		// already held, while the member ran 1.0 behind the room and the servo
+		// wound the missing rate into its bias.
+		m.lastRate, m.lastRateAt = 1.0, now
+	}
 	m.ReadyState = rep.ReadyState
 	m.BufferedAheadS = rep.BufferedAheadS
 	// Use the client's own measured round trip, not (now - its estimated server
@@ -583,6 +605,13 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// delay for the whole room. RTT is a difference of two same-clock
 	// timestamps, so it carries no offset error.
 	m.RTTMs, m.hasRTT = rep.RTTMs, true
+	// The roster carries these flags and a client tags members from the last
+	// roster it got, so a change is announced -- to everyone, like a leave.
+	// Sent only on join and leave, a member who went away was never shown
+	// away, and one who came back stayed tagged until the next join.
+	if r.info(m) != was {
+		r.Broadcast("", Members{Members: r.MemberList()})
+	}
 
 	// A member that has not applied the newest command is mid-transition, and
 	// there are exactly two things that can be true of it.
