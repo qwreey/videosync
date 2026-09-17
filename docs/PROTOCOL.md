@@ -654,8 +654,17 @@ were sent**; a command that replaces another takes the place of the newer one. T
 sender as much as for the room: a client forgets every unanswered command of its own older than the
 one acked, and treats a paused `ack` as the hold for its own `play` only while that play was sent
 after it (`engine.ts` `ownAck`). A batch reordered to seek-before-play answered "play, then seek" as
-if the play had not been pressed. A folded command gets no `ack`; it always has a later command in
-the batch, and its sender forgets it on that one.
+if the play had not been pressed. A folded command gets no `ack`. It always has a later command in
+the batch, and its sender forgets it on that one's `ack` — when there is one. A refusal carries no
+`ack`: if the later command is a `media` refused as `media_stale` or `bad_cmd`, nothing in the batch
+is acked, and the folded command stays among the sender's unanswered ones until it ages out after
+`OWN_ACK_WAIT_MS` (5 s, `engine.ts`) or an `ack` for a newer command of the sender's arrives. Until
+then it still counts as on its way back, and shapes how the sender holds a local `play`
+(`ownPending`, `ownAck`).
+
+A command of a kind the fold does not know is never deferred (it is refused `rate_limited` when the
+bucket is empty). When the bucket admits one while others are deferred, it goes out after the
+deferred batch and is refused `bad_kind`, exactly as with nothing deferred.
 
 ### Errors
 

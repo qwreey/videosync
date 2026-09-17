@@ -225,9 +225,10 @@ func (l *Live) handle(c *conn, m room.Msg) {
 // Coalescing keeps the limit -- one batch per window, and a batch is at most
 // three commands whatever the sender does -- while the newest intent of each
 // kind wins, the same rule the readiness gate applies to the command it holds.
-// Nothing is sent on deferral: the command will be applied, and its ack says so. A
-// command folded away gets no ack of its own; the client forgets it on the ack
-// of a later one (engine.ts ownAck).
+// Nothing is sent on deferral: the command will be applied or refused, and its
+// ack or error says so. A command folded away gets no answer of its own; the
+// client forgets it on the ack of a later one (engine.ts ownAck), or after
+// OWN_ACK_WAIT_MS if that later one is refused -- see coalesce.
 func (l *Live) deferCmd(c *conn, v room.Cmd, now int64) {
 	switch v.Kind {
 	case "play", "pause", "seek", "media":
@@ -283,8 +284,14 @@ func (l *Live) retryCmd(c *conn) {
 // every unanswered command of ours older than the one acked, and treats a
 // paused ack as the hold for a play only if that play was sent after it; a
 // batch reordered to [seek][play] from "play, then seek" acked the seek as if
-// the play had never been pressed. Every command dropped here has a later one
-// in the batch, so its sender forgets it on that one's ack.
+// the play had never been pressed.
+//
+// Every command dropped here has a later one in the batch, and its sender
+// forgets it on that one's ack -- if there is one. A refusal sends no ack: when
+// the later command is a `media` refused as media_stale or bad_cmd, nothing in
+// the batch is acked, and the dropped command stays in the sender's unacked
+// list until it ages out (engine.ts OWN_ACK_WAIT_MS, 5 s), or until an ack for
+// a newer command of its own arrives, whichever is first.
 func coalesce(pending []room.Cmd, v room.Cmd) []room.Cmd {
 	group := func(kind string) string {
 		if kind == "pause" {
