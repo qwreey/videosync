@@ -678,12 +678,17 @@ export function start(p: Platform): App {
    */
   function joinTicket(server: string): Promise<string> | string {
     if (auth.needs(server) !== 'all') return '';
+    // Called from inside the engine's connect, so `engine` is the one asking.
+    // The answer can take seconds; a member who left, or joined elsewhere,
+    // meanwhile must not be asked to sign in to the old server -- which would
+    // also, on success, tear down the session they are in now.
+    const e = engine;
     return auth.ticket(server, 'join').then((t) => {
-      if (t) noteSignedIn(server);
+      if (t && engine === e) noteSignedIn(server);
       return t;
-    }, (e: unknown) => {
-      if (e instanceof AuthRequiredError) askSignIn(server, e.methods, joinAgain);
-      throw e;
+    }, (err: unknown) => {
+      if (err instanceof AuthRequiredError && engine === e) askSignIn(server, err.methods, joinAgain);
+      throw err;
     });
   }
 

@@ -960,6 +960,37 @@ describe('signing in to a server', () => {
     assert.equal(h.transports.length, 0);
   });
 
+  it('ignores a join ticket refused after the member left, or moved to another server', async () => {
+    const OTHER = 'https://other.example';
+    for (const then of ['leave', 'join elsewhere'] as const) {
+      const server = new FakeServer();
+      server.methods = ['token'];
+      server.scope = 'all';
+      const store = makeStore(false, { authScope: JSON.stringify({ [new URL(SERVER).origin]: 'all' }) });
+      const h = harness(ROOM_URL, store, new Map(), {}, server);
+      let release: () => void = () => {};
+      server.gate = new Promise((res) => { release = res; });
+      h.join();
+      await h.tick(50);
+      assert.equal(server.requests.length, 0, 'control: the ticket request is held');
+      if (then === 'leave') {
+        h.app.api.leave();
+      } else {
+        h.app.api.join(OTHER, 'R2', 'S2', 'me');
+        h.welcome({ mediaKey: ROOM_KEY });
+        assert.equal(h.app.api.engine()?.state, 'joined', 'control: joined the other server');
+      }
+      const before = h.status().text;
+      release();
+      await h.tick(100);
+      assert.ok(server.to('/api/ticket').length === 1, 'control: the ticket was refused late');
+      assert.equal(signInShown(h), false, `${then}: asked to sign in to a server the member is not on`);
+      assert.equal(h.status().text, before, `${then}: the status was taken over by the old server`);
+      assert.equal(h.transports.length, then === 'leave' ? 1 : 2, `${then}: something rejoined`);
+      unload(h);
+    }
+  });
+
   it('hides the signed-in row as soon as the server says otherwise', async () => {
     const server = new FakeServer();
     server.methods = ['token'];
