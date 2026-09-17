@@ -1267,6 +1267,46 @@ describe('queued player work re-checks the session when it runs', () => {
     assert.ok(Math.abs(sent[1]!.positionMs - 500_000) < 1000);
   });
 
+  /** A playing room of two at 50 s, and another member's seek to 400 s. */
+  async function roomSeek(h: Harness): Promise<void> {
+    await h.join({ positionMs: 50_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 400_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(100);
+  }
+
+  it('a pause made unready while a room seek is landing is sent (no gesture evidence)', async () => {
+    // Without gesture evidence only the play() after our seek excuses an
+    // unready pause; the seek itself does not.
+    const h = harness({ paused: false, positionS: 50 });
+    const parked = parkSeeks(h.player);
+    await roomSeek(h);
+    assert.equal(parked.length, 1);
+    h.player.readyState = 1;
+    await h.vt.advance(200);
+    await h.player.pause();                     // the user pauses
+    h.player.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+  });
+
+  it('a pause made on a ready element under our post-seek play() is sent (no gesture evidence)', async () => {
+    // The excuse is for a site reacting to an element our seek left unready.
+    const h = harness({ paused: false, positionS: 50 });
+    const p = h.player;
+    p.play = () => { p.paused = false; p.plays++; return new Promise<void>(() => {}); };
+    await roomSeek(h);
+    assert.ok(Math.abs(p.positionS - 400) < 1, `at ${p.positionS}`);
+    await p.pause();                            // the user pauses
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+  });
+
   for (const readyState of [4, 2]) {
     it(`a pause made while a room play waits on the element is sent (readyState ${readyState})`, async () => {
       // No seek of ours: the member is already where the room plays from, so
