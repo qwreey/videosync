@@ -24,12 +24,14 @@ dir = "{{config_root}}/server"
 run = "go run ./cmd/simharness"
 
 [tasks.test]
-description = "Run all tests (Go + TS client core + the harness's media server + the generated manifests) and typecheck both shims"
+description = "Run all tests (Go + TS client core + the harness's media server and smoke-driver rules + the generated manifests) and typecheck both shims"
 run = [
   "cd {{config_root}}/server && go test ./...",
   "cd {{config_root}}/client/core && npm test",
   # No browser and no container: it only starts local-media.mjs on a free port.
   "cd {{config_root}}/harness/browser && node --test local-media.test.mjs",
+  # The smoke drivers' pass/fail and results-file rule. No browser: it only writes temp files.
+  "cd {{config_root}}/harness/browser/results/drivers && node --test smoke.test.mjs",
   "cd {{config_root}}/client/userscript && npx tsc --noEmit",
   "cd {{config_root}}/client/extension && npx tsc --noEmit",
   # The generated manifests and @match lines, from providers/*.json. No browser.
