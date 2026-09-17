@@ -27,7 +27,7 @@ import {
 } from '../src/providers/manage.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
-import { builtinRegistry, ProviderRegistry } from '../src/providers/registry.ts';
+import { builtinRegistry, displacedBuiltins, ProviderRegistry } from '../src/providers/registry.ts';
 import {
   bestHostScore, encodeComponent, hostScore, matchPath, matchQuery, parsePathTemplate, parseQueryTemplate, parseTextTemplate,
   substitute, validHostPattern,
@@ -375,6 +375,20 @@ describe('the effective registry', () => {
       const yes = await adopt(EMPTY, SERVER, e, body, true);
       assert.ok(yes.ok && yes.state.adopted[0]!.replaceBuiltin, d.id);
       assert.equal(buildRegistry(yes.state, () => true).byId(d.id)?.tier, 'server', `${d.id}: confirmed and still not applied`);
+
+      // What the user confirms is what changes against the built-in it
+      // displaces -- also for a pin a later built-in held back, which is not
+      // in force and so is no baseline for itself.
+      const parsed = parseDescriptor(body);
+      assert.ok(parsed.ok, d.id);
+      const built = displacedBuiltins(parsed.provider);
+      assert.equal(built.length, 1, d.id);
+      const expected = diffDescriptors(built[0]!.provider.d, d);
+      assert.ok(expected.length, `control: ${d.id} differs from ${built[0]!.provider.id}`);
+      assert.deepEqual(!asked.ok && asked.changes, expected, `${d.id}: an offer diffed against nothing`);
+      const held = await adopt(await asAdopted(d, false), SERVER, e, body, false);
+      assert.ok(!held.ok && held.needsReplaceConfirmation, d.id);
+      assert.deepEqual(!held.ok && held.changes, expected, `${d.id}: a held-back pin diffed against itself`);
 
       const saved = await saveUser(EMPTY, body);
       assert.ok(saved.ok && saved.displaces?.length, `${d.id}: saving it did not say it displaces a built-in`);
