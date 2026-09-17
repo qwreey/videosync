@@ -605,8 +605,11 @@ export class SyncEngine {
    * on the way there, so present-but-unready rather than absent.
    */
   private inTransit = false;
-  /** `activationActive()` at the last sample, and when it last rose with no input. */
-  private prevActivation = false;
+  /**
+   * `activationActive()` at the last sample (null before the first), and when
+   * it last rose with no input.
+   */
+  private prevActivation: boolean | null = null;
   private activationEdgeAt = -Infinity;
   /** What the last report said about acquiring, so a change is reported at once. */
   private lastAcquiringSent = false;
@@ -1488,11 +1491,15 @@ export class SyncEngine {
 
   /** One evaluation. Run by the ~10 Hz timer and by any DOM event. */
   private evaluate(): void {
+    // Sampled whatever the session is doing: the 참가 click activates the page
+    // for seconds, and a join or reconnect slower than the gesture window
+    // showed that activation to the first joined sample as a rise with no
+    // input behind it -- a media key (review 4 N3).
+    this.sampleActivation(this.d.now());
     if (this.status !== 'joined') return;
 
     const now = this.d.now();
     const state = this.d.adapter.readState();
-    this.sampleActivation(now);
 
     this.nameRoomIfUnnamed(state);
     this.trackFinish(now, state);
@@ -1665,12 +1672,19 @@ export class SyncEngine {
     return at >= this.acq.startedAt && now - at <= this.cfg.gestureWindowMs;
   }
 
-  /** A rise of `isActive` with no input behind it is a media key. */
+  /**
+   * A rise of `isActive` with no input behind it is a media key.
+   *
+   * The first sample is only a baseline: an activation already up when the
+   * engine starts was not seen rising, and is most likely the click that
+   * started it -- 방 만들기 builds the engine only once the room exists, which
+   * can be well past the gesture window.
+   */
   private sampleActivation(now: number): void {
     const g = this.d.gestures;
     if (!g) return;
     const act = g.activationActive() === true;
-    if (act && !this.prevActivation &&
+    if (act && this.prevActivation === false &&
       now - Math.max(g.lastInputAt(), g.lastIgnoredInputAt()) > this.cfg.gestureWindowMs) {
       this.activationEdgeAt = now;
     }

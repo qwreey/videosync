@@ -185,6 +185,64 @@ describe('a joiner whose site autoplays', () => {
     assert.deepEqual(h.kinds(), []);
   });
 
+  // The 참가 click activates the page for seconds. A join slower than the
+  // gesture window used to show that activation to the first joined sample as
+  // a rise with no input behind it -- a media key -- and the site's autoplay
+  // or resume right after went to the room (C1 again, review 4 N3).
+  for (const [what, act] of [
+    ['autoplay', async (h: H) => { await h.siteAutoplay(); }],
+    ['resume', async (h: H) => { h.player.positionS = 600; h.player.emit('seeked'); await h.vt.advance(20); }],
+  ] as const) {
+    it(`a panel click is not a media key when the welcome comes late (site ${what})`, async () => {
+      const h = harness({ player: { paused: true, positionS: 0 } });
+      h.tr.autoAnswerTime(OFFSET);
+      h.g.ignored = h.vt.now; // the 참가 click, on our own panel
+      h.g.active = true;
+      h.engine.start();
+      await h.vt.advance(800); // ticket + connect
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-1', seq: 0,
+        anchor: { positionMs: 30_000, atServerMs: OFFSET, paused: true, mediaKey: KEY },
+        members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+        serverMs: h.vt.now, mediaKey: KEY,
+      });
+      for (let t = 0; t < 400; t += 100) {
+        await h.vt.advance(100);
+        await act(h);
+      }
+      assert.deepEqual(h.kinds(), [], 'the site\'s move was sent as the member\'s');
+    });
+
+    it(`a click made long before the engine started is not a media key either (site ${what})`, async () => {
+      // 방 만들기 creates the room first; the engine is built when that answers.
+      const h = harness({ player: { paused: true, positionS: 0 } });
+      h.g.ignored = h.vt.now;
+      h.g.active = true;
+      await h.vt.advance(800);
+      h.engine.start();
+      await h.vt.advance(5);
+      await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+      await act(h);
+      assert.deepEqual(h.kinds(), [], 'the site\'s move was sent as the member\'s');
+    });
+  }
+
+  it('control: a media key pressed after a late welcome is still one', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.tr.autoAnswerTime(OFFSET);
+    h.g.ignored = h.vt.now;
+    h.g.active = true;
+    h.engine.start();
+    await h.vt.advance(800);
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    h.g.active = false; // the panel click's activation expires
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.gestureWindowMs + 200);
+    h.g.active = true; // MPRIS play
+    await h.siteAutoplay();
+    assert.deepEqual(h.kinds(), ['play']);
+  });
+
   it('after the settle time the member is steady, and an ungestured play is sent as before', async () => {
     const h = await joinPausedRoom();
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
@@ -509,6 +567,29 @@ describe('a reconnect', () => {
     assert.ok(Math.abs(h.player.positionS - 42) < 0.3, `not conformed: at ${h.player.positionS}`);
     assert.equal(h.player.paused, true);
     assert.deepEqual(h.kinds(), [], 'the member\'s own playing was sent to a room it had just rejoined');
+  });
+
+  it('does not read a panel click made during the outage as a media key', async () => {
+    const h = harness({ player: { paused: true, positionS: 10 } });
+    await h.join({ mediaKey: 'laftel:/player/9/9', positionMs: 0, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.tr.drop();
+    await h.vt.advance(100);
+    h.g.ignored = h.vt.now; // a click on the panel while it says "reconnecting"
+    h.g.active = true;
+    await h.vt.advance(900);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-2', seq: 3,
+      anchor: { positionMs: 42_000, atServerMs: h.serverNow(), paused: true, mediaKey: KEY },
+      members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    for (let t = 0; t < 400; t += 100) {
+      await h.vt.advance(100);
+      await h.siteAutoplay();
+    }
+    assert.deepEqual(h.kinds(), [], 'the site\'s autoplay was sent as the member\'s');
   });
 });
 
