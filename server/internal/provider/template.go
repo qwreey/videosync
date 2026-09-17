@@ -299,7 +299,63 @@ func formDecode(s string) string {
 		}
 		b = append(b, c)
 	}
-	return strings.ToValidUTF8(string(b), "�")
+	return decodeUTF8WithReplacement(b)
+}
+
+// decodeUTF8WithReplacement is the WHATWG "UTF-8 decode without BOM" that
+// URLSearchParams uses: one U+FFFD per maximal subpart of an ill-formed
+// sequence. strings.ToValidUTF8 gives one for a whole run of bad bytes and
+// utf8.DecodeRune one per byte; both disagree with the client on some input.
+func decodeUTF8WithReplacement(b []byte) string {
+	var out strings.Builder
+	var cp rune
+	needed, seen := 0, 0
+	lower, upper := byte(0x80), byte(0xBF)
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if needed == 0 {
+			switch {
+			case c <= 0x7F:
+				out.WriteByte(c)
+			case 0xC2 <= c && c <= 0xDF:
+				needed, cp = 1, rune(c&0x1F)
+			case 0xE0 <= c && c <= 0xEF:
+				if c == 0xE0 {
+					lower = 0xA0
+				} else if c == 0xED {
+					upper = 0x9F
+				}
+				needed, cp = 2, rune(c&0x0F)
+			case 0xF0 <= c && c <= 0xF4:
+				if c == 0xF0 {
+					lower = 0x90
+				} else if c == 0xF4 {
+					upper = 0x8F
+				}
+				needed, cp = 3, rune(c&0x07)
+			default:
+				out.WriteRune(utf8.RuneError)
+			}
+			continue
+		}
+		if c < lower || c > upper {
+			// The sequence so far is one error; c starts afresh.
+			cp, needed, seen, lower, upper = 0, 0, 0, 0x80, 0xBF
+			out.WriteRune(utf8.RuneError)
+			i--
+			continue
+		}
+		lower, upper = 0x80, 0xBF
+		cp = cp<<6 | rune(c&0x3F)
+		if seen++; seen == needed {
+			out.WriteRune(cp)
+			cp, needed, seen = 0, 0, 0
+		}
+	}
+	if needed != 0 {
+		out.WriteRune(utf8.RuneError)
+	}
+	return out.String()
 }
 
 func matchQuery(t *queryTemplate, search string) map[string]string {
