@@ -1130,9 +1130,18 @@ export class SyncEngine {
           kept.playLost = playLost;
         }
       } else {
+        // An apply from before the drop is still running (the snapshot waits
+        // for it, see `sendOfflineChanges`): the player is where that apply's
+        // seek lands, not where it sits now. Read from the element, the
+        // landing -- aimed at a room that may have moved since -- was a jump
+        // the member made offline, and was sent. Its pause state is the
+        // element's: the drop's epoch bump stops the apply after its seek, so
+        // it presses nothing more.
+        const applying = this.applyingRemote;
+        const positionS = applying ? landsAt(applying.targetMs, s.durationS) / 1000 : s.positionS;
         this.offline = this.onRoomMedia() ? {
           at, rate: s.rate,
-          positionS: room ? roomMs / 1000 : s.positionS,
+          positionS: room ? roomMs / 1000 : positionS,
           paused: room ? this.anchor.paused : s.paused,
           lostSeek, lostPaused, playLost,
           media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,

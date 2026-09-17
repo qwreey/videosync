@@ -730,7 +730,7 @@ describe('reconnect', () => {
      * snapshot waits on a correction seek parked before the first drop. Seeks
      * numbered in `park` (from 1) wait for the test; the others land at once.
      */
-    async function parkedSession(o: { paused?: boolean; park?: number[] } = {}) {
+    async function parkedSession(o: { paused?: boolean; park?: number[]; gestures?: boolean } = {}) {
       const vt = new VirtualTime();
       const player = new FakePlayer(vt, { paused: !!o.paused, positionS: 10 });
       const tr = new FakeTransport();
@@ -738,7 +738,9 @@ describe('reconnect', () => {
       const engine = new SyncEngine({
         adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer,
         isHidden: () => false,
-        gestures: { lastInputAt: () => g.input, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+        ...(o.gestures === false ? {} : {
+          gestures: { lastInputAt: () => g.input, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+        }),
       }, CFG);
       const members = [
         { id: 'me-1', name: 'm0', suspended: false, ready: true },
@@ -834,6 +836,28 @@ describe('reconnect', () => {
       await h.vt.advance(300);
       assert.deepEqual(h.kinds(), ['play', 'play'], 'the lost play was not resent');
     });
+
+    for (const gestures of [true, false]) {
+      it(`does not send an old seek landing after a fresh snapshot as the member's${gestures ? '' : ' (no gesture evidence)'}`, async () => {
+        // The room moved, so the second drop takes a fresh snapshot -- while
+        // session 1's correction seek, aimed at the old room, is still
+        // parked. Landing, it is the engine's, not a scrub to send.
+        const h = await parkedSession({ gestures });
+        h.tr.open();
+        const when = h.vt.now + OFFSET;
+        h.welcome({ seq: 1, anchor: { positionMs: 50_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' } });
+        await h.vt.advance(600);
+        h.tr.drop('dead again');
+        await h.vt.advance(300);
+        h.g.input = h.vt.now;                     // input during the outage
+        await h.vt.advance(700);
+        h.tr.open(); h.welcome();
+        await h.vt.advance(600);
+        h.parked[0]!.release(true);
+        await h.vt.advance(300);
+        assert.deepEqual(h.tr.sentOf('cmd').map((c) => [c.kind, c.positionMs]), [], 'the engine\'s old seek was sent');
+      });
+    }
 
     it('takes a fresh snapshot when the kept one is already stale', async () => {
       // The room moved while the member was away: the first snapshot will
