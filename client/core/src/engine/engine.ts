@@ -578,6 +578,8 @@ export class SyncEngine {
   private conformInFlight = false;
   /** The last time this member's element reached (or nearly reached) the room's media's end. */
   private lastFinish: { key: string; epoch: number; at: number } | null = null;
+  /** A continuation this member's hidden tab held back, until it is shown. See `maybeContinue`. */
+  private hiddenContinuation: { prev: string; key: string; finish: { key: string; at: number } } | null = null;
   /** Our next-episode continuation, until it is conformed and the room is started. */
   private continuing: { key: string; play: boolean; at: number } | null = null;
   /** A `welcome` has been applied in this engine's life: the next one is a reconnect. */
@@ -764,15 +766,41 @@ export class SyncEngine {
   private maybeContinue(prev: string, key: string): void {
     const f = this.lastFinish;
     this.lastFinish = null;
+    this.hiddenContinuation = null;
+    this.continueFrom(f, prev, key);
+  }
+
+  private continueFrom(f: { key: string; at: number } | null, prev: string, key: string): void {
     if (this.status !== 'joined' || !f || f.key !== prev || prev !== this.anchor.mediaKey) return;
     if (this.d.now() - f.at > CONTINUATION_WINDOW_MS) return;
     if (!key || !this.d.continues?.(prev, key)) return;
+    // Not from a hidden tab, as a room is not named from one: its media does
+    // not load, so it is never conformed and never sends the `play` below --
+    // and every member that lost the compare-and-set to it has dropped its
+    // own. The room sat paused at 0 on the next episode (review 4 C1). Sent
+    // when the tab is shown, if that is still within the window.
+    if (this.d.isHidden()) {
+      this.hiddenContinuation = { prev, key, finish: f };
+      return;
+    }
     // It lands paused at 0 -- the sender's own site may be seconds into the
     // new episode -- and the room is started once this member is conformed,
     // by a `play` the readiness gate holds for everyone still on the way.
     this.continuing = { key, play: !this.anchor.paused, at: this.d.now() };
     this.stats.continuations++;
     this.send('media', 0, { key, url: this.localMediaUrl }, prev);
+  }
+
+  /**
+   * Send the continuation a hidden tab held back, now that it is shown -- if
+   * the page and the room are still where they were, and the finish is still
+   * recent enough to carry the room.
+   */
+  private continueWhenShown(): void {
+    const c = this.hiddenContinuation;
+    if (!c || this.d.isHidden()) return;
+    this.hiddenContinuation = null;
+    if (c.key === this.localMediaKey) this.continueFrom(c.finish, c.prev, c.key);
   }
 
   /** Whether the acquisition states are in force. See `EngineDeps.gestures`. */
@@ -1502,6 +1530,7 @@ export class SyncEngine {
     const state = this.d.adapter.readState();
 
     this.nameRoomIfUnnamed(state);
+    this.continueWhenShown();
     this.trackFinish(now, state);
     this.advanceAcquisition(now, state);
 

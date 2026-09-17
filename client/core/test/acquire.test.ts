@@ -807,7 +807,7 @@ describe('gesture evidence from the page', () => {
 });
 
 describe('the next episode', () => {
-  async function finishThenNavigate(o: Opts & { ended?: boolean; to?: string } = {}) {
+  async function finishThenNavigate(o: Opts & { ended?: boolean; to?: string; hidden?: boolean } = {}) {
     const h = harness({ continues: (a, b) => a === KEY && b === NEXT, ...o,
       player: { paused: false, positionS: 1399, ...o.player } });
     await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
@@ -818,6 +818,8 @@ describe('the next episode', () => {
       h.player.ended = true;
       h.player.emit('pause');
     }
+    // A background tab that has made a sound keeps playing to the end.
+    if (o.hidden) h.tab.hidden = true;
     await h.vt.advance(5500); // the site's countdown
     h.engine.setLocalMediaKey(o.to ?? NEXT, 'https://laftel.net/player/1/2');
     h.player.ended = false;
@@ -850,6 +852,41 @@ describe('the next episode', () => {
     await h.vt.advance(2000);
     assert.deepEqual(h.kinds(), ['media']);
     assert.equal(h.player.paused, true);
+  });
+
+  // A hidden tab cannot start what it moves the room onto: its media does not
+  // load, so it is never conformed and never sends the `play`, and every member
+  // that lost the compare-and-set to it has dropped its own (review 4 C1).
+  it('is not moved on from a hidden tab, but is once the tab is shown in time', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    h.player.readyState = 0; // media does not load in a hidden tab
+    await h.vt.advance(3000);
+    assert.deepEqual(h.kinds(), [], 'a hidden tab moved the room on, and nothing will start it');
+    h.tab.hidden = false;
+    h.player.readyState = 4;
+    await h.vt.advance(200);
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    assert.equal(media.length, 1);
+    assert.deepEqual([media[0]!.mediaKey, media[0]!.ifMediaKey], [NEXT, KEY]);
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
+  it('a tab shown only after the continuation window keeps the button', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    await h.vt.advance(20_000);
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), []);
+  });
+
+  it('a tab shown after somebody else moved the room on follows it', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    await h.state({ mediaKey: NEXT, positionMs: 0, paused: true }, 'media');
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), []);
   });
 
   it('control: a provider that does not continue keeps the button', async () => {
