@@ -148,7 +148,12 @@ what it left open:
   proxy's user header or `proxy`, and `preferred_username`/`email`/`sub` for OIDC.
 - **Limits.** Per client: session 5 then 1 per 2 s, ticket 20 then 2/s, begin 5 then 1 per 5 s,
   poll 30 then 2/s. Concurrent PBKDF2 checks are capped at half the CPUs, and an unknown user is
-  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 100 000
+  checked against a dummy hash of the same cost. *(Review 4:)* a check waits for a slot at most
+  10 s, at most 16 per slot wait at once, and a check whose request has gone away gives up
+  instead of hashing for nobody; past either bound the answer is `503 busy` (the login tab says
+  so and keeps the flow). Unbounded, the queue was the attack: a /48 is 65 536 fresh per-/64
+  buckets, and every request they got past the limiter queued a full hash ahead of real
+  sign-ins, long after the sender left. At most 100 000 outstanding tickets and 100 000
   logins in progress *(review 3: was 1 000, which a thousand people signing in at once filled)*,
   of which one client holds at most 16 — the tighter bound, since the begin bucket alone admits
   about 65 in a TTL (`begin` answers `429 rate_limited`
