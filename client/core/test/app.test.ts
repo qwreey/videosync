@@ -416,6 +416,50 @@ describe('a refused join', () => {
   });
 });
 
+describe('leaving', () => {
+  const dot = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'dot')!;
+
+  it('is possible while the session is reconnecting, and stops it', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(h.button('나가기')!.disabled, false, 'no way out of a session that keeps retrying');
+    assert.equal(h.button('초대 링크 복사')!.disabled, true, 'control: what needs a live room stays off');
+    h.button('나가기')!.click();
+    const connects = h.tr().connects;
+    await h.tick(60_000);
+    assert.equal(h.app.api.engine(), null);
+    assert.equal(h.tr().connects, connects, 'reconnected to a room the member left');
+    assert.equal(h.button('나가기')!.disabled, true);
+  });
+
+  it('is possible while the session waits for a sign-in', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore(false, { authScope: JSON.stringify({ [new URL(SERVER).origin]: 'all' }) });
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    h.join();
+    await h.tick(50);
+    assert.equal(h.app.api.engine()?.state, 'refused', 'control: the session waits for a sign-in');
+    assert.equal(h.button('나가기')!.disabled, false);
+  });
+
+  it('does not say the connection was lost', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.match(dot(h).className, /\bjoined\b/, 'control: the dot is found');
+    h.button('나가기')!.click();
+    assert.doesNotMatch(h.status().text, /끊겼/, 'a member who left on purpose is told the network failed');
+    assert.doesNotMatch(dot(h).className, /\bclosed\b/, 'a red dot for a deliberate leave');
+  });
+});
+
 describe('an invite link', () => {
   it('fills the room fields', () => {
     const h = harness(`${ROOM_URL}#videosync=R1.S1`);

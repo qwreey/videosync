@@ -375,10 +375,16 @@ export class Panel {
     this.el.dot!.className = `dot ${state}`;
   }
 
-  setJoined(joined: boolean): void {
+  /**
+   * `inSession`: there is a session to leave, joined or not. One that is
+   * reconnecting, or waiting for a sign-in, keeps running until left, and
+   * would otherwise take the member back into the room they meant to leave.
+   */
+  setJoined(joined: boolean, inSession = joined): void {
     this.joined = joined;
     for (const k of ['create', 'join'] as const) (this.el[k] as HTMLButtonElement).disabled = joined;
-    for (const k of ['leave', 'copy', 'rotate'] as const) (this.el[k] as HTMLButtonElement).disabled = !joined;
+    (this.el.leave as HTMLButtonElement).disabled = !inSession;
+    for (const k of ['copy', 'rotate'] as const) (this.el[k] as HTMLButtonElement).disabled = !joined;
     (this.el.chatInput as HTMLInputElement).disabled = !joined;
   }
 

@@ -759,7 +759,7 @@ export function start(p: Platform): App {
     }, {
       onStatus: (s: EngineStatus, detail?: string) => {
         panel.setConnection(s);
-        panel.setJoined(s === 'joined');
+        panel.setJoined(s === 'joined', engine !== null);
         if (wasJoined && s !== 'joined') suspendMedia();
         wasJoined = s === 'joined';
         const prev = lastStatus;
@@ -876,6 +876,11 @@ export function start(p: Platform): App {
     panel.setMembers([], '', []);
     clearMediaAction();
     panel.hideGesturePrompt();
+    // `stop()` just reported 'closed' through the old engine's `onStatus`,
+    // which reads as a network failure. Nobody's network failed: say what a
+    // page with no session says. A join calling this says its own next.
+    panel.setConnection('idle');
+    refreshStatus();
   }
 
   // A member who navigates away or closes the tab should leave cleanly, so the
