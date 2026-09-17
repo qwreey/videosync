@@ -1571,6 +1571,15 @@ export class SyncEngine {
         this.adoptLocalState(state);
       }
     }
+    // A seeder pressed before its clock settled: the press ended acquiring and
+    // was left to the seed (`pressSeeds`), and `toSteady` put the seed off
+    // until the clock could schedule its acks. Nothing else ever ran it -- the
+    // press was never sent and the room was defended against its creator
+    // (review 4 N19). Sent now, by the same rule.
+    if (this.gating() && this.acq.state === 'steady' && this.adoptFor !== null && this.clock.ready &&
+      this.adoptFor === this.anchor.mediaKey && this.onRoomMedia()) {
+      this.toSteady(now, state);
+    }
     this.sendOfflineChanges(now, state);
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();

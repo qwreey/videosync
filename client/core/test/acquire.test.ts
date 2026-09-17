@@ -631,6 +631,58 @@ describe('the creator', () => {
   });
 });
 
+describe('the creator, pressing before its clock has settled', () => {
+  // The press ended acquiring and was left to the seed, and the seed waited
+  // for the clock -- in a `toSteady` that never ran again. The creator sent
+  // nothing and was put back to paused@0 (review 4 N19).
+  async function pressedEarly(pressBeforeClock: boolean) {
+    const h = harness({ player: { paused: true, positionS: 500 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.engine.start();
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: KEY },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    const answer = () => {
+      for (const f of h.tr.sentOf('time')) {
+        h.tr.deliver({ t: 'time.reply', t0: f.t0, tRecv: f.t0 + OFFSET, tSend: f.t0 + OFFSET });
+      }
+      h.tr.autoAnswerTime(OFFSET);
+    };
+    await h.vt.advance(300); // the probes are out; no replies yet
+    if (!pressBeforeClock) {
+      answer();
+      await h.vt.advance(100);
+    }
+    assert.equal(h.engine.acquisition, pressBeforeClock ? 'detached' : 'guarded');
+    h.g.press();
+    h.player.paused = false;
+    h.player.emit('play');
+    await h.vt.advance(50);
+    if (pressBeforeClock) answer();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    // The server takes whatever was sent.
+    for (const c of h.cmds()) {
+      await h.ack(c, { positionMs: c.positionMs, paused: c.kind !== 'play' });
+    }
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 2000);
+    return h;
+  }
+
+  for (const early of [true, false]) {
+    it(`${early ? '' : 'control: after it settled, '}seeds the room from its press`, async () => {
+      const h = await pressedEarly(early);
+      assert.deepEqual(h.kinds(), ['seek', 'play']);
+      assert.ok(Math.abs(h.cmds()[0]!.positionMs - 500_000) < 2000, `seeded at ${h.cmds()[0]!.positionMs}`);
+      assert.equal(h.engine.seedsRoom, false);
+      assert.equal(h.engine.stats.reconciles, 0, 'the room was defended against its own creator');
+      assert.ok(h.player.positionS > 499 && !h.player.paused, `left at ${h.player.positionS}, paused ${h.player.paused}`);
+    });
+  }
+});
+
 describe('the creator, moved while it settles', () => {
   it('ends where the room was moved, even if its site moved it again afterwards', async () => {
     const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
