@@ -392,6 +392,39 @@ describe('a room creation that settles late (N9)', () => {
     assert.equal(h.transports.length, 1);
   });
 
+  const signInShown = (h: H) =>
+    [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'note')!.shown;
+
+  it('leaves the status of the room joined meanwhile alone', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const before = h.status().text;
+    await c.release();
+    await h.tick(50);
+    assert.notEqual(await c.out, 'created');
+    assert.doesNotMatch(h.status().text, /만들지 못했어요/, 'a dropped creation was reported as a failure');
+    assert.equal(h.status().text, before);
+  });
+
+  it('asks nobody to sign in for a creation abandoned before it was refused', async () => {
+    // A server that gates creation, not yet known to: the POST is refused and
+    // no device token can answer it.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const before = h.status().text;
+    await c.release();
+    await h.tick(200);
+    assert.equal(await c.out, '로그인이 필요해요', 'control: the creation ended in a sign-in refusal');
+    assert.equal(signInShown(h), false, 'asked to sign in for a room the member no longer wants');
+    assert.equal(h.status().text, before);
+    assert.equal(h.transports.length, 1);
+    assert.equal(h.tr().closed, false);
+  });
+
   it('still joins the created room when the app rejoined the same session meanwhile', async () => {
     // A gated room whose hello is refused once is joined again by the app
     // itself (learnRefusal, then joinAgain). The member did nothing: the room
