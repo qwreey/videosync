@@ -943,6 +943,36 @@ async function rejoin(h: H, seq: number, anchor: Partial<Anchor>) {
   await h.vt.advance(400);
 }
 
+describe('a pause made while the session is down', () => {
+  async function pausedAway(pressed: boolean) {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    const at = h.vt.now;
+    h.tr.drop();
+    await h.vt.advance(200);
+    if (pressed) h.g.press();
+    h.player.paused = true;
+    h.player.emit('pause');
+    // The room is where it was: still playing.
+    await rejoin(h, 0, { positionMs: 100_000 + (h.vt.now + 1000 - at), paused: false });
+    return h;
+  }
+
+  it('is sent when a gesture made it', async () => {
+    const h = await pausedAway(true);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('control: with no gesture after the drop it is the site\'s, and put back', async () => {
+    const h = await pausedAway(false);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.player.paused, false);
+  });
+});
+
 describe('a creator that reconnects while it loads', () => {
   async function loadingCreator() {
     const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });

@@ -567,6 +567,65 @@ describe('reconnect', () => {
     assert.equal(h.tr.connects, connects + 1);
   });
 
+  /**
+   * A member playing with a room of two at 10 s loses its link, `offline`
+   * does something to the player 200 ms later, and the session comes back
+   * 800 ms after that into the room as `anchor` says.
+   */
+  async function changedWhileAway(
+    offline: (p: FakePlayer) => void,
+    anchor: Partial<Anchor> = { positionMs: 10_000, atServerMs: OFFSET, paused: false },
+  ) {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(2000);
+    h.tr.drop('link blip');
+    await h.vt.advance(200);
+    offline(h.player);
+    await h.vt.advance(800);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: 'yt:abc', ...anchor },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(600);
+    return h;
+  }
+
+  it('sends a pause made while reconnecting, rather than undoing it', async () => {
+    const h = await changedWhileAway((p) => { p.paused = true; });
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['pause'], 'the member\'s pause never reached the room');
+    assert.ok(Math.abs(cmds[0]!.positionMs - 12_200) < 300, `paused at ${cmds[0]!.positionMs}`);
+  });
+
+  it('sends a seek made while reconnecting', async () => {
+    const h = await changedWhileAway((p) => { p.positionS = 300; });
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['seek']);
+    assert.ok(Math.abs(cmds[0]!.positionMs - 301_400) < 500, `seeked to ${cmds[0]!.positionMs}`);
+  });
+
+  it('control: a player that just kept playing sends nothing', async () => {
+    const h = await changedWhileAway(() => {});
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+  });
+
+  it('control: a player that stalled while away is not read as a seek', async () => {
+    const h = await changedWhileAway((p) => p.stall());
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'a stall offline dragged the room back');
+  });
+
+  it('control: a room that moved while away is followed, not overridden', async () => {
+    const h = await changedWhileAway(() => {},
+      { positionMs: 50_000, atServerMs: OFFSET + 3000, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+    assert.equal(h.player.paused, true);
+  });
+
   it('reconnects with the secret the room rotated to, not the one it joined with', async () => {
     // The server replaces the secret on rotation and checks every hello
     // against the new one. Sending the old one gets `join_refused`, which ends

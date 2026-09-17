@@ -539,6 +539,14 @@ export class SyncEngine {
   private connectGen = 0;
   /** A click to sync arrived when there was no session to sync to. */
   private gestureRetryPending = false;
+  /**
+   * The player as it was when a joined session dropped, so that what the
+   * member did to it before the next `welcome` can still be sent. See
+   * `sendOfflineChanges`.
+   */
+  private offline: {
+    at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
+  } | null = null;
 
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
@@ -845,6 +853,7 @@ export class SyncEngine {
     this.pending = [];
     this.unacked = [];
     this.gestureRetryPending = false;
+    this.offline = null;
     this.connectGen++;
     this.ticket = '';
     this.d.transport.close();
@@ -966,6 +975,15 @@ export class SyncEngine {
     // longer exists. Keeping it would let a stale bias survive the one event
     // that could have cleared it.
     this.clock.reset();
+    // Only the first drop of a session records the player: a failed reconnect
+    // attempt has nothing newer to say about it.
+    if (this.status === 'joined') {
+      const s = this.d.adapter.readState();
+      this.offline = this.onRoomMedia() ? {
+        at: this.d.now(), positionS: s.positionS, paused: s.paused, rate: s.rate,
+        media: this.acq.id, key: this.localMediaKey,
+      } : null;
+    }
     this.detector.reset();
     // NOT zeroed: `welcome` sets it from the server, and zeroing it here
     // disarmed the supersede guard for any mutation still queued from the old
@@ -1489,6 +1507,7 @@ export class SyncEngine {
         this.adoptLocalState(state);
       }
     }
+    this.sendOfflineChanges(now, state);
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
 
@@ -1726,6 +1745,47 @@ export class SyncEngine {
     if (!this.foreignMove) return true;
     this.adoptFor = null;
     return false;
+  }
+
+  /**
+   * Send what the member did to the player while the session was down.
+   *
+   * Nothing is evaluated while not joined, and the detector is reset with the
+   * connection, so a pause made then became the new baseline: never sent,
+   * and undone by the reconciler `reconcileAfterMs` after the `welcome`.
+   * Compared once the clock can aim again, against the player as it was when
+   * the link dropped:
+   *
+   * - a play state that changed is sent, as `act` sends any (so not the end
+   *   of the media, and not one that agrees with the room as it is now);
+   * - a position is a seek only outside everything playback could have
+   *   reached meanwhile, and away from the room -- the detector's stall
+   *   range and two-diff test, so a player that stalled offline is not read
+   *   as a backward seek.
+   *
+   * Only in `steady`, and with gesture evidence only if an input came after
+   * the drop: nothing is evaluated offline, so no gesture window applies, and
+   * a site's own move in that time is left for the reconciler to put back.
+   */
+  private sendOfflineChanges(now: number, state: PlayerState): void {
+    const o = this.offline;
+    if (!o || !this.clock.ready) return;
+    this.offline = null;
+    if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
+    if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
+    if (this.d.gestures && this.d.gestures.lastInputAt() < o.at) return;
+    const pos = state.positionS * 1000;
+    const lo = o.positionS * 1000;
+    const ran = !o.paused || !state.paused;
+    const hi = ran ? lo + (now - o.at) * Math.max(0, o.rate, state.rate) : lo;
+    const jump = pos < lo ? lo - pos : pos > hi ? pos - hi : 0;
+    const expected = expectedAt(this.anchor, this.serverNow());
+    if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs) {
+      this.act({ kind: 'seek', positionS: state.positionS }, state);
+    }
+    if (state.paused !== o.paused) {
+      this.act({ kind: 'playstate', paused: state.paused, positionS: state.positionS }, state);
+    }
   }
 
   /** The effect of our own in-flight transition, or agreement with the room. */
