@@ -117,6 +117,67 @@ describe('SeekDetector', () => {
     assert.equal(d.seekDetections, 0, 'the stall gap was rebroadcast as a seek on resume');
   });
 
+  test('a seek made straight out of a stall is still a seek', () => {
+    // The first ready evaluation after a stalled one used to re-baseline onto
+    // wherever the element was, without looking. A seek into buffered data
+    // comes back ready at once, so a user who skipped ahead while buffering,
+    // or seeked a paused unready element, never reached the room -- and the
+    // room then corrected them straight back.
+    type Frame = [t: number, s: Partial<PlayerState> & { positionS: number }, expectedS: number];
+    const at = (d: SeekDetector, frames: Frame[]) =>
+      frames.map(([t, s, expectedS]) => d.evaluate(state(s), expectedS * 1000, t).observation.kind);
+    const unready = { readyState: 2, bufferedAheadS: 0 };
+
+    // Playing, stalled for a second at 12 s, then skipped to 43 s.
+    {
+      const d = new SeekDetector(visible);
+      at(d, [
+        ...Array.from({ length: 20 }, (_, i) => [i * 100, { positionS: 10 + i * 0.1 }, 10 + i * 0.1] as Frame),
+        ...Array.from({ length: 10 }, (_, i) => [2000 + i * 100, { positionS: 12, ...unready }, 12] as Frame),
+      ]);
+      const kinds = at(d, [[3000, { positionS: 43 }, 12], [3100, { positionS: 43.1 }, 12]]);
+      assert.equal(d.seekDetections, 1, `a seek out of a stall was absorbed: ${kinds.join(',')}`);
+    }
+
+    // Paused and unready at 10 s, then seeked to 100 s.
+    {
+      const d = new SeekDetector(visible);
+      at(d, Array.from({ length: 10 }, (_, i) => [i * 100, { positionS: 10, paused: true, ...unready }, 10] as Frame));
+      at(d, [[1000, { positionS: 100, paused: true }, 10]]);
+      assert.equal(d.seekDetections, 1, 'a seek on a paused, unready element was absorbed');
+    }
+
+    // Two quick seeks, with a frozen sample between them.
+    {
+      const d = new SeekDetector(visible);
+      at(d, Array.from({ length: 20 }, (_, i) => [i * 100, { positionS: 10 + i * 0.1 }, 10 + i * 0.1] as Frame));
+      at(d, [[2000, { positionS: 17 }, 12], [2030, { positionS: 17 }, 12.03], [2100, { positionS: 22 }, 12.1]]);
+      assert.equal(d.seekDetections, 2, 'the second of two quick seeks was absorbed');
+    }
+  });
+
+  test('a frozen reading that catches up is not a seek', () => {
+    // Firefox + Widevine (BROWSER-FINDINGS §23): after a seek, currentTime
+    // stops for ~1 s with readyState dipping, then jumps to where playback
+    // really is. That jump is playback the element did while it read frozen,
+    // however soon after the last frozen sample it is seen -- and the room,
+    // still on the old anchor, is far away, so only the player half of the
+    // two-diff test stands between it and a second, wrong seek.
+    for (const lastGap of [5, 50, 100]) {
+      const d = new SeekDetector(visible);
+      const kinds: string[] = [];
+      const ev = (t: number, s: Partial<PlayerState> & { positionS: number }) =>
+        kinds.push(d.evaluate(state(s), 12_000 + t, t).observation.kind);
+      for (let i = 0; i < 20; i++) ev(i * 100, { positionS: 10 + i * 0.1 });
+      ev(2000, { positionS: 40 }); // the user's seek
+      const frozenUntil = 2000 + 1037 - lastGap;
+      for (let k = 9; k >= 0; k--) ev(frozenUntil - k * 100, { positionS: 40, readyState: 1, bufferedAheadS: 0 });
+      ev(frozenUntil + lastGap, { positionS: 41.037 });
+      ev(frozenUntil + lastGap + 100, { positionS: 41.137 });
+      assert.equal(d.seekDetections, 1, `gap ${lastGap} ms: the catch-up was read as a seek: ${kinds.join(',')}`);
+    }
+  });
+
   test('hidden + never-audible + paused is browser suspension, not a user pause', () => {
     const d = new SeekDetector(hidden);
     const frames = [

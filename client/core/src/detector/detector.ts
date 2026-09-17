@@ -40,6 +40,11 @@ export class SeekDetector {
   private lastEvalAt = 0;
   private haveEvalPos = false;
   private stallSuspected = false;
+  /**
+   * While stalled: the furthest position playback could have reached had the
+   * element never stalled at all. Only a resume beyond it is a jump.
+   */
+  private stallReach = 0;
   private suspended = false;
   /**
    * Whether this playback has ever actually produced sound. Chrome exempts a
@@ -174,7 +179,8 @@ export class SeekDetector {
       // began early in the interval as a backward seek.)
       const lo = this.lastKnownPos;
       const hi = wasPlaying ? lo + dt * Math.max(0, s.rate) : lo;
-      if (jumped(posMs < lo ? lo - posMs : posMs > hi ? posMs - hi : 0)) {
+      const seeked = jumped(posMs < lo ? lo - posMs : posMs > hi ? posMs - hi : 0);
+      if (seeked) {
         this.seekDetections++;
         observation = { kind: 'seek', positionS: s.positionS };
       } else {
@@ -182,14 +188,31 @@ export class SeekDetector {
         observation = { kind: 'stall' };
       }
       this.lastKnownPos = posMs;
+      // Kept for the resume below. A frozen *reading* is not always frozen
+      // playback: Firefox + Widevine holds currentTime for ~1 s after a seek,
+      // then jumps to where the picture already is (BROWSER-FINDINGS §23).
+      this.stallReach = seeked ? posMs
+        : Math.max(posMs, wasStalled ? this.stallReach + (s.paused ? 0 : dt * Math.max(0, s.rate)) : hi);
     } else {
+      let playerDiff: number;
       if (wasStalled) {
-        this.lastKnownPos = posMs; // just resumed: re-baseline, do not judge the gap
-      } else if (!s.paused) {
-        this.lastKnownPos += dt * s.rate;
+        // Just resumed. The gap to where uninterrupted playback would be is
+        // not a seek -- but the resumed position is not free either: a seek
+        // into buffered data comes back ready at once, and re-baselining
+        // onto it without looking absorbed it, so the room corrected the user
+        // straight back. Judge it against everything the element could have
+        // reached: the frozen position, at most what it played while it read
+        // frozen, plus this interval if it is playing now.
+        const lo = this.lastKnownPos;
+        const hi = Math.max(lo, this.stallReach) + (s.paused ? 0 : dt * Math.max(0, s.rate));
+        playerDiff = posMs < lo ? lo - posMs : posMs > hi ? posMs - hi : 0;
+        this.lastKnownPos = posMs;
+      } else {
+        if (!s.paused) this.lastKnownPos += dt * s.rate;
+        playerDiff = Math.abs(posMs - this.lastKnownPos);
       }
 
-      if (jumped(Math.abs(posMs - this.lastKnownPos))) {
+      if (jumped(playerDiff)) {
         this.seekDetections++;
         this.lastKnownPos = posMs;
         observation = { kind: 'seek', positionS: s.positionS };
@@ -225,6 +248,7 @@ export class SeekDetector {
   rebaseline(positionS: number, paused?: boolean): void {
     this.lastKnownPos = positionS * 1000;
     this.lastEvalPos = this.lastKnownPos;
+    this.stallReach = this.lastKnownPos;
     this.haveLastKnown = true;
     this.history = [];
     if (paused !== undefined) this.lastPaused = paused;
