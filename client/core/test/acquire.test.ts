@@ -898,6 +898,74 @@ describe('the next episode', () => {
     assert.deepEqual(h.kinds(), ['media', 'play']);
   });
 
+  it('a site autoplay while our own play is still on its way is put back, not taken for its echo', async () => {
+    // The continuation play is sent and not yet acked (the gate holds it while
+    // the other member loads), so where the room is GOING is playing. The
+    // room is still paused at 0: a site's play now only matches our intent,
+    // and left alone the member watches the new episode ahead of everybody.
+    const h = await finishThenNavigate();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    const absorbed = h.engine.stats.siteMovesAbsorbed;
+    await h.siteAutoplay();
+    await h.vt.advance(300);
+    assert.equal(h.engine.stats.siteMovesAbsorbed, absorbed + 1, 'the site\'s play was not judged as the site\'s');
+    assert.equal(h.player.paused, true, 'the new episode ran ahead of a paused room');
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
+  /** The media acked paused@0, and the continuation play sent and held. */
+  async function continuationPending() {
+    const h = await finishThenNavigate();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    return h;
+  }
+
+  it('a member\'s play while our own play is on its way ends acquiring and is held for the room', async () => {
+    // It agrees with where we asked the room to go, so it is sent no second
+    // time -- but it is the member's press, and the room is still paused.
+    const h = await continuationPending();
+    const intents = h.engine.stats.gesturedIntents;
+    h.g.press();
+    await h.siteAutoplay();
+    await h.vt.advance(300);
+    assert.equal(h.engine.stats.gesturedIntents, intents + 1, 'the press was taken for our own echo');
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.equal(h.player.paused, true, 'the member played ahead of a paused room');
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
+  it('a member\'s pause while our own play is on its way is sent', async () => {
+    // It agrees with the room as it is, but not with where we asked it to go:
+    // the member has changed their mind.
+    // A site that keeps its autoplay going through the conform leaves the
+    // member playing, and the member stops it.
+    const h = await finishThenNavigate();
+    const p = h.player;
+    const pause = p.pause.bind(p);
+    p.pause = async () => {};
+    await h.siteAutoplay();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    p.pause = pause;
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    assert.equal(p.paused, false);
+    h.g.press();
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play', 'pause']);
+  });
+
   it('a member that loses the race does not start the room', async () => {
     const h = await finishThenNavigate();
     h.tr.deliver({ t: 'error', code: 'media_stale' });
@@ -1834,4 +1902,111 @@ describe('a site that pauses the element right after our own seek', () => {
     await h.vt.advance(50);
     assert.deepEqual(h.kinds(), ['pause']);
   });
+
+  // With gesture evidence, a play state that changes unready under any seek of
+  // ours -- a correction's, or a transition's before its play() -- is judged
+  // by input: none since the apply began is the site reacting to our seek, a
+  // press is the member's.
+  /** A steady member of a playing room, and a room seek of ours parked unready. */
+  async function roomSeekParked() {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.equal(h.engine.acquisition, 'steady');
+    const p = h.player;
+    const parked: Array<() => void> = [];
+    const seekTo = p.seekTo.bind(p);
+    p.seekTo = (s: number) => new Promise<void>((res) => { parked.push(() => { void seekTo(s).then(res); }); });
+    await h.state({ positionMs: 400_000, paused: false }, 'seek');
+    assert.equal(parked.length, 1, 'the seek was not parked');
+    p.readyState = 1;
+    return { h, p, parked };
+  }
+
+  it('an old, unrelated input does not make the site\'s pause the member\'s', async () => {
+    // A key typed on the site a second into a ten-second seek is not a press
+    // of pause three seconds later.
+    const { h, p, parked } = await roomSeekParked();
+    await h.vt.advance(1000);
+    h.g.press();
+    h.g.active = false;
+    await h.vt.advance(3000);
+    const play = p.play.bind(p);
+    p.play = async () => {
+      p.play = play;
+      p.paused = true;
+      p.emit('pause');
+      throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+    };
+    parked.shift()!();
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), [], 'the site\'s pause was sent to the room');
+  });
+
+  it('a media key\'s pause while our seek is landing is sent', async () => {
+    // No input event, only the activation rising: the member's all the same.
+    const { h, p } = await roomSeekParked();
+    await h.vt.advance(200);
+    h.g.active = true;                            // MPRIS pause
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('an unready pause under an apply that never seeked is sent, with no input', async () => {
+    // A room play needing no seek, whose play() waits on an element below
+    // HAVE_FUTURE_DATA: nothing of ours made it unready.
+    const h = harness({ player: { paused: true, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.equal(h.engine.acquisition, 'steady');
+    const p = h.player;
+    p.readyState = 2;
+    p.play = () => { p.paused = false; p.plays++; return new Promise<void>(() => {}); };
+    await h.state({ positionMs: 100_000, paused: false }, 'play');
+    await h.vt.advance(200);
+    assert.equal(p.paused, false);
+    assert.equal(p.seeks, 0);
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  const seeks: Array<[string, (h: H) => Promise<void>]> = [
+    ['a correction seek', async (h) => {
+      h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+      await h.vt.advance(10);
+    }],
+    ['a room seek, before its play()', (h) => h.state({ positionMs: 400_000, paused: false }, 'seek')],
+  ];
+  for (const [what, seek] of seeks) {
+    for (const press of [false, true]) {
+      it(`${press ? 'a member\'s pause is sent' : 'a site\'s pause is not sent'} while ${what} is landing`, async () => {
+        const h = harness({ player: { paused: false, positionS: 100 } });
+        await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+        await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+        assert.equal(h.engine.acquisition, 'steady');
+        const p = h.player;
+        const parked: Array<() => void> = [];
+        const seekTo = p.seekTo.bind(p);
+        p.seekTo = (s: number) => new Promise<void>((res) => { parked.push(() => { void seekTo(s).then(res); }); });
+        await h.vt.advance(10);
+        await seek(h);
+        assert.equal(parked.length, 1, 'the seek was not parked');
+        p.readyState = 1;                           // a real element, seeking
+        await h.vt.advance(200);
+        if (press) h.g.press();
+        await p.pause();
+        p.emit('pause');
+        await h.vt.advance(100);
+        assert.deepEqual(h.kinds(), press ? ['pause'] : [], `sent ${h.kinds()}`);
+        parked.shift()!();
+        p.readyState = 4;
+        await h.vt.advance(100);
+        assert.deepEqual(h.kinds(), press ? ['pause'] : []);
+      });
+    }
+  }
 });

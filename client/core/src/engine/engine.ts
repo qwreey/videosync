@@ -479,6 +479,15 @@ interface Applying {
   targetMs: number;
   /** The pause state it leaves behind. */
   paused: boolean;
+  /** When it began, for gesture evidence: see `underOwnSeek`. */
+  at: number;
+  /** A seek of its own has started: in flight, or done. */
+  seeking?: boolean;
+  /**
+   * It seeked, and its play() is now outstanding: the one window in which a
+   * site reacting to our seek pauses the element under that play().
+   */
+  seeked?: boolean;
 }
 
 /**
@@ -1097,19 +1106,49 @@ export class SyncEngine {
     // waited for: an older one has been reconciled already. That leaves a gap
     // for a path that goes dark with no reset: `timeLoop` notices it 15-20 s
     // in, so a command pressed in about the first 10 s is not resent.
+    //
+    // A snapshot not read yet -- the reconnect is joined at its `welcome`, but
+    // reads it only once its clock settles and no old apply is running -- is
+    // kept: a player read now already shows the change it recorded, with
+    // nothing lost to resend. Commands lost since are added to it, the newest
+    // winning. Only while it still describes this session's room, though: one
+    // the room has moved past will never be sent, and a command lost on top
+    // of it would go with it.
     if (this.status === 'joined') {
       const s = this.d.adapter.readState();
       const room = lost.length > 0 && roomMs !== null;
       const lastPress = lost.filter((c) => c.kind !== 'seek').at(-1);
-      this.offline = this.onRoomMedia() ? {
-        at, rate: s.rate,
-        positionS: room ? roomMs / 1000 : s.positionS,
-        paused: room ? this.anchor.paused : s.paused,
-        lostSeek: room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null,
-        lostPaused: room && lastPress ? lastPress.kind === 'pause' : null,
-        playLost: room && lastPress?.kind === 'play' && this.anchor.paused && s.paused,
-        media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
-      } : null;
+      const lostSeek = room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null;
+      const lostPaused = room && lastPress ? lastPress.kind === 'pause' : null;
+      const playLost = room && lastPress?.kind === 'play' && this.anchor.paused && s.paused;
+      const o = this.offline;
+      const kept = o && o.media === this.acq.id && o.key === this.localMediaKey && this.roomUnmoved(o) ? o : null;
+      if (kept) {
+        if (lostSeek) kept.lostSeek = lostSeek;
+        if (lostPaused !== null) {
+          kept.lostPaused = lostPaused;
+          kept.playLost = playLost;
+        }
+      } else {
+        // An apply from before the drop is still running (the snapshot waits
+        // for it, see `sendOfflineChanges`): the player is where that apply's
+        // seek lands, not where it sits now. Read from the element, the
+        // landing -- aimed at a room that may have moved since -- was a jump
+        // the member made offline, and was sent. Its pause state is the
+        // element's: the drop's epoch bump stops the apply after its seek, so
+        // it presses nothing more. Only an apply that is seeking: one that
+        // never seeks (within tolerance, or an adapter that cannot) leaves the
+        // element where it is, however far that is from its target.
+        const applying = this.applyingRemote;
+        const positionS = applying?.seeking ? landsAt(applying.targetMs, s.durationS) / 1000 : s.positionS;
+        this.offline = this.onRoomMedia() ? {
+          at, rate: s.rate,
+          positionS: room ? roomMs / 1000 : positionS,
+          paused: room ? this.anchor.paused : s.paused,
+          lostSeek, lostPaused, playLost,
+          media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
+        } : null;
+      }
     }
     // A nudge is a correction against a room this member can no longer hear.
     // Left on, it runs the player away for the whole outage -- 660 ms in an
@@ -1486,11 +1525,15 @@ export class SyncEngine {
     targetMs: number, paused: boolean, toleranceMs: number, current: () => boolean,
   ): Promise<void> {
     const a = this.d.adapter;
-    this.applyingRemote = { targetMs, paused };
+    const applying: Applying = { targetMs, paused, at: this.d.now() };
+    this.applyingRemote = applying;
     try {
       const cur = a.readState().positionS * 1000;
+      let seeked = false;
       if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
+        applying.seeking = true;
         await a.seekTo(targetMs / 1000).catch(() => { /* a stalled seek is reported, not thrown */ });
+        seeked = true;
       }
       if (!current()) {
         this.stats.supersededApplies++;
@@ -1499,6 +1542,7 @@ export class SyncEngine {
       if (paused) {
         await a.pause();
       } else if (!this.atEnd(targetMs)) {
+        applying.seeked = seeked;
         await this.tryPlay();
       } else {
         // play() on an ended element seeks it to 0 first (HTML spec), so the
@@ -1678,7 +1722,7 @@ export class SyncEngine {
       const targetMs = expectedAt(this.anchor, this.serverNow());
       // A correction leaves the pause state alone, so the one it "makes" is
       // the room's.
-      this.applyingRemote = { targetMs, paused: this.anchor.paused };
+      this.applyingRemote = { targetMs, paused: this.anchor.paused, at: this.d.now(), seeking: true };
       try {
         await a.seekTo(targetMs / 1000).catch(() => {});
       } finally {
@@ -1948,7 +1992,7 @@ export class SyncEngine {
       if (!adopting) this.act(o, state);
       return;
     }
-    if (this.isEcho(o, state)) {
+    if (this.isEcho(o, state, this.intent(now))) {
       this.stats.echoesSuppressed++;
       return;
     }
@@ -2037,10 +2081,14 @@ export class SyncEngine {
    */
   private sendOfflineChanges(now: number, state: PlayerState): void {
     const o = this.offline;
-    if (!o || !this.clock.ready) return;
+    // An apply from before the drop can still be running -- a seek parked
+    // for ten seconds outlives a reconnect. The player is not the member's
+    // to read until it settles, so ask again then rather than spend the only
+    // record of what they did.
+    if (!o || !this.clock.ready || this.applyingRemote) return;
     this.offline = null;
     if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
-    if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
+    if (this.acq.state !== 'steady' || this.autoplayBlocked) return;
     // A lost command's press came before the drop, and is evidence enough --
     // for the change that command made, and nothing else. A site's own move
     // during the outage (an autoplay, an ad's pause, a resume seek) is not
@@ -2048,9 +2096,7 @@ export class SyncEngine {
     // one may have been the engine's own adoption, pressed by nobody.
     const input = !this.d.gestures || this.d.gestures.lastInputAt() >= o.at;
     if (!input && !o.lostSeek && o.lostPaused === null) return;
-    const a = this.anchor;
-    if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
-      a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
+    if (!this.roomUnmoved(o)) return;
     const pos = state.positionS * 1000;
     const lo = o.positionS * 1000;
     const ran = !o.paused || !state.paused;
@@ -2070,6 +2116,13 @@ export class SyncEngine {
     }
   }
 
+  /** Whether the room is still where it was when this snapshot was taken. */
+  private roomUnmoved(o: { seq: number; anchor: Anchor }): boolean {
+    const a = this.anchor;
+    return this.lastAppliedSeq === o.seq && a.mediaKey === o.anchor.mediaKey && a.paused === o.anchor.paused &&
+      a.positionMs === o.anchor.positionMs && a.atServerMs === o.anchor.atServerMs;
+  }
+
   /**
    * Whether a player at `posMs` is still where a lost seek put it: at the
    * target, or anywhere playback could have taken it since.
@@ -2081,18 +2134,64 @@ export class SyncEngine {
     return posMs >= lo - this.seekThresholdMs && posMs <= hi + this.seekThresholdMs;
   }
 
-  /** The effect of our own in-flight transition, or agreement with the room. */
-  private isEcho(o: Observation, state: PlayerState): boolean {
+  /**
+   * The effect of our own in-flight transition, or agreement with the room.
+   *
+   * While a command of ours is on its way, the room is (`anchor`) and will be
+   * (`roomAnchor`) in different states. A change with no gesture is not the
+   * member's, so our pending command says nothing about it: one that only
+   * matches where we asked the room to go is still the site's, and is put
+   * back like any. A `gestured` press is an echo only if it agrees with both;
+   * matching just one, it is the member's, and `act` judges it -- a pause
+   * against our pending play is sent, a play that repeats it is held.
+   */
+  private isEcho(o: Observation, state: PlayerState, gestured: boolean): boolean {
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       return !!applying &&
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === this.roomAnchor().paused ||
-        (!!applying && (o.paused === applying.paused || !!o.unready));
+      return (o.paused === this.anchor.paused && (!gestured || o.paused === this.roomAnchor().paused)) ||
+        (!!applying && (o.paused === applying.paused || this.underOwnSeek(o, applying)));
     }
     return true;
+  }
+
+  /**
+   * A play state seen unready under a seek of ours, which a site reacting to
+   * that seek changed -- most often a pause under the play() that follows it
+   * (the AbortError in `tryPlay`). It is the apply's, left to its rebaseline
+   * and the reconciler. Nothing else an apply spans is: not a hold, or a
+   * play() waiting on an element we never seeked. A real element is unready
+   * through all of those, and a change made then is the member's.
+   *
+   * With gesture evidence, a press decides, anywhere in the seek or its
+   * play(): an input or media key after the apply began and within
+   * `gestureWindowMs` of now is the member's, anything else the site's. An
+   * older input is not: a seek can be parked for ten seconds, and a key typed
+   * on the site early in it is not a press of pause at the end. Without
+   * evidence only the play() window after the seek is excused, as the one
+   * place a member is least likely to be pressing. (`seeked` is set on the
+   * playing path only, and a play there is the transition's own state, so
+   * this is always a pause under a transition that plays.)
+   *
+   * Known, and left: an input is stamped at pointerdown, and a site's pause
+   * button acts on click some 50-150 ms later. An apply that begins in that
+   * gap, on an element it leaves unready, takes the member's pause for the
+   * site's. Looking back past `applying.at` would fix that, but would also
+   * count the press that started the transition -- the site reacting to it is
+   * exactly what this excuses. And since the stamp is at pointerdown, a click
+   * held down longer than `gestureWindowMs` while our seek has the element
+   * unready is taken for the site's pause too; `intent` has the same limit.
+   */
+  private underOwnSeek(o: Observation, applying: Applying): boolean {
+    if (o.kind !== 'playstate' || !o.unready) return false;
+    const g = this.d.gestures;
+    if (!g) return !!applying.seeked;
+    const at = Math.max(g.lastInputAt(), this.activationEdgeAt);
+    const pressed = at > applying.at && this.d.now() - at <= this.cfg.gestureWindowMs;
+    return !!applying.seeking && !pressed;
   }
 
   /** The member's own change: tell the room. */
@@ -2101,10 +2200,9 @@ export class SyncEngine {
     // user's: its seek lands near its own target (the room may have moved on
     // since, so the two-diff test alone is not enough there), and its pause
     // state is the one it was asked for. Anything else is still the user's --
-    // except a play state that changed while the element was unready: our
-    // seek is what made it unready, and a site reacting to that seek pauses
-    // the element under our play() (the AbortError in `tryPlay`). Left to the
-    // transition's rebaseline and the reconciler, as before review 4 N4.
+    // except a pause seen unready under the play() that follows our own seek
+    // (`underOwnSeek`). Left to the transition's rebaseline and the
+    // reconciler, as before review 4 N4.
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       if (!applying ||
@@ -2116,7 +2214,7 @@ export class SyncEngine {
       // Against where the room is going, not where it is: see `roomAnchor`.
       const room = this.roomAnchor();
       if (o.paused !== room.paused &&
-        (!applying || (o.paused !== applying.paused && !o.unready))) {
+        (!applying || (o.paused !== applying.paused && !this.underOwnSeek(o, applying)))) {
         if (o.paused && state.ended) {
           // The end of the media pauses the element, and it is nobody's
           // pause: sent, the first member to finish stops the room at its own

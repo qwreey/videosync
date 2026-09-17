@@ -615,6 +615,308 @@ describe('reconnect', () => {
     assert.ok(Math.abs(cmds[0]!.positionMs - 301_400) < 500, `seeked to ${cmds[0]!.positionMs}`);
   });
 
+  it('sends a pause made while reconnecting once an apply from before the drop settles', async () => {
+    // A correction seek parked when the link went is still running at the
+    // welcome. The first evaluation then must not spend the offline snapshot:
+    // it is the only record of the pause, and the reconciler undoes it.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(2000);
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await h.vt.advance(100);
+    assert.equal(parked.length, 1);
+    h.tr.drop('link blip');
+    await h.vt.advance(200);
+    await h.player.pause();                       // the member pauses offline
+    await h.vt.advance(800);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { mediaKey: 'yt:abc', positionMs: 10_000, atServerMs: OFFSET, paused: false },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(600);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'sent while our own seek was still landing');
+    parked[0]!.release();
+    await h.vt.advance(300);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause'], 'the offline pause never reached the room');
+  });
+
+  it('keeps an offline pause through a second drop while an old apply is still running', async () => {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(2000);
+    const parked = parkSeeks(h.player);
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    await h.vt.advance(100);
+    assert.equal(parked.length, 1);
+    const welcome = () => h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { mediaKey: 'yt:abc', positionMs: 10_000, atServerMs: OFFSET, paused: false },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    h.tr.drop('link blip');
+    await h.vt.advance(200);
+    await h.player.pause();                       // the member pauses offline
+    await h.vt.advance(800);
+    h.tr.open();
+    welcome();
+    await h.vt.advance(600);                      // settled, the snapshot still waits on the seek
+    h.tr.drop('link blip again');
+    await h.vt.advance(1000);
+    h.tr.open();
+    welcome();
+    await h.vt.advance(600);
+    parked[0]!.release();
+    await h.vt.advance(300);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause'], 'the offline pause never reached the room');
+  });
+
+  describe('a second drop before the reconnected clock settles', () => {
+    // A reconnect is joined at its welcome and reads the offline snapshot only
+    // once its clock settles. A drop in between used to take a new snapshot
+    // from a player that already showed the change, with nothing lost to
+    // resend: the first snapshot's change was never sent (review 5 P6).
+    async function flap(second: boolean, o: { lostPause: boolean }) {
+      const vt = new VirtualTime();
+      const player = new FakePlayer(vt, { paused: false, positionS: 10 });
+      const tr = new FakeTransport();
+      let input = -Infinity;
+      const engine = new SyncEngine({
+        adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer,
+        isHidden: () => false,
+        gestures: { lastInputAt: () => input, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+      }, CFG);
+      const members = [
+        { id: 'me-1', name: 'm0', suspended: false, ready: true },
+        { id: 'other-1', name: 'm1', suspended: false, ready: true },
+      ];
+      const anchor: Anchor = { positionMs: 10_000, atServerMs: OFFSET, paused: false, mediaKey: 'yt:abc' };
+      const welcome = () => tr.deliver({ t: 'welcome', you: 'me-1', seq: 0, anchor, members, serverMs: vt.now + OFFSET, mediaKey: 'yt:abc' });
+      tr.autoAnswerTime(OFFSET);
+      engine.start(); tr.open(); welcome();
+      await vt.advance(2000);
+      assert.equal(engine.acquisition, 'steady');
+      const pause = async () => { input = vt.now; await player.pause(); player.emit('pause'); };
+      if (o.lostPause) {
+        await pause();                            // sent, and lost with the link
+        await vt.advance(100);
+        tr.drop('dead');
+        await vt.advance(1000);
+      } else {
+        tr.drop('dead');
+        await vt.advance(300);
+        await pause();                            // made offline
+        await vt.advance(700);
+      }
+      if (second) {
+        tr.autoAnswerTime(null);
+        tr.open(); welcome();
+        await vt.advance(30);                     // welcome in, probes not yet answered
+        tr.drop('dead again');
+        await vt.advance(2000);
+        tr.autoAnswerTime(OFFSET);
+      }
+      tr.open(); welcome();
+      await vt.advance(600);
+      return tr.sentOf('cmd').map((c) => c.kind);
+    }
+
+    /**
+     * A steady member of a room of two, with gesture evidence, whose first
+     * snapshot waits on a correction seek parked before the first drop. Seeks
+     * numbered in `park` (from 1) wait for the test; the others land at once.
+     */
+    async function parkedSession(o: { paused?: boolean; park?: number[]; gestures?: boolean } = {}) {
+      const vt = new VirtualTime();
+      const player = new FakePlayer(vt, { paused: !!o.paused, positionS: 10 });
+      const tr = new FakeTransport();
+      const g = { input: -Infinity };
+      const engine = new SyncEngine({
+        adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer,
+        isHidden: () => false,
+        ...(o.gestures === false ? {} : {
+          gestures: { lastInputAt: () => g.input, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+        }),
+      }, CFG);
+      const members = [
+        { id: 'me-1', name: 'm0', suspended: false, ready: true },
+        { id: 'other-1', name: 'm1', suspended: false, ready: true },
+      ];
+      let room: Anchor = { positionMs: 10_000, atServerMs: OFFSET, paused: !!o.paused, mediaKey: 'yt:abc' };
+      let seq = 0;
+      const welcome = (next?: { seq: number; anchor: Anchor }) => {
+        if (next) { seq = next.seq; room = next.anchor; }
+        tr.deliver({ t: 'welcome', you: 'me-1', seq, anchor: room, members, serverMs: vt.now + OFFSET, mediaKey: 'yt:abc' });
+      };
+      tr.autoAnswerTime(OFFSET);
+      engine.start(); tr.open(); welcome();
+      await vt.advance(2000);
+      assert.equal(engine.acquisition, 'steady');
+      const park = new Set(o.park ?? [1]);
+      const parked: ParkedSeek[] = [];
+      const seekTo = player.seekTo.bind(player);
+      let n = 0;
+      player.seekTo = (pos: number) => {
+        if (!park.has(++n)) return seekTo(pos);
+        return new Promise<void>((res) => {
+          parked.push({ pos, release: (move = true) => { if (move) void seekTo(pos).then(res); else res(); } });
+        });
+      };
+      tr.deliver({ t: 'correct', mode: 'seek', when: vt.now + OFFSET });
+      await vt.advance(100);
+      assert.equal(parked.length, 1);
+      tr.drop('dead');
+      await vt.advance(1000);
+      const kinds = () => tr.sentOf('cmd').map((c) => c.kind);
+      return { vt, player, tr, engine, g, welcome, parked, kinds };
+    }
+
+    it('adds a pause lost at the second drop to the snapshot it keeps', async () => {
+      // The first snapshot waits on an old seek. Meanwhile a media key -- no
+      // input -- pauses the member, the pause is sent, and the link drops
+      // with it. Nothing but the lost command makes that pause the member's.
+      const h = await parkedSession();
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);                    // settled, the snapshot still waits on the seek
+      await h.player.pause();                     // a media key
+      h.player.emit('pause');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['pause']);
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked[0]!.release();
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['pause', 'pause'], 'the lost pause was not resent');
+    });
+
+    it('adds a seek lost at the second drop to the snapshot it keeps', async () => {
+      const h = await parkedSession();
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.player.positionS = 300;                   // a seek with no input behind it
+      h.player.emit('seeked');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['seek']);
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked[0]!.release(false);
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['seek', 'seek'], 'the lost seek was not resent');
+    });
+
+    it('adds a play lost at the second drop, and held for, to the snapshot it keeps', async () => {
+      // The play is held (the player re-paused at the room) before the link
+      // goes, so only the lost command says the member is playing.
+      const h = await parkedSession({ paused: true, park: [1, 3] });
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      await h.player.play();                      // a media key
+      h.player.emit('play');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['play']);
+      h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+      await h.vt.advance(100);
+      h.parked.shift()!.release(false);           // the hold runs, then the new correction parks
+      await h.vt.advance(100);
+      assert.equal(h.parked.length, 1, 'the second correction did not park');
+      assert.equal(h.player.paused, true, 'the play was not held');
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked.shift()!.release(false);
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['play', 'play'], 'the lost play was not resent');
+    });
+
+    for (const gestures of [true, false]) {
+      it(`does not send an old seek landing after a fresh snapshot as the member's${gestures ? '' : ' (no gesture evidence)'}`, async () => {
+        // The room moved, so the second drop takes a fresh snapshot -- while
+        // session 1's correction seek, aimed at the old room, is still
+        // parked. Landing, it is the engine's, not a scrub to send.
+        const h = await parkedSession({ gestures });
+        h.tr.open();
+        const when = h.vt.now + OFFSET;
+        h.welcome({ seq: 1, anchor: { positionMs: 50_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' } });
+        await h.vt.advance(600);
+        h.tr.drop('dead again');
+        await h.vt.advance(300);
+        h.g.input = h.vt.now;                     // input during the outage
+        await h.vt.advance(700);
+        h.tr.open(); h.welcome();
+        await h.vt.advance(600);
+        h.parked[0]!.release(true);
+        await h.vt.advance(300);
+        assert.deepEqual(h.tr.sentOf('cmd').map((c) => [c.kind, c.positionMs]), [], 'the engine\'s old seek was sent');
+      });
+    }
+
+    it('does not take a room it never sought for the member\'s position (no direct seek)', async () => {
+      // An adapter that cannot seek never moves toward the room's target, so
+      // a play-only apply running at the drop says nothing about where the
+      // element is: snapshotted at the target, the element's own position
+      // read as a 30 s jump made offline and went out as a seek.
+      const h = harness({ paused: true, positionS: 10, capabilities: { supportsDirectSeek: false } });
+      h.player.play = () => { h.player.paused = false; return new Promise<void>(() => { /* waits for data */ }); };
+      await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+      await h.vt.advance(500);
+      const when = h.vt.now + OFFSET;
+      const anchor = { positionMs: 40_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' };
+      h.tr.deliver({ t: 'state', seq: 1, when, emittedAt: when, anchor, by: 'other', kind: 'play' });
+      await h.vt.advance(300);                    // the play() is still waiting
+      h.tr.drop('dead');
+      await h.vt.advance(1500);
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-1', seq: 1, anchor, serverMs: h.vt.now, mediaKey: 'yt:abc',
+        members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'other-1', name: 'm1', suspended: false, ready: true }],
+      });
+      await h.vt.advance(2000);
+      assert.deepEqual(h.tr.sentOf('cmd').map((c) => [c.kind, c.positionMs]), [], 'the room was sent the element\'s own position as a seek');
+    });
+
+    it('takes a fresh snapshot when the kept one is already stale', async () => {
+      // The room moved while the member was away: the first snapshot will
+      // never be sent. A pause pressed in the new session and lost at the
+      // next drop is the member's, and must not ride on it.
+      const h = await parkedSession();
+      h.tr.open();
+      const when = h.vt.now + OFFSET;
+      h.welcome({ seq: 1, anchor: { positionMs: 50_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' } });
+      await h.vt.advance(600);
+      h.g.input = h.vt.now;                       // the member pauses
+      await h.player.pause();
+      h.player.emit('pause');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['pause']);
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked[0]!.release(false);
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['pause', 'pause'], 'the lost pause was not resent');
+    });
+
+    for (const second of [false, true]) {
+      const tag = second ? '' : ' (control: one drop)';
+      it(`still resends a pause lost with the link${tag}`, async () => {
+        assert.deepEqual(await flap(second, { lostPause: true }), ['pause', 'pause']);
+      });
+      it(`still sends a pause made offline${tag}`, async () => {
+        assert.deepEqual(await flap(second, { lostPause: false }), ['pause']);
+      });
+    }
+  });
+
   it('control: a player that just kept playing sends nothing', async () => {
     const h = await changedWhileAway(() => {});
     assert.deepEqual(h.tr.sentOf('cmd'), []);
@@ -1217,6 +1519,9 @@ describe('queued player work re-checks the session when it runs', () => {
     const parked = parkSeeks(h.player);
     const before = h.tr.sentOf('cmd').length;
     h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    // A real element is below HAVE_FUTURE_DATA for as long as its seek is in
+    // flight, so the user's pause is seen on an unready sample.
+    h.player.readyState = 1;
     await h.vt.advance(500);
     assert.equal(parked.length, 1);
 
@@ -1227,12 +1532,92 @@ describe('queued player work re-checks the session when it runs', () => {
     h.player.emit('seeked');
     await h.vt.advance(100);
     parked[0]!.release(false);                  // the engine's seek never took
+    h.player.readyState = 4;
     await h.vt.advance(100);
 
     const sent = h.tr.sentOf('cmd').slice(before);
     assert.deepEqual(sent.map((c) => c.kind), ['pause', 'seek'], `sent ${JSON.stringify(sent)}`);
     assert.ok(Math.abs(sent[1]!.positionMs - 500_000) < 1000);
   });
+
+  /** A playing room of two at 50 s, and another member's seek to 400 s. */
+  async function roomSeek(h: Harness): Promise<void> {
+    await h.join({ positionMs: 50_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const when = h.vt.now + OFFSET;
+    h.tr.deliver({
+      t: 'state', seq: 1, when, emittedAt: when,
+      anchor: { positionMs: 400_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      by: 'other-1', kind: 'seek',
+    });
+    await h.vt.advance(100);
+  }
+
+  it('a pause made unready while a room seek is landing is sent (no gesture evidence)', async () => {
+    // Without gesture evidence only the play() after our seek excuses an
+    // unready pause; the seek itself does not.
+    const h = harness({ paused: false, positionS: 50 });
+    const parked = parkSeeks(h.player);
+    await roomSeek(h);
+    assert.equal(parked.length, 1);
+    h.player.readyState = 1;
+    await h.vt.advance(200);
+    await h.player.pause();                     // the user pauses
+    h.player.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+  });
+
+  it('a pause made on a ready element under our post-seek play() is sent (no gesture evidence)', async () => {
+    // The excuse is for a site reacting to an element our seek left unready.
+    const h = harness({ paused: false, positionS: 50 });
+    const p = h.player;
+    p.play = () => { p.paused = false; p.plays++; return new Promise<void>(() => {}); };
+    await roomSeek(h);
+    assert.ok(Math.abs(p.positionS - 400) < 1, `at ${p.positionS}`);
+    await p.pause();                            // the user pauses
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+  });
+
+  for (const readyState of [4, 2]) {
+    it(`a pause made while a room play waits on the element is sent (readyState ${readyState})`, async () => {
+      // No seek of ours: the member is already where the room plays from, so
+      // the transition only presses play -- and on an element below
+      // HAVE_FUTURE_DATA that play() stays pending. The member's pause in that
+      // window is unready and inside the apply, and is still the member's.
+      const h = harness({ paused: true, positionS: 100 });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: true }, 0, 2);
+      await h.vt.advance(1000);
+      const p = h.player;
+      p.readyState = readyState;
+      let reject: ((e: unknown) => void) | null = null;
+      p.play = () => {
+        p.paused = false; p.plays++;
+        if (readyState >= 3) return Promise.resolve();
+        return new Promise<void>((_, rj) => { reject = rj; });
+      };
+      const pause = p.pause.bind(p);
+      p.pause = async () => {
+        await pause();
+        reject?.(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'));
+        reject = null;
+      };
+      const when = h.vt.now + OFFSET;
+      h.tr.deliver({
+        t: 'state', seq: 1, when, emittedAt: when,
+        anchor: { positionMs: 100_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+        by: 'other-1', kind: 'play',
+      });
+      await h.vt.advance(300);
+      assert.equal(p.paused, false);
+      assert.equal(p.seeks, 0);
+      await p.pause();                            // the member pauses
+      p.emit('pause');
+      await h.vt.advance(100);
+      assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+    });
+  }
 
   it('a seek of the engine\'s that the element clamps to its end is not sent', async () => {
     // A room past this member's end: the element lands on its duration, far
