@@ -1,7 +1,7 @@
 import type { ClientFrame } from '@videosync/core/engine/protocol.ts';
 import type { Transport, TransportHandlers } from '@videosync/core/engine/transport.ts';
 
-import { PORT_NAME } from './relay.ts';
+import { PORT_NAME, socketUrl } from './relay.ts';
 import type { FromWorker, ToWorker } from './relay.ts';
 
 /**
@@ -18,12 +18,18 @@ import type { FromWorker, ToWorker } from './relay.ts';
  * worth more than the measurement saying it does not happen (§10).
  */
 export class PortTransport implements Transport {
-  private readonly url: string;
+  private readonly server: string;
   private port: chrome.runtime.Port | null = null;
   private closing = false;
 
-  constructor(url: string) {
-    this.url = url;
+  /**
+   * `server` is the server URL, not the socket's: the worker builds that.
+   * Checked here as well so an unusable address fails in the join handler,
+   * where the panel reports it, instead of as a close from the worker.
+   */
+  constructor(server: string) {
+    if (!socketUrl(server)) throw new Error(`not an http(s) address: ${server}`);
+    this.server = server;
   }
 
   connect(h: TransportHandlers): void {
@@ -49,7 +55,7 @@ export class PortTransport implements Transport {
       // The worker went away mid-session. Unclean unless we asked for it.
       h.onClose(this.closing, chrome.runtime.lastError?.message ?? 'worker disconnected');
     });
-    this.post(port, { t: 'open', url: this.url });
+    this.post(port, { t: 'open', server: this.server });
   }
 
   send(f: ClientFrame): void {

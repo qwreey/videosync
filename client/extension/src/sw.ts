@@ -16,7 +16,7 @@
 import { fetchHttp, makeAuthFetch } from '@videosync/core/app/authfetch.ts';
 
 import { grantedOrigins, syncContentScripts } from './dynamic.ts';
-import { PORT_NAME } from './relay.ts';
+import { PORT_NAME, socketUrl } from './relay.ts';
 import type { FromWorker, SyncReply, ToWorker, WorkerRequest } from './relay.ts';
 import { idbTokens } from './tokens.ts';
 
@@ -29,7 +29,13 @@ chrome.runtime.onConnect.addListener((port) => {
     try { port.postMessage(m); } catch { /* the tab went away */ }
   };
 
-  const open = (url: string) => {
+  const open = (server: unknown) => {
+    // Only the server's own sync socket, built here (see `ToWorker`).
+    const url = socketUrl(server);
+    if (!url) {
+      post({ t: 'closed', clean: false, reason: 'bad server url' });
+      return;
+    }
     try {
       ws = new WebSocket(url);
     } catch (e) {
@@ -63,7 +69,7 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((m: ToWorker) => {
     switch (m.t) {
       case 'open':
-        open(m.url);
+        open(m.server);
         break;
       case 'send':
         if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(m.frame));
