@@ -77,8 +77,9 @@ export class FakeTransport implements Transport {
   }
 
   /** Behave like a server whose clock is `offsetMs` ahead and which is
-   *  infinitely close by. Real latency is the e2e test's job. */
-  autoAnswerTime(offsetMs: number): void { this.timeOffset = offsetMs; }
+   *  infinitely close by. Real latency is the e2e test's job. `null` stops
+   *  answering. */
+  autoAnswerTime(offsetMs: number | null): void { this.timeOffset = offsetMs; }
   close(): void { this.closed = true; }
 
   /** Pretend the socket opened. */

@@ -210,6 +210,12 @@ export interface EngineEvents {
    * follow the room no matter what the server does.
    */
   onAutoplayBlocked?(): void;
+  /**
+   * A refused autoplay no longer applies: the element was seen playing --
+   * started by a key on the site's player or a media key, which the overlay
+   * does not catch. The click-to-sync prompt can go.
+   */
+  onAutoplayUnblocked?(): void;
   onAnchor?(a: Anchor): void;
   /** The acquisition state changed. `fought` is worth telling the member. */
   onAcquisition?(s: AcquisitionState): void;
@@ -635,6 +641,8 @@ export class SyncEngine {
   private conformInFlight = false;
   /** The last time this member's element reached (or nearly reached) the room's media's end. */
   private lastFinish: { key: string; epoch: number; at: number } | null = null;
+  /** A continuation this member's hidden tab held back, until it is shown. See `maybeContinue`. */
+  private hiddenContinuation: { prev: string; key: string; finish: { key: string; at: number } } | null = null;
   /** Our next-episode continuation, until it is conformed and the room is started. */
   private continuing: { key: string; play: boolean; at: number } | null = null;
   /** A `welcome` has been applied in this engine's life: the next one is a reconnect. */
@@ -662,8 +670,11 @@ export class SyncEngine {
    * on the way there, so present-but-unready rather than absent.
    */
   private inTransit = false;
-  /** `activationActive()` at the last sample, and when it last rose with no input. */
-  private prevActivation = false;
+  /**
+   * `activationActive()` at the last sample (null before the first), and when
+   * it last rose with no input.
+   */
+  private prevActivation: boolean | null = null;
   private activationEdgeAt = -Infinity;
   /** What the last report said about acquiring, so a change is reported at once. */
   private lastAcquiringSent = false;
@@ -818,15 +829,42 @@ export class SyncEngine {
   private maybeContinue(prev: string, key: string): void {
     const f = this.lastFinish;
     this.lastFinish = null;
+    this.hiddenContinuation = null;
+    this.continueFrom(f, prev, key);
+  }
+
+  private continueFrom(f: { key: string; at: number } | null, prev: string, key: string): void {
     if (this.status !== 'joined' || !f || f.key !== prev || prev !== this.anchor.mediaKey) return;
     if (this.d.now() - f.at > CONTINUATION_WINDOW_MS) return;
     if (!key || !this.d.continues?.(prev, key)) return;
+    // Not from a hidden tab, as a room is not named from one: its media does
+    // not load, so it is never conformed and never sends the `play` below --
+    // and every member that lost the compare-and-set to it has dropped its
+    // own. The room sat paused at 0 on the next episode (review 4 C1). Sent
+    // when the tab is shown, if that is still within the window.
+    if (this.d.isHidden()) {
+      this.hiddenContinuation = { prev, key, finish: f };
+      return;
+    }
     // It lands paused at 0 -- the sender's own site may be seconds into the
     // new episode -- and the room is started once this member is conformed,
     // by a `play` the readiness gate holds for everyone still on the way.
     this.continuing = { key, play: !this.anchor.paused, at: this.d.now() };
     this.stats.continuations++;
     this.send('media', 0, { key, url: this.localMediaUrl }, prev);
+  }
+
+  /**
+   * Send the continuation a hidden tab held back, now that it is shown -- if
+   * the room is still where it was, and the finish is still recent enough to
+   * carry the room. The page is still on `c.key`: any navigation goes through
+   * `maybeContinue`, which drops a held continuation.
+   */
+  private continueWhenShown(): void {
+    const c = this.hiddenContinuation;
+    if (!c || this.d.isHidden()) return;
+    this.hiddenContinuation = null;
+    this.continueFrom(c.finish, c.prev, c.key);
   }
 
   /** Whether the acquisition states are in force. See `EngineDeps.gestures`. */
@@ -1539,6 +1577,21 @@ export class SyncEngine {
   }
 
   /**
+   * A refused autoplay is over once the element is seen playing. The overlay
+   * catches clicks, not keys: Space on the site's player or an OS media key
+   * starts the element with the page's own gesture, and the member stayed
+   * "blocked" -- unjudged, reported absent, its presses unsent -- until it
+   * clicked the overlay anyway or the room happened to move (review 4 N18).
+   * Before the detector runs, so a press made that way is classified like any.
+   */
+  private noticeUnblocked(state: PlayerState): void {
+    if (!this.autoplayBlocked || state.paused || state.ended) return;
+    this.autoplayBlocked = false;
+    this.gestureRetryPending = false;
+    this.ev.onAutoplayUnblocked?.();
+  }
+
+  /**
    * Retry a refused play from inside a user gesture.
    *
    * If the room is paused right now there is nothing to play, and the earlier
@@ -1647,13 +1700,19 @@ export class SyncEngine {
 
   /** One evaluation. Run by the ~10 Hz timer and by any DOM event. */
   private evaluate(): void {
+    // Sampled whatever the session is doing: the 참가 click activates the page
+    // for seconds, and a join or reconnect slower than the gesture window
+    // showed that activation to the first joined sample as a rise with no
+    // input behind it -- a media key (review 4 N3).
+    this.sampleActivation(this.d.now());
     if (this.status !== 'joined') return;
 
     const now = this.d.now();
     const state = this.d.adapter.readState();
-    this.sampleActivation(now);
+    this.noticeUnblocked(state);
 
     this.nameRoomIfUnnamed(state);
+    this.continueWhenShown();
     this.trackFinish(now, state);
     this.advanceAcquisition(now, state);
 
@@ -1671,6 +1730,15 @@ export class SyncEngine {
         this.stats.adoptions++;
         this.adoptLocalState(state);
       }
+    }
+    // A seeder pressed before its clock settled: the press ended acquiring and
+    // was left to the seed (`pressSeeds`), and `toSteady` put the seed off
+    // until the clock could schedule its acks. Nothing else ever ran it -- the
+    // press was never sent and the room was defended against its creator
+    // (review 4 N19). Retried here; `toSteady` itself decides whether the
+    // seed can go yet (the room's media, a settled clock).
+    if (this.gating() && this.acq.state === 'steady' && this.adoptFor !== null) {
+      this.toSteady(now, state);
     }
     this.sendOfflineChanges(now, state);
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
@@ -1838,12 +1906,19 @@ export class SyncEngine {
     return at >= this.acq.startedAt && now - at <= this.cfg.gestureWindowMs;
   }
 
-  /** A rise of `isActive` with no input behind it is a media key. */
+  /**
+   * A rise of `isActive` with no input behind it is a media key.
+   *
+   * The first sample is only a baseline: an activation already up when the
+   * engine starts was not seen rising, and is most likely the click that
+   * started it -- 방 만들기 builds the engine only once the room exists, which
+   * can be well past the gesture window.
+   */
   private sampleActivation(now: number): void {
     const g = this.d.gestures;
     if (!g) return;
     const act = g.activationActive() === true;
-    if (act && !this.prevActivation &&
+    if (act && this.prevActivation === false &&
       now - Math.max(g.lastInputAt(), g.lastIgnoredInputAt()) > this.cfg.gestureWindowMs) {
       this.activationEdgeAt = now;
     }
@@ -2014,7 +2089,8 @@ export class SyncEngine {
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === this.roomAnchor().paused || (!!applying && o.paused === applying.paused);
+      return o.paused === this.roomAnchor().paused ||
+        (!!applying && (o.paused === applying.paused || !!o.unready));
     }
     return true;
   }
@@ -2024,7 +2100,11 @@ export class SyncEngine {
     // While a transition is in flight, what it does to the player is not the
     // user's: its seek lands near its own target (the room may have moved on
     // since, so the two-diff test alone is not enough there), and its pause
-    // state is the one it was asked for. Anything else is still the user's.
+    // state is the one it was asked for. Anything else is still the user's --
+    // except a play state that changed while the element was unready: our
+    // seek is what made it unready, and a site reacting to that seek pauses
+    // the element under our play() (the AbortError in `tryPlay`). Left to the
+    // transition's rebaseline and the reconciler, as before review 4 N4.
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       if (!applying ||
@@ -2036,7 +2116,7 @@ export class SyncEngine {
       // Against where the room is going, not where it is: see `roomAnchor`.
       const room = this.roomAnchor();
       if (o.paused !== room.paused &&
-        (!applying || o.paused !== applying.paused)) {
+        (!applying || (o.paused !== applying.paused && !o.unready))) {
         if (o.paused && state.ended) {
           // The end of the media pauses the element, and it is nobody's
           // pause: sent, the first member to finish stops the room at its own

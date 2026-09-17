@@ -3,8 +3,12 @@ export type Observation =
   | { kind: 'idle' }
   /** A local user genuinely seeked. Broadcast it. */
   | { kind: 'seek'; positionS: number }
-  /** A local user genuinely pressed play/pause. Broadcast it. */
-  | { kind: 'playstate'; paused: boolean; positionS: number }
+  /**
+   * A local user genuinely pressed play/pause. Broadcast it. `unready`: seen
+   * while the element was not ready to play -- which our own seek leaves it
+   * in, so while a transition applies such a change is the transition's.
+   */
+  | { kind: 'playstate'; paused: boolean; positionS: number; unready?: boolean }
   /** Buffering. The room may wait for us; we are behind but present. */
   | { kind: 'stall' }
   /**

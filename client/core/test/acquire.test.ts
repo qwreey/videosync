@@ -55,6 +55,7 @@ function harness(o: Opts = {}) {
   const g = new FakeGestures(vt);
   const acq: string[] = [];
   const errors: string[] = [];
+  const unblocked: number[] = [];
   const tab = { hidden: false };
   const engine = new SyncEngine({
     adapter: o.adapter ? o.adapter(player) : player,
@@ -66,10 +67,11 @@ function harness(o: Opts = {}) {
   }, {
     onAcquisition: (s) => { acq.push(s); },
     onError: (c) => { errors.push(c); },
+    onAutoplayUnblocked: () => { unblocked.push(vt.now); },
   });
   let seq = 0;
   const h = {
-    vt, player, tr, engine, g, acq, errors, tab,
+    vt, player, tr, engine, g, acq, errors, unblocked, tab,
     cmds: () => tr.sentOf('cmd'),
     kinds: () => tr.sentOf('cmd').map((c) => c.kind),
     lastHb: () => tr.sentOf('hb').at(-1)!,
@@ -183,6 +185,64 @@ describe('a joiner whose site autoplays', () => {
     h.g.active = true;
     await h.siteAutoplay();
     assert.deepEqual(h.kinds(), []);
+  });
+
+  // The 참가 click activates the page for seconds. A join slower than the
+  // gesture window used to show that activation to the first joined sample as
+  // a rise with no input behind it -- a media key -- and the site's autoplay
+  // or resume right after went to the room (C1 again, review 4 N3).
+  for (const [what, act] of [
+    ['autoplay', async (h: H) => { await h.siteAutoplay(); }],
+    ['resume', async (h: H) => { h.player.positionS = 600; h.player.emit('seeked'); await h.vt.advance(20); }],
+  ] as const) {
+    it(`a panel click is not a media key when the welcome comes late (site ${what})`, async () => {
+      const h = harness({ player: { paused: true, positionS: 0 } });
+      h.tr.autoAnswerTime(OFFSET);
+      h.g.ignored = h.vt.now; // the 참가 click, on our own panel
+      h.g.active = true;
+      h.engine.start();
+      await h.vt.advance(800); // ticket + connect
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-1', seq: 0,
+        anchor: { positionMs: 30_000, atServerMs: OFFSET, paused: true, mediaKey: KEY },
+        members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+        serverMs: h.vt.now, mediaKey: KEY,
+      });
+      for (let t = 0; t < 400; t += 100) {
+        await h.vt.advance(100);
+        await act(h);
+      }
+      assert.deepEqual(h.kinds(), [], 'the site\'s move was sent as the member\'s');
+    });
+
+    it(`a click made long before the engine started is not a media key either (site ${what})`, async () => {
+      // 방 만들기 creates the room first; the engine is built when that answers.
+      const h = harness({ player: { paused: true, positionS: 0 } });
+      h.g.ignored = h.vt.now;
+      h.g.active = true;
+      await h.vt.advance(800);
+      h.engine.start();
+      await h.vt.advance(5);
+      await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+      await act(h);
+      assert.deepEqual(h.kinds(), [], 'the site\'s move was sent as the member\'s');
+    });
+  }
+
+  it('control: a media key pressed after a late welcome is still one', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.tr.autoAnswerTime(OFFSET);
+    h.g.ignored = h.vt.now;
+    h.g.active = true;
+    h.engine.start();
+    await h.vt.advance(800);
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    h.g.active = false; // the panel click's activation expires
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.gestureWindowMs + 200);
+    h.g.active = true; // MPRIS play
+    await h.siteAutoplay();
+    assert.deepEqual(h.kinds(), ['play']);
   });
 
   it('after the settle time the member is steady, and an ungestured play is sent as before', async () => {
@@ -510,6 +570,29 @@ describe('a reconnect', () => {
     assert.equal(h.player.paused, true);
     assert.deepEqual(h.kinds(), [], 'the member\'s own playing was sent to a room it had just rejoined');
   });
+
+  it('does not read a panel click made during the outage as a media key', async () => {
+    const h = harness({ player: { paused: true, positionS: 10 } });
+    await h.join({ mediaKey: 'laftel:/player/9/9', positionMs: 0, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.tr.drop();
+    await h.vt.advance(100);
+    h.g.ignored = h.vt.now; // a click on the panel while it says "reconnecting"
+    h.g.active = true;
+    await h.vt.advance(900);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-2', seq: 3,
+      anchor: { positionMs: 42_000, atServerMs: h.serverNow(), paused: true, mediaKey: KEY },
+      members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    for (let t = 0; t < 400; t += 100) {
+      await h.vt.advance(100);
+      await h.siteAutoplay();
+    }
+    assert.deepEqual(h.kinds(), [], 'the site\'s autoplay was sent as the member\'s');
+  });
 });
 
 describe('the creator', () => {
@@ -546,6 +629,58 @@ describe('the creator', () => {
     assert.deepEqual(h.kinds(), []);
     assert.ok(Math.abs(h.player.positionS - 50) < 0.3, `left at ${h.player.positionS}`);
   });
+});
+
+describe('the creator, pressing before its clock has settled', () => {
+  // The press ended acquiring and was left to the seed, and the seed waited
+  // for the clock -- in a `toSteady` that never ran again. The creator sent
+  // nothing and was put back to paused@0 (review 4 N19).
+  async function pressedEarly(pressBeforeClock: boolean) {
+    const h = harness({ player: { paused: true, positionS: 500 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.engine.start();
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 0, atServerMs: 0, paused: true, mediaKey: KEY },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    const answer = () => {
+      for (const f of h.tr.sentOf('time')) {
+        h.tr.deliver({ t: 'time.reply', t0: f.t0, tRecv: f.t0 + OFFSET, tSend: f.t0 + OFFSET });
+      }
+      h.tr.autoAnswerTime(OFFSET);
+    };
+    await h.vt.advance(300); // the probes are out; no replies yet
+    if (!pressBeforeClock) {
+      answer();
+      await h.vt.advance(100);
+    }
+    assert.equal(h.engine.acquisition, pressBeforeClock ? 'detached' : 'guarded');
+    h.g.press();
+    h.player.paused = false;
+    h.player.emit('play');
+    await h.vt.advance(50);
+    if (pressBeforeClock) answer();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    // The server takes whatever was sent.
+    for (const c of h.cmds()) {
+      await h.ack(c, { positionMs: c.positionMs, paused: c.kind !== 'play' });
+    }
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 2000);
+    return h;
+  }
+
+  for (const early of [true, false]) {
+    it(`${early ? '' : 'control: after it settled, '}seeds the room from its press`, async () => {
+      const h = await pressedEarly(early);
+      assert.deepEqual(h.kinds(), ['seek', 'play']);
+      assert.ok(Math.abs(h.cmds()[0]!.positionMs - 500_000) < 2000, `seeded at ${h.cmds()[0]!.positionMs}`);
+      assert.equal(h.engine.seedsRoom, false);
+      assert.equal(h.engine.stats.reconciles, 0, 'the room was defended against its own creator');
+      assert.ok(h.player.positionS > 499 && !h.player.paused, `left at ${h.player.positionS}, paused ${h.player.paused}`);
+    });
+  }
 });
 
 describe('the creator, moved while it settles', () => {
@@ -726,7 +861,7 @@ describe('gesture evidence from the page', () => {
 });
 
 describe('the next episode', () => {
-  async function finishThenNavigate(o: Opts & { ended?: boolean; to?: string } = {}) {
+  async function finishThenNavigate(o: Opts & { ended?: boolean; to?: string; hidden?: boolean } = {}) {
     const h = harness({ continues: (a, b) => a === KEY && b === NEXT, ...o,
       player: { paused: false, positionS: 1399, ...o.player } });
     await h.join({ positionMs: 1_399_000, atServerMs: OFFSET, paused: false });
@@ -737,6 +872,8 @@ describe('the next episode', () => {
       h.player.ended = true;
       h.player.emit('pause');
     }
+    // A background tab that has made a sound keeps playing to the end.
+    if (o.hidden) h.tab.hidden = true;
     await h.vt.advance(5500); // the site's countdown
     h.engine.setLocalMediaKey(o.to ?? NEXT, 'https://laftel.net/player/1/2');
     h.player.ended = false;
@@ -769,6 +906,50 @@ describe('the next episode', () => {
     await h.vt.advance(2000);
     assert.deepEqual(h.kinds(), ['media']);
     assert.equal(h.player.paused, true);
+  });
+
+  // A hidden tab cannot start what it moves the room onto: its media does not
+  // load, so it is never conformed and never sends the `play`, and every member
+  // that lost the compare-and-set to it has dropped its own (review 4 C1).
+  it('is not moved on from a hidden tab, but is once the tab is shown in time', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    h.player.readyState = 0; // media does not load in a hidden tab
+    await h.vt.advance(3000);
+    assert.deepEqual(h.kinds(), [], 'a hidden tab moved the room on, and nothing will start it');
+    h.tab.hidden = false;
+    h.player.readyState = 4;
+    await h.vt.advance(200);
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    assert.equal(media.length, 1);
+    assert.deepEqual([media[0]!.mediaKey, media[0]!.ifMediaKey], [NEXT, KEY]);
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
+  it('a tab shown only after the continuation window keeps the button', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    await h.vt.advance(20_000);
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), []);
+  });
+
+  it('a tab that navigated on while hidden does not move the room when shown', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    h.engine.setLocalMediaKey('laftel:/player/9/9', 'https://laftel.net/player/9/9');
+    await h.vt.advance(100);
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the held continuation was sent from another page');
+  });
+
+  it('a tab shown after somebody else moved the room on follows it', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    await h.state({ mediaKey: NEXT, positionMs: 0, paused: true }, 'media');
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), []);
   });
 
   it('control: a provider that does not continue keeps the button', async () => {
@@ -1421,5 +1602,236 @@ describe('a hidden tab on the room\'s media', () => {
     h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
     await h.vt.advance(50);
     assert.equal(h.player.seeks, seeks + 1);
+  });
+});
+
+describe('a member whose autoplay was refused', () => {
+  // The overlay takes clicks, not keys: Space on the site's player or an OS
+  // media key still starts the element. That member used to stay "blocked" --
+  // unjudged, reported absent, its own presses unsent -- until it clicked the
+  // overlay or the room moved (review 4 N18).
+  const PLAYING = { positionMs: 100_000, atServerMs: OFFSET, paused: false };
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    async function blocked() {
+      const h = harness({ gestures, player: { paused: true, positionS: 0, autoplayBlocked: true } });
+      await h.join(PLAYING);
+      // Without gesture evidence the reconciler is what first presses play.
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1500);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(h.lastHb().suspended, true);
+      return h;
+    }
+    /** Space on the site's own player: the page has its gesture now. */
+    async function spacePlays(h: H) {
+      h.g.press();
+      h.player.autoplayBlocked = false;
+      h.player.paused = false;
+      h.player.emit('play');
+      await h.vt.advance(1500);
+    }
+
+    it(`is no longer blocked once it plays by the keyboard, and is judged again${tag}`, async () => {
+      const h = await blocked();
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      assert.equal(h.unblocked.length, 1, 'the app was not told to take the overlay down');
+      assert.equal(h.lastHb().suspended, false, 'a playing member is still reported absent');
+      assert.deepEqual(h.kinds(), [], 'a play that agrees with the room was sent');
+    });
+
+    it(`sends its press when the room was paused meanwhile${tag}`, async () => {
+      const h = await blocked();
+      await h.state({ positionMs: 101_000, paused: true }, 'pause');
+      await h.vt.advance(500);
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      assert.deepEqual(h.kinds(), ['play']);
+    });
+
+    // The click came with no session to sync to, so it was held for the
+    // first evaluation that can aim. The member then started playing by key:
+    // the click is moot, and must not press play later on its behalf. Only
+    // without gesture evidence: a gated member is still detached after the
+    // reconnect, and the room's play never reaches its player.
+    if (!gestures) it('forgets a click to sync made during an outage once it plays by key', async () => {
+      const h = await blocked();
+      h.tr.drop();
+      await h.vt.advance(100);
+      await h.engine.resumeAfterGesture(); // the overlay, clicked while reconnecting
+      h.tr.autoAnswerTime(null);
+      await h.vt.advance(900);
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-2', seq: 3,
+        anchor: { ...PLAYING, atServerMs: h.serverNow() },
+        members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+        serverMs: h.vt.now, mediaKey: KEY,
+      });
+      await h.vt.advance(50);
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      // Refused again (a player that lost its credit), by the room's next play.
+      h.player.autoplayBlocked = true;
+      let attempts = 0;
+      const play = h.player.play.bind(h.player);
+      h.player.play = () => { attempts++; return play(); };
+      for (const f of h.tr.sentOf('time')) {
+        h.tr.deliver({ t: 'time.reply', t0: f.t0, tRecv: f.t0 + OFFSET, tSend: f.t0 + OFFSET });
+      }
+      h.tr.autoAnswerTime(OFFSET);
+      for (const [seq, paused] of [[4, true], [5, false]] as const) {
+        const t = h.serverNow();
+        h.tr.deliver({
+          t: 'state', seq, when: t, emittedAt: t, by: 'o', kind: paused ? 'pause' : 'play',
+          anchor: { positionMs: 110_000, atServerMs: t, paused, mediaKey: KEY },
+        });
+        await h.vt.advance(10);
+      }
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs - 500);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(attempts, 1, 'the old click pressed play again');
+    });
+
+    it(`control: stays blocked while its element stays paused${tag}`, async () => {
+      const h = await blocked();
+      await h.vt.advance(10_000);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(h.unblocked.length, 0);
+      assert.equal(h.lastHb().suspended, true);
+    });
+  }
+});
+
+describe('a press made while the element is unready', () => {
+  // The detector never compared play state while the element looked stalled,
+  // so the press was not sent, and `reconcileAfterMs` later the reconciler
+  // put the member back where the room was (review 4 N4).
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    it(`a pause during a buffering stall is sent, and not undone${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: false, positionS: 100 } });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+      h.player.stall();
+      await h.vt.advance(300);
+      h.g.press();
+      h.player.paused = true;
+      h.player.emit('pause');
+      await h.vt.advance(50);
+      for (const c of h.cmds()) await h.ack(c, { positionMs: c.positionMs, paused: true });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+      assert.deepEqual(h.kinds(), ['pause']);
+      assert.equal(h.player.paused, true, 'the reconciler started the member again');
+    });
+
+    it(`a play at readyState 2 in a paused room is sent${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: true, positionS: 30 } });
+      h.player.readyState = 2;
+      await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 6000); // conformed, and steady
+      assert.equal(h.engine.acquisition, 'steady');
+      h.g.press();
+      h.player.paused = false;
+      h.player.emit('play');
+      await h.vt.advance(50);
+      h.player.readyState = 4;
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+      assert.deepEqual(h.kinds(), ['play']);
+      assert.equal(h.engine.stats.reconciles, 0);
+    });
+  }
+
+  it('control: a stall with no press sends nothing', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    h.player.stall();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+    h.player.recover();
+    await h.vt.advance(1000);
+    assert.deepEqual(h.kinds(), []);
+  });
+});
+
+describe('a site that pauses the element right after our own seek', () => {
+  // Our seek leaves the element unready, and a site's own logic reacting to it
+  // can pause the element while our play() is pending (the AbortError in
+  // tryPlay). Seen while the transition is applying, that pause is ours, not
+  // the member's: sent, it paused the whole room (review 4 fix check).
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    it(`does not pause the room, and is put back${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: false, positionS: 100 } });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+      assert.equal(h.engine.acquisition, 'steady');
+      const p = h.player;
+      let fights = 1;
+      const seekTo = p.seekTo.bind(p);
+      const play = p.play.bind(p);
+      p.seekTo = async (s: number) => { await seekTo(s); if (fights > 0) p.readyState = 1; };
+      p.play = async () => {
+        if (fights-- <= 0) { p.readyState = 4; return play(); }
+        p.paused = true;
+        p.emit('pause');
+        throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+      };
+      await h.state({ positionMs: 400_000, paused: false }, 'seek');
+      await h.vt.advance(300);
+      p.readyState = 4;
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+      assert.deepEqual(h.kinds(), [], 'the site\'s pause was sent to the room');
+      assert.equal(p.paused, false, 'the member was left paused in a playing room');
+      assert.equal(h.engine.stats.playFailures, 1);
+    });
+  }
+
+  it('is not a press that ends acquiring, even right after a gesture', async () => {
+    // The same pause during the conform step: it is the conform's, so a
+    // recent click does not make it the member's and end acquiring on it.
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    const p = h.player;
+    const seekTo = p.seekTo.bind(p);
+    p.seekTo = async (s: number) => { await seekTo(s); p.readyState = 1; };
+    p.play = async () => {
+      p.paused = false;
+      p.emit('play');
+      p.paused = true;
+      p.emit('pause');
+      throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+    };
+    h.tr.autoAnswerTime(OFFSET);
+    h.engine.start();
+    h.g.press();
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 30_000, atServerMs: OFFSET, paused: false, mediaKey: KEY },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now, mediaKey: KEY,
+    });
+    await h.vt.advance(200);
+    assert.ok(p.seeks >= 1, 'never conformed');
+    assert.equal(h.engine.stats.playFailures, 1);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.engine.stats.gesturedIntents, 0, 'the site\'s pause was taken for the member\'s press');
+    assert.notEqual(h.engine.acquisition, 'steady');
+  });
+
+  it('control: the same pause pressed during a buffering stall is sent', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    h.player.readyState = 1;
+    await h.vt.advance(300);
+    h.g.press();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['pause']);
   });
 });

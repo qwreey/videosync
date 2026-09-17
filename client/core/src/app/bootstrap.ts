@@ -926,6 +926,8 @@ export function start(p: Platform): App {
         }
       },
       onAutoplayBlocked: () => panel.showGesturePrompt(document),
+      // Started by a key or a media key, which the prompt does not catch.
+      onAutoplayUnblocked: () => panel.hideGesturePrompt(),
       onAcquisition: (a) => {
         // The site keeps overriding the room, and the engine stopped fighting
         // it. Nothing is synced until the member presses something.

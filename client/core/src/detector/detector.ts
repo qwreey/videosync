@@ -192,6 +192,21 @@ export class SeekDetector {
         this.stallDetections++;
         observation = { kind: 'stall' };
       }
+      // Play state is compared here too. A press made while the element is
+      // unready -- a pause during buffering, a play before the first ready
+      // sample after `reset()` -- was otherwise never reported, and the
+      // reconciler put the member back over it (review 4 N4). A seek is
+      // reported first, and the baseline is left alone so that the next
+      // sample reports a play state that changed with it: a seek drops
+      // readyState, so "pause, then seek" is one unready sample. Also left
+      // alone for the browser's background pause, which can arrive before
+      // readiness does: `browserPaused` only knows it at readyState 3.
+      if (!seeked && !(s.paused && this.isHidden() && !this.everAudible)) {
+        if (this.lastPaused !== null && this.lastPaused !== s.paused) {
+          observation = { kind: 'playstate', paused: s.paused, positionS: s.positionS, unready: true };
+        }
+        this.lastPaused = s.paused;
+      }
       this.lastKnownPos = posMs;
       // Kept for the resume below. A frozen *reading* is not always frozen
       // playback: Firefox + Widevine holds currentTime for ~1 s after a seek,

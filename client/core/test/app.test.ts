@@ -61,7 +61,7 @@ interface H {
   mediaNotice(): { text: string; shown: boolean };
   memberTags(): string[];
   join(): void;
-  welcome(anchor: { mediaKey: string; mediaUrl?: string }, members?: string[]): void;
+  welcome(anchor: { mediaKey: string; mediaUrl?: string; paused?: boolean; atServerMs?: number }, members?: string[]): void;
   tick(ms: number): Promise<void>;
 }
 
@@ -1284,6 +1284,33 @@ describe('provider descriptors on the page', () => {
     const plain = harness('https://video.example/watch/a');
     await addVideo(plain, 'aside');
     assert.ok(plain.app.api.adapter.current);
+  });
+
+  it('takes the click-to-sync prompt down once the member starts playing by key', async () => {
+    // Review 4 N18: the prompt catches clicks, not Space or a media key.
+    const h = harness('https://video.example/watch/a');
+    const gesture = () => [...h.root().shadow!.walk()].find((e) => e.className === 'gesture');
+    const v = await addVideo(h);
+    let refuse = true;
+    Object.assign(v, {
+      play: () => {
+        if (refuse) return Promise.reject(Object.assign(new Error('no gesture'), { name: 'NotAllowedError' }));
+        v.paused = false;
+        v.dispatchEvent({ type: 'play' });
+        return Promise.resolve();
+      },
+      pause: () => { v.paused = true; v.dispatchEvent({ type: 'pause' }); },
+    });
+    h.join();
+    h.tr().autoAnswerTime(0);
+    h.welcome({ mediaKey: 'video.example:/watch/a', atServerMs: performance.now(), paused: false }, ['me', 'o']);
+    await h.tick(2000);
+    assert.ok(gesture(), 'autoplay was refused, and nothing asked for a click');
+    refuse = false;
+    v.paused = false; // the site's own player, started by Space
+    v.dispatchEvent({ type: 'play' });
+    await h.tick(200);
+    assert.equal(gesture(), undefined, 'the prompt stayed over a member who is playing');
   });
 
   it('says so, and applies neither, when two descriptors tie for the site', async () => {
