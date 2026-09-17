@@ -16,6 +16,7 @@ import { chromeManifest, firefoxManifest } from './manifest.mjs';
 // `mise run test` names this file alone; the shim's other no-browser tests
 // run with it, so each is imported here (`npm test` runs the same file).
 import './test/grants.test.mjs';
+import './test/options.test.mjs';
 import './test/sw.test.mjs';
 import './test/tokens.test.mjs';
 

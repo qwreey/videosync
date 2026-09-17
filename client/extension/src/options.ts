@@ -312,11 +312,7 @@ function offerCard(e: IndexEntry): HTMLElement {
 
 function serverSection(): HTMLElement {
   const input = h('input', { type: 'url', placeholder: 'https://sync.example', value: serverUrl });
-  input.addEventListener('change', () => { serverUrl = input.value.trim(); index = null; reviewing = null; render(); });
-  const origin = serverOrigin(serverUrl);
   const auto = h('input', { type: 'checkbox' });
-  auto.checked = state.servers[origin]?.autoAdopt === true;
-  auto.disabled = !origin;
   auto.addEventListener('change', async () => {
     state = setAutoAdopt(state, serverUrl, auto.checked);
     await saveState(state);
@@ -324,18 +320,39 @@ function serverSection(): HTMLElement {
       ? '이 서버의 업데이트 중 범위를 넓히지 않는 것은 묻지 않고 적용해요.'
       : '이 서버의 업데이트는 모두 물어볼게요.', 'ok');
   });
-  const updates = index ? pendingUpdates(state, serverUrl, index) : [];
+  const list = h('div', {});
+  /** Everything here that depends on which server is typed in. */
+  const fill = () => {
+    const origin = serverOrigin(serverUrl);
+    auto.checked = state.servers[origin]?.autoAdopt === true;
+    auto.disabled = !origin;
+    list.textContent = '';
+    if (index === null) return;
+    const updates = pendingUpdates(state, serverUrl, index);
+    list.append(index.length === 0
+      ? h('p', { class: 'muted' }, '이 서버는 제공하는 설명이 없어요.')
+      : h('div', {},
+        updates.length ? h('p', {}, `업데이트 ${updates.length}개가 있어요.`) : null,
+        ...index.map(offerCard)));
+  };
+  // Updated in place, never with render(): `change` fires on the blur that
+  // pressing 불러오기 or the checkbox causes, between mousedown and mouseup,
+  // and a browser clicks only an element both landed on. Rebuilding the
+  // section there swallowed that first click.
+  input.addEventListener('change', () => {
+    serverUrl = input.value.trim();
+    index = null;
+    reviewing = null;
+    fill();
+  });
+  fill();
   return h('section', {},
     h('h2', {}, '서버가 제공하는 설명'),
     h('p', { class: 'muted' }, '서버의 설명은 여기서 적용하기 전까지 쓰이지 않아요. 적용하면 그 파일의 해시로 고정되고, ' +
       '서버에서 바뀌면 다시 물어봐요. 사이트·주소·경로 범위를 넓히는 변경은 자동 적용에서도 항상 물어봐요.'),
     h('div', { class: 'row' }, input, h('button', { onclick: () => { serverUrl = input.value.trim(); void loadIndex(); } }, '불러오기')),
     h('div', { class: 'row' }, h('label', { class: 'inline' }, auto, '이 서버에서 범위를 넓히지 않는 업데이트는 자동 적용')),
-    index === null ? null : index.length === 0
-      ? h('p', { class: 'muted' }, '이 서버는 제공하는 설명이 없어요.')
-      : h('div', {},
-        updates.length ? h('p', {}, `업데이트 ${updates.length}개가 있어요.`) : null,
-        ...index.map(offerCard)));
+    list);
 }
 
 function render(): void {
