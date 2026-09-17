@@ -131,6 +131,25 @@ describe('descriptor validation (shared vectors)', () => {
     assert.ok(controls >= 10, 'the controls did not load');
   });
 
+  it('refuses :has( however the selector spells it', () => {
+    // CSS decodes escapes and drops comments before it sees a function
+    // token, so each of these is :has( to the engine. Not a shared vector:
+    // the Go port still checks the literal text.
+    const withSel = (sel: string) => compileDescriptor(build({ set: { video: { include: [sel] } } }));
+    for (const sel of ['*:\\has(* *) video', 'div:h\\61s(video)', 'div:\\68 as(video)', 'div:\\000068as(video)',
+      'div:H\\41S(video)', 'div:/**/has(video)']) {
+      const r = withSel(sel);
+      assert.equal(r.ok, false, `${sel} accepted`);
+      assert.match(r.ok ? '' : r.errors.join('; '), /:has\(/, sel);
+    }
+    // Controls: escapes are ordinary (Tailwind class names need them), and
+    // an escaped colon or parenthesis is not a pseudo-class.
+    for (const sel of ['.md\\:hidden video', '#player video', 'div.has\\(x\\) video', 'div:is(.has) video']) {
+      const r = withSel(sel);
+      assert.ok(r.ok, `${sel}: ${r.ok ? '' : r.errors.join('; ')}`);
+    }
+  });
+
   it('refuses text over 16 KiB before parsing it', () => {
     const d = build({ set: { notes: 'x'.repeat(2000) } });
     const text = JSON.stringify(d, null, 2) + ' '.repeat(16 * 1024);
