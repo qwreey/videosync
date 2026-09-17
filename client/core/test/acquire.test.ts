@@ -1650,3 +1650,55 @@ describe('a member whose autoplay was refused', () => {
     });
   }
 });
+
+describe('a press made while the element is unready', () => {
+  // The detector never compared play state while the element looked stalled,
+  // so the press was not sent, and `reconcileAfterMs` later the reconciler
+  // put the member back where the room was (review 4 N4).
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    it(`a pause during a buffering stall is sent, and not undone${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: false, positionS: 100 } });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+      h.player.stall();
+      await h.vt.advance(300);
+      h.g.press();
+      h.player.paused = true;
+      h.player.emit('pause');
+      await h.vt.advance(50);
+      for (const c of h.cmds()) await h.ack(c, { positionMs: c.positionMs, paused: true });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+      assert.deepEqual(h.kinds(), ['pause']);
+      assert.equal(h.player.paused, true, 'the reconciler started the member again');
+    });
+
+    it(`a play at readyState 2 in a paused room is sent${tag}`, async () => {
+      const h = harness({ gestures, player: { paused: true, positionS: 30 } });
+      h.player.readyState = 2;
+      await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 6000); // conformed, and steady
+      assert.equal(h.engine.acquisition, 'steady');
+      h.g.press();
+      h.player.paused = false;
+      h.player.emit('play');
+      await h.vt.advance(50);
+      h.player.readyState = 4;
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+      assert.deepEqual(h.kinds(), ['play']);
+      assert.equal(h.engine.stats.reconciles, 0);
+    });
+  }
+
+  it('control: a stall with no press sends nothing', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    h.player.stall();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 200);
+    h.player.recover();
+    await h.vt.advance(1000);
+    assert.deepEqual(h.kinds(), []);
+  });
+});

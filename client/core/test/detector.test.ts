@@ -460,6 +460,59 @@ describe('SeekDetector', () => {
     }
   });
 
+  // Review 4 N4: the stall branch never looked at play state, so a press
+  // made while the element was unready was never reported -- and the
+  // reconciler then undid it.
+  test('a pause pressed while buffering is reported, once', () => {
+    const d = new SeekDetector(visible);
+    const kinds = run(d, [
+      ...Array.from({ length: 10 }, (_, i) => ({ positionS: 10 + i * 0.1 })),
+      ...Array.from({ length: 5 }, () => ({ positionS: 11, readyState: 2, bufferedAheadS: 0 })),
+      ...Array.from({ length: 30 }, () => ({ positionS: 11, readyState: 2, bufferedAheadS: 0, paused: true })),
+      ...Array.from({ length: 10 }, () => ({ positionS: 11, paused: true })),
+    ]);
+    assert.equal(kinds.filter((k) => k === 'playstate').length, 1, `kinds: ${kinds.join(' ')}`);
+    assert.equal(kinds.indexOf('playstate'), 15, 'reported when pressed, not once the element was ready again');
+    assert.equal(d.seekDetections, 0);
+  });
+
+  test('a play pressed before the element was ever ready is reported', () => {
+    // After reset() -- a reconnect, a new media epoch -- there is no play
+    // state to compare with until a sample sets one.
+    const d = new SeekDetector(visible);
+    d.reset();
+    const kinds = run(d, [
+      ...Array.from({ length: 5 }, () => ({ positionS: 30, paused: true, readyState: 1, bufferedAheadS: 0 })),
+      ...Array.from({ length: 5 }, () => ({ positionS: 30, readyState: 2, bufferedAheadS: 0 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ positionS: 30 + i * 0.1 })),
+    ]);
+    assert.deepEqual(kinds.filter((k) => k === 'playstate').length, 1, `kinds: ${kinds.join(' ')}`);
+    assert.equal(kinds.indexOf('playstate'), 5);
+    assert.equal(d.seekDetections, 0);
+  });
+
+  test('control: the first sample after reset() is a baseline, unready or not', () => {
+    for (const readyState of [1, 4]) {
+      const d = new SeekDetector(visible);
+      d.reset();
+      const kinds = run(d, Array.from({ length: 5 }, () => ({ positionS: 30, paused: true, readyState })));
+      assert.ok(!kinds.includes('playstate'), `readyState ${readyState}: ${kinds.join(' ')}`);
+    }
+  });
+
+  test('a buffering hidden tab that never made a sound is not reported as pausing', () => {
+    // The browser's background pause, arriving while the element is unready:
+    // it is still nobody's pause.
+    const d = new SeekDetector(hidden);
+    const kinds = run(d, [
+      ...Array.from({ length: 5 }, (_, i) => ({ positionS: 10 + i * 0.1, muted: true })),
+      ...Array.from({ length: 5 }, () => ({ positionS: 10.5, muted: true, readyState: 2, bufferedAheadS: 0 })),
+      ...Array.from({ length: 10 }, () => ({ positionS: 10.5, muted: true, paused: true, readyState: 2, bufferedAheadS: 0 })),
+      ...Array.from({ length: 10 }, () => ({ positionS: 10.5, muted: true, paused: true })),
+    ]);
+    assert.ok(!kinds.includes('playstate'), `kinds: ${kinds.join(' ')}`);
+  });
+
   test('slope measures the rate error and is immune to a constant offset', () => {
     const d = new SeekDetector(visible);
     // The element runs 1% slow: residual grows by 10 ms per second. A constant
