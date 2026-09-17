@@ -183,17 +183,32 @@ func TestAllowedOriginsAreTrimmedAndBlanksDropped(t *testing.T) {
 }
 
 // Only "*" and "<extension scheme>://*" are patterns. Anything else with a
-// star would be compared literally and match nothing, refusing what the
-// operator meant to admit with no word at startup.
-func TestAllowedOriginsRefuseAPatternThatMatchesNothing(t *testing.T) {
+// star is compared literally and matches nothing. Such a value used to start
+// the server, so it still does -- refusing to start would break a config that
+// ran yesterday -- but it says so, and the entry still admits nothing: a list
+// of only such entries restricts, it never widens to "any".
+func TestAllowedOriginsWarnAboutAPatternThatMatchesNothing(t *testing.T) {
 	for _, bad := range []string{"https://*.example.com", "https://*", "*.example.com"} {
-		if _, err := parseOrigins("https://laftel.net, " + bad); err == nil {
-			t.Errorf("%q was accepted", bad)
+		allowed, err := parseOrigins("https://laftel.net, " + bad)
+		if err != nil {
+			t.Errorf("%q: %v", bad, err)
+			continue
+		}
+		if n := strings.Join(originsNotes(allowed), "\n"); !strings.Contains(n, bad) {
+			t.Errorf("%q: no warning names it (%q)", bad, n)
+		}
+		only, err := parseOrigins(bad)
+		if err != nil || len(only) == 0 {
+			t.Errorf("%q alone = %q, %v; want a list that admits nothing", bad, only, err)
 		}
 	}
 	for _, good := range []string{"*", "moz-extension://*", "chrome-extension://*", "safari-web-extension://*"} {
-		if _, err := parseOrigins("https://laftel.net, " + good); err != nil {
+		allowed, err := parseOrigins("https://laftel.net, " + good)
+		if err != nil {
 			t.Errorf("%q: %v", good, err)
+		}
+		if n := strings.Join(originsNotes(allowed), "\n"); strings.Contains(n, good) {
+			t.Errorf("%q: warned about a real pattern (%q)", good, n)
 		}
 	}
 }
@@ -214,8 +229,8 @@ func TestAnAllowlistWithoutExtensionsSaysSo(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := originsNote(allowed) != ""; got != want {
-			t.Errorf("%q: warned = %v, want %v (%q)", list, got, want, originsNote(allowed))
+		if got := len(originsNotes(allowed)) > 0; got != want {
+			t.Errorf("%q: warned = %v, want %v (%q)", list, got, want, originsNotes(allowed))
 		}
 	}
 }

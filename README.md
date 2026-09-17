@@ -164,7 +164,13 @@ device signs in once.
   chrome-extension://*, moz-extension://*"` (a Chrome extension may be listed by
   its id instead; a Firefox one cannot, its origin differs per install). A list
   of sites alone locks out every extension user while userscript users work,
-  and the server warns at startup when it is started that way.
+  and the server warns at startup when it is started that way. The only
+  patterns are `*` and `<extension scheme>://*` (`chrome-extension`,
+  `moz-extension`, `safari-web-extension`). **Changed:** a list that already
+  named `chrome-extension://*` used to match only that literal string, so
+  admitted no extension; it now admits every extension of that browser. Any
+  other star (`https://*.example.com`) still matches nothing — the server starts
+  and warns about the entry; list each site exactly.
 
 The design, and what is still unmeasured, is in `docs/design/auth.md`.
 
