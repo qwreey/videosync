@@ -436,9 +436,13 @@ export class Provider {
    */
   continues(prev: string, next: string): boolean {
     const pre = `${this.keyPrefix}:`;
-    if (!prev.startsWith(pre) || !next.startsWith(pre) || prev === next) return false;
-    const a = prev.slice(pre.length);
-    const b = next.slice(pre.length);
+    // Judged as Go and the wire read them: a lone surrogate is U+FFFD (N21),
+    // so keys that differ only there are the same key.
+    const p = wellFormed(prev) as string;
+    const n = wellFormed(next) as string;
+    if (!p.startsWith(pre) || !n.startsWith(pre) || p === n) return false;
+    const a = p.slice(pre.length);
+    const b = n.slice(pre.length);
     for (const c of this.cont) {
       const ca = matchBody(c.from, a);
       const cb = ca && matchBody(c.to, b);
@@ -456,15 +460,31 @@ export class Provider {
  * segment, but without percent-decoding (the body is already decoded text).
  */
 function matchBody(t: PathTemplate, body: string): Captures | null {
-  // A lone surrogate cannot be encoded (encodeURIComponent throws, and
-  // parseDescriptor would throw rather than refuse). Go's JSON decoder reads
-  // the same escape as U+FFFD, so read it that way too: both ports then
-  // judge the same text.
-  const wellFormed = body.replace(LONE_SURROGATE, '\uFFFD');
-  return matchPath(t, wellFormed.split('/').map((s) => encodeURIComponent(s)).join('/'));
+  // The body is well-formed (`continues` saw to it): encodeURIComponent
+  // throws on a lone surrogate, and parseDescriptor would throw rather than
+  // refuse.
+  return matchPath(t, body.split('/').map((s) => encodeURIComponent(s)).join('/'));
 }
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * `v` with every lone surrogate, in values and names alike, read as U+FFFD
+ * (N21). That is what Go's JSON decoder does to the whole file, and what a
+ * key becomes once it crosses the hub: compared raw, a template and an
+ * example differing only there passed on one port and not the other, and a
+ * key minted from one never came back equal to the member's own.
+ */
+function wellFormed(v: unknown): unknown {
+  if (typeof v === 'string') return v.replace(LONE_SURROGATE, '\uFFFD');
+  if (Array.isArray(v)) return v.map(wellFormed);
+  if (typeof v === 'object' && v !== null) {
+    // fromEntries defines a `__proto__` name as data, as JSON.parse does;
+    // assigning it would set the prototype and hide an unknown field.
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [wellFormed(k), wellFormed(x)]));
+  }
+  return v;
+}
 
 function wrap<T>(where: string, fn: () => T): T {
   try {
@@ -515,7 +535,8 @@ export type CompileResult =
  * Validate a parsed descriptor, compile it, and run its examples. Everything
  * that fails is reported, not just the first thing.
  */
-export function compileDescriptor(v: unknown): CompileResult {
+export function compileDescriptor(raw: unknown): CompileResult {
+  const v = wellFormed(raw);
   const p = new Problems();
   checkStructure(v, p);
   if (p.list.length) return { ok: false, errors: p.list };

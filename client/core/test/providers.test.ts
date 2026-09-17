@@ -178,6 +178,30 @@ describe('descriptor validation (shared vectors)', () => {
     assert.equal(parseDescriptor(JSON.stringify(d)).ok, true);
   });
 
+  it('reads a lone surrogate as U+FFFD everywhere, as the Go port and the wire do', () => {
+    // N21: Go's JSON decoder turns every lone-surrogate escape into U+FFFD,
+    // and so does the hub when a key crosses it. A key minted from a raw
+    // surrogate never came back equal to the member's own.
+    const text = JSON.stringify(build({ set: {
+      identity: [{ path: '/watch/{id}', key: '/watch/\ud800{id}', watch: 'https://video.example/watch/{id}' }],
+      examples: [{ url: 'https://video.example/watch/abc', key: 'example:/watch/\ud800abc' }],
+    } }));
+    const r = parseDescriptor(text);
+    assert.ok(r.ok, r.ok ? '' : r.errors.join('; '));
+    const key = r.provider.keyFor(new URL('https://video.example/watch/abc'))!;
+    assert.equal(key, 'example:/watch/\uFFFDabc');
+    assert.equal(key.isWellFormed(), true);
+    assert.equal(r.provider.d.examples.every((e) => !('key' in e) || e.key === null || e.key.isWellFormed()), true);
+    // Keys handed in at run time are read the same way.
+    const c = compileDescriptor(build({ set: { continues: [{ from: '/watch/{id:any}', to: '/watch/{other:any}' }] } }));
+    assert.ok(c.ok);
+    assert.equal(c.provider.continues('example:/watch/a\ud800', 'example:/watch/a\udc00'), false, 'the same key');
+    assert.equal(c.provider.continues('example:/watch/a\ud800', 'example:/watch/b'), true, 'control');
+    // Rebuilding the value must not turn a `__proto__` field into a prototype.
+    const proto = JSON.parse(text.replace(/^\{/, '{"__proto__":{"x":1},'));
+    assert.equal(compileDescriptor(proto).ok, false, 'an unknown field hidden');
+  });
+
   it('refuses a descriptor that is not JSON', () => {
     assert.equal(parseDescriptor('{"schema": 1,').ok, false);
   });

@@ -58,6 +58,15 @@
                    { "from": "example:/watch/\ud800", "to": "example:/watch/b", "continues": true },
                    { "from": "example:/watch/\ud800/x", "to": "example:/watch/b", "continues": false }]
     } },
+    { "name": "a key template and its example with different lone surrogates", "valid": true, "set": {
+      "identity": [{ "path": "/watch/{id}", "key": "/watch/\ud800{id}", "watch": "https://video.example/watch/{id}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/\udc00abc" }]
+    } },
+    { "name": "a continues example whose keys differ only by lone surrogates", "valid": true, "set": {
+      "continues": [{ "from": "/watch/{id:any}", "to": "/watch/{other:any}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" },
+                   { "from": "example:/watch/a\ud800", "to": "example:/watch/a\udc00", "continues": false }]
+    } },
 
     { "name": "unknown top-level field", "valid": false, "set": { "extra": 1 } },
     { "name": "a field in the wrong case", "valid": false, "set": { "ID": "example" } },
