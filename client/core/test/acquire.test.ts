@@ -935,6 +935,15 @@ describe('the next episode', () => {
     assert.deepEqual(h.kinds(), []);
   });
 
+  it('a tab that navigated on while hidden does not move the room when shown', async () => {
+    const h = await finishThenNavigate({ hidden: true });
+    h.engine.setLocalMediaKey('laftel:/player/9/9', 'https://laftel.net/player/9/9');
+    await h.vt.advance(100);
+    h.tab.hidden = false;
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the held continuation was sent from another page');
+  });
+
   it('a tab shown after somebody else moved the room on follows it', async () => {
     const h = await finishThenNavigate({ hidden: true });
     await h.state({ mediaKey: NEXT, positionMs: 0, paused: true }, 'media');
@@ -1639,6 +1648,50 @@ describe('a member whose autoplay was refused', () => {
       await spacePlays(h);
       assert.equal(h.engine.blocked, false);
       assert.deepEqual(h.kinds(), ['play']);
+    });
+
+    // The click came with no session to sync to, so it was held for the
+    // first evaluation that can aim. The member then started playing by key:
+    // the click is moot, and must not press play later on its behalf. Only
+    // without gesture evidence: a gated member is still detached after the
+    // reconnect, and the room's play never reaches its player.
+    if (!gestures) it('forgets a click to sync made during an outage once it plays by key', async () => {
+      const h = await blocked();
+      h.tr.drop();
+      await h.vt.advance(100);
+      await h.engine.resumeAfterGesture(); // the overlay, clicked while reconnecting
+      h.tr.autoAnswerTime(null);
+      await h.vt.advance(900);
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-2', seq: 3,
+        anchor: { ...PLAYING, atServerMs: h.serverNow() },
+        members: [{ id: 'me-2', name: 'm', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+        serverMs: h.vt.now, mediaKey: KEY,
+      });
+      await h.vt.advance(50);
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      // Refused again (a player that lost its credit), by the room's next play.
+      h.player.autoplayBlocked = true;
+      let attempts = 0;
+      const play = h.player.play.bind(h.player);
+      h.player.play = () => { attempts++; return play(); };
+      for (const f of h.tr.sentOf('time')) {
+        h.tr.deliver({ t: 'time.reply', t0: f.t0, tRecv: f.t0 + OFFSET, tSend: f.t0 + OFFSET });
+      }
+      h.tr.autoAnswerTime(OFFSET);
+      for (const [seq, paused] of [[4, true], [5, false]] as const) {
+        const t = h.serverNow();
+        h.tr.deliver({
+          t: 'state', seq, when: t, emittedAt: t, by: 'o', kind: paused ? 'pause' : 'play',
+          anchor: { positionMs: 110_000, atServerMs: t, paused, mediaKey: KEY },
+        });
+        await h.vt.advance(10);
+      }
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs - 500);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(attempts, 1, 'the old click pressed play again');
     });
 
     it(`control: stays blocked while its element stays paused${tag}`, async () => {

@@ -799,14 +799,15 @@ export class SyncEngine {
 
   /**
    * Send the continuation a hidden tab held back, now that it is shown -- if
-   * the page and the room are still where they were, and the finish is still
-   * recent enough to carry the room.
+   * the room is still where it was, and the finish is still recent enough to
+   * carry the room. The page is still on `c.key`: any navigation goes through
+   * `maybeContinue`, which drops a held continuation.
    */
   private continueWhenShown(): void {
     const c = this.hiddenContinuation;
     if (!c || this.d.isHidden()) return;
     this.hiddenContinuation = null;
-    if (c.key === this.localMediaKey) this.continueFrom(c.finish, c.prev, c.key);
+    this.continueFrom(c.finish, c.prev, c.key);
   }
 
   /** Whether the acquisition states are in force. See `EngineDeps.gestures`. */
