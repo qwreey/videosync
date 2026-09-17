@@ -400,6 +400,13 @@ const PLAY_WAIT_MS = 1000;
 const SILENT_PROBES = 3;
 
 /**
+ * The longest a conform waits for a not-yet-due anchor (see `conform`).
+ * `CMD_DELAY` is at most 2 s; beyond that the wait is a clock error, and
+ * conforming late is no better.
+ */
+const MAX_WELCOME_LEAD_MS = 2500;
+
+/**
  * How long after its own end a member's site may move on and still carry the
  * room with it. Measured: Laftel routes ~5.5 s after `ended`, YouTube's
  * autonav ~7.6 s (BROWSER-FINDINGS §20). A navigation later than this was
@@ -2097,6 +2104,22 @@ export class SyncEngine {
     const seq = this.lastAppliedSeq;
     const current = (): boolean => this.canAim(sess) && this.acq.id === id && this.lastAppliedSeq === seq;
     this.conformInFlight = true;
+    // A `welcome` inside a play's lead carries the play's anchor, which starts
+    // at `when` -- and no `when`. Aimed now, the projection runs back from a
+    // start that has not happened (below 0 for a play from the start, which
+    // the element clamps) and play is pressed while everybody else still
+    // waits. So a playing anchor that is not yet due is conformed once it is,
+    // as `applyScheduled` would have. Whatever replaces it meanwhile makes
+    // this conform stale, and acquiring starts over against that.
+    const dueInMs = this.clock.ready && !this.anchor.paused ? this.anchor.atServerMs - this.serverNow() : 0;
+    if (dueInMs > 0) {
+      this.d.setTimer(() => this.queueConform(id, current), Math.min(dueInMs, MAX_WELCOME_LEAD_MS));
+    } else {
+      this.queueConform(id, current);
+    }
+  }
+
+  private queueConform(id: number, current: () => boolean): void {
     void this.serialise(async () => {
       let done = false;
       try {

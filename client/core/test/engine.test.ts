@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { DEFAULT_ENGINE_CONFIG, SyncEngine } from '../src/engine/engine.ts';
 import type { EngineConfig, EngineEvents } from '../src/engine/engine.ts';
-import { ServerClock } from '../src/engine/clock.ts';
+import { expectedAt, ServerClock } from '../src/engine/clock.ts';
 import type { Anchor } from '../src/engine/clock.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { AutoplayBlockedError } from '../src/adapter/types.ts';
@@ -2143,6 +2143,62 @@ describe('a command lost with the connection', () => {
   it('control: a command sent long before the drop is the reconciler\'s business', async () => {
     const m = await lostWithLink(pause, { dropAfterMs: 20_000 });
     assert.deepEqual(kinds(m.tr), ['pause']);
+  });
+});
+
+describe('a joiner welcomed inside a play\'s lead', () => {
+  // A `play` anchors the room at its own `when`, and a `welcome` carries that
+  // anchor with no `when` beside it. Conformed at once, the joiner was aimed
+  // at a position projected back from a start that had not happened -- before
+  // 0, which an element clamps -- and started playing while everybody else
+  // was still waiting, ahead of the room by the rest of the lead.
+
+  /** A `<video>` that clamps a seek before the start to 0, as the spec says. */
+  class ClampingPlayer extends FakePlayer {
+    override seekTo(positionS: number): Promise<void> { return super.seekTo(Math.max(0, positionS)); }
+  }
+
+  async function joinDuringLead(anchor: Anchor) {
+    const vt = new VirtualTime();
+    const player = new ClampingPlayer(vt, { paused: true, positionS: 0 });
+    const tr = new FakeTransport();
+    const engine = new SyncEngine({
+      adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer,
+      isHidden: () => false,
+      gestures: { lastInputAt: () => -Infinity, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+    }, CFG);
+    tr.autoAnswerTime(OFFSET);
+    engine.start();
+    tr.open();
+    tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 7, anchor,
+      members: [
+        { id: 'me-1', name: 'm0', suspended: false, ready: true },
+        { id: 'other-1', name: 'm1', suspended: false, ready: true },
+      ],
+      serverMs: vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    const room = () => expectedAt(anchor, Math.max(vt.now + OFFSET, anchor.atServerMs));
+    return { vt, player, engine, room };
+  }
+
+  it('waits for the play to be due, then starts with the room', async () => {
+    const m = await joinDuringLead({ positionMs: 0, atServerMs: OFFSET + 1500, paused: false, mediaKey: 'yt:abc' });
+    await m.vt.advance(400);
+    assert.equal(m.player.paused, true, `started at ${m.player.positionS}, before the room`);
+    await m.vt.advance(1200);
+    assert.equal(m.player.paused, false, 'never started');
+    await m.vt.advance(1000);
+    assert.ok(Math.abs(m.player.positionS * 1000 - m.room()) <= DEFAULT_ENGINE_CONFIG.seekToleranceMs,
+      `at ${m.player.positionS * 1000}, the room at ${m.room()}`);
+  });
+
+  it('control: an anchor already due is conformed at once', async () => {
+    const m = await joinDuringLead({ positionMs: 30_000, atServerMs: OFFSET - 5000, paused: false, mediaKey: 'yt:abc' });
+    await m.vt.advance(400);
+    assert.equal(m.player.paused, false);
+    assert.ok(Math.abs(m.player.positionS * 1000 - m.room()) <= DEFAULT_ENGINE_CONFIG.seekToleranceMs,
+      `at ${m.player.positionS * 1000}, the room at ${m.room()}`);
   });
 });
 
