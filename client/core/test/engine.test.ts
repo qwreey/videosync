@@ -859,6 +859,30 @@ describe('reconnect', () => {
       });
     }
 
+    it('does not take a room it never sought for the member\'s position (no direct seek)', async () => {
+      // An adapter that cannot seek never moves toward the room's target, so
+      // a play-only apply running at the drop says nothing about where the
+      // element is: snapshotted at the target, the element's own position
+      // read as a 30 s jump made offline and went out as a seek.
+      const h = harness({ paused: true, positionS: 10, capabilities: { supportsDirectSeek: false } });
+      h.player.play = () => { h.player.paused = false; return new Promise<void>(() => { /* waits for data */ }); };
+      await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 2);
+      await h.vt.advance(500);
+      const when = h.vt.now + OFFSET;
+      const anchor = { positionMs: 40_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' };
+      h.tr.deliver({ t: 'state', seq: 1, when, emittedAt: when, anchor, by: 'other', kind: 'play' });
+      await h.vt.advance(300);                    // the play() is still waiting
+      h.tr.drop('dead');
+      await h.vt.advance(1500);
+      h.tr.open();
+      h.tr.deliver({
+        t: 'welcome', you: 'me-1', seq: 1, anchor, serverMs: h.vt.now, mediaKey: 'yt:abc',
+        members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'other-1', name: 'm1', suspended: false, ready: true }],
+      });
+      await h.vt.advance(2000);
+      assert.deepEqual(h.tr.sentOf('cmd').map((c) => [c.kind, c.positionMs]), [], 'the room was sent the element\'s own position as a seek');
+    });
+
     it('takes a fresh snapshot when the kept one is already stale', async () => {
       // The room moved while the member was away: the first snapshot will
       // never be sent. A pause pressed in the new session and lost at the

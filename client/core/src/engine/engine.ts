@@ -1136,9 +1136,11 @@ export class SyncEngine {
         // landing -- aimed at a room that may have moved since -- was a jump
         // the member made offline, and was sent. Its pause state is the
         // element's: the drop's epoch bump stops the apply after its seek, so
-        // it presses nothing more.
+        // it presses nothing more. Only an apply that is seeking: one that
+        // never seeks (within tolerance, or an adapter that cannot) leaves the
+        // element where it is, however far that is from its target.
         const applying = this.applyingRemote;
-        const positionS = applying ? landsAt(applying.targetMs, s.durationS) / 1000 : s.positionS;
+        const positionS = applying?.seeking ? landsAt(applying.targetMs, s.durationS) / 1000 : s.positionS;
         this.offline = this.onRoomMedia() ? {
           at, rate: s.rate,
           positionS: room ? roomMs / 1000 : positionS,
