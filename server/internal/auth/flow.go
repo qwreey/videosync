@@ -358,6 +358,20 @@ func expiredPage() pageData {
 // CrossOriginProtection and needs the flow cookie of the browser that opened
 // the page, so a link someone forwarded does not sign its sender in.
 func (s *Server) handleLoginConfirm(w http.ResponseWriter, r *http.Request) {
+	// Nothing here is authenticated yet, and CrossOriginProtection admits a
+	// request that carries no Origin at all. The page's forms are urlencoded
+	// and a few hundred bytes; PostFormValue alone would also take multipart,
+	// spooling file parts past 32 MB to disk uncapped, and read an urlencoded
+	// body to 10 MB.
+	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); !strings.EqualFold(strings.TrimSpace(ct), "application/x-www-form-urlencoded") {
+		s.render(w, http.StatusUnsupportedMediaType, pageData{Title: "로그인할 수 없어요", Message: "이 페이지의 양식으로만 로그인할 수 있어요."})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	if err := r.ParseForm(); err != nil {
+		s.render(w, http.StatusBadRequest, pageData{Title: "로그인할 수 없어요", Message: "요청을 읽지 못했어요."})
+		return
+	}
 	switch r.PostFormValue("method") {
 	case "":
 		s.confirmProxy(w, r)

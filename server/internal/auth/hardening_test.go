@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/tls"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -197,5 +198,50 @@ func TestTheLoginTableIsBounded(t *testing.T) {
 	g.begin(client)
 	if r := g.do("POST", "/api/auth/begin", client, "", nil); r.code != http.StatusServiceUnavailable || r.body["error"] != "busy" {
 		t.Fatalf("a full table answered %d %v", r.code, r.body)
+	}
+}
+
+// endless is a request body that never runs out, counting what was read.
+type endless struct{ n int64 }
+
+func (e *endless) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
+	}
+	e.n += int64(len(p))
+	return len(p), nil
+}
+
+// POST /auth/login is unauthenticated, and CrossOriginProtection admits a
+// request with no Origin or fetch metadata (curl). Parsing its form before
+// anything else must not mean reading whatever it sends: multipart file parts
+// past 32 MB go to $TMPDIR uncapped, and an urlencoded body is read to 10 MB.
+func TestTheLoginFormReadsOnlyAFewKilobytes(t *testing.T) {
+	g := newRig(t, nil)
+	t.Setenv("TMPDIR", t.TempDir())
+	const most = 64 << 10
+	for name, tc := range map[string]struct {
+		ctype, head string
+	}{
+		"urlencoded": {"application/x-www-form-urlencoded", "method=token&flow=x&key="},
+		"multipart": {"multipart/form-data; boundary=B",
+			"--B\r\nContent-Disposition: form-data; name=\"key\"; filename=\"k\"\r\n\r\n"},
+	} {
+		body := &endless{}
+		req := httptest.NewRequest("POST", "http://sync.example/auth/login",
+			io.MultiReader(strings.NewReader(tc.head), io.LimitReader(body, 256<<20)))
+		req.RemoteAddr = client
+		req.Header.Set("Content-Type", tc.ctype)
+		rec := httptest.NewRecorder()
+		g.mux.ServeHTTP(rec, req)
+		if rec.Code == 200 {
+			t.Errorf("%s: an endless body signed in", name)
+		}
+		if body.n > most {
+			t.Errorf("%s: read %d bytes of an unauthenticated body", name, body.n)
+		}
+		if req.MultipartForm != nil {
+			req.MultipartForm.RemoveAll()
+		}
 	}
 }
