@@ -29,7 +29,7 @@ import type { Descriptor } from '../src/providers/descriptor.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import { builtinRegistry, ProviderRegistry } from '../src/providers/registry.ts';
 import {
-  encodeComponent, hostScore, matchPath, matchQuery, parsePathTemplate, parseQueryTemplate, parseTextTemplate,
+  bestHostScore, encodeComponent, hostScore, matchPath, matchQuery, parsePathTemplate, parseQueryTemplate, parseTextTemplate,
   substitute, validHostPattern,
 } from '../src/providers/template.ts';
 import { legacyNormalizeMediaKey, legacyWatchUrl } from './legacy-mediakey.ts';
@@ -534,7 +534,12 @@ describe('what a change widens', () => {
       ['version only', { version: '1.0.1' }, false],
       ['a narrower host list', { hosts: ['video.example'] }, false],
       ['a new host', { hosts: [...BASE.hosts, 'other.example'] }, true],
-      ['a subdomain already covered', { hosts: [...BASE.hosts, 'www.video.example'] }, false],
+      // An exact host under an old wildcard claims that host more strongly
+      // (hostScore 4 -> 7) and can tie or beat another descriptor there.
+      ['an exact host under an old wildcard', { hosts: [...BASE.hosts, 'www.video.example'] }, true],
+      ['a wildcard narrowed to an exact host', { hosts: ['video.example', 'www.video.example'] }, true],
+      ['a longer wildcard under an old one', { hosts: [...BASE.hosts, '*.www.video.example'] }, true],
+      ['hosts reordered', { hosts: [...BASE.hosts].reverse() }, false],
       ['a new canonical host', { canonicalHost: 'www.video.example' }, true],
       ['pathFallback turned on', { pathFallback: true }, true],
       ['a new identity rule', { identity: [...BASE.identity, { path: '/v/{id}', key: '/v/{id}', watch: 'https://video.example/v/{id}' }] }, true],
@@ -560,6 +565,67 @@ describe('what a change widens', () => {
     const narrowPages = variant({ pageHosts: ['video.example'] });
     assert.equal(widens(narrowPages, variant({ pageHosts: ['video.example', 'www.video.example'] })), true);
     assert.equal(widens(null, BASE), true, 'a descriptor nobody had');
+  });
+
+  it('never lets a non-widening host change claim a host more strongly', () => {
+    const probes = ['video.example', 'www.video.example', 'a.www.video.example', 'other.example'];
+    const lists = [['video.example'], ['video.example', '*.video.example'], ['*.video.example', 'video.example'],
+      ['video.example', 'www.video.example'], ['video.example', '*.www.video.example'], ['video.example', 'other.example']];
+    let checked = 0;
+    for (const before of lists) {
+      for (const after of lists) {
+        if (widens(variant({ hosts: before }), variant({ hosts: after }))) continue;
+        checked++;
+        for (const h of probes) {
+          assert.ok(bestHostScore(after, h) <= bestHostScore(before, h), `${before} -> ${after} at ${h}`);
+        }
+      }
+    }
+    assert.ok(checked >= lists.length, 'control: some changes do not widen');
+  });
+
+  it('does not silently let a server update take a host from the user\'s own descriptor', async () => {
+    // N16: the user's exact-host descriptor wins over an adopted wildcard;
+    // an update that narrows the wildcard to that exact host ties it, and a
+    // tie applies neither, so the generic path rule came back.
+    const server = 'https://s.example/';
+    const mine = variant({ id: 'mine', hosts: ['www.video.example'], canonicalHost: 'www.video.example',
+      identity: [{ path: '/v/{id}', key: '/v/{id}', watch: 'https://www.video.example/v/{id}' }],
+      examples: [{ url: 'https://www.video.example/v/a', key: 'mine:/v/a' }] });
+    const v1 = JSON.stringify(BASE);
+    const v2 = JSON.stringify(variant({ version: '1.0.1', hosts: ['video.example', 'www.video.example'] }));
+    const pinned = await adopt(EMPTY, server, { id: 'example', name: 'X', version: '1.0.0', sha256: await sha256Hex(v1), hosts: [] }, v1, false);
+    assert.ok(pinned.ok);
+    const saved = await saveUser(setAutoAdopt(pinned.state, server, true), JSON.stringify(mine));
+    assert.ok(saved.ok);
+    const logout = 'https://www.video.example/logout';
+    assert.equal(normalizeMediaKey(logout, buildRegistry(saved.state, () => true)), null, 'control: the user\'s descriptor is in force');
+    const r = await autoUpdate(saved.state, server,
+      [{ id: 'example', name: 'X', version: '1.0.1', sha256: await sha256Hex(v2), hosts: [] }], async () => v2);
+    assert.deepEqual(r.applied, [], 'the update waits for the user');
+    assert.equal(normalizeMediaKey(logout, buildRegistry(r.state, () => true)), null);
+  });
+
+  it('treats identity rules as the ordered list they are', () => {
+    // N27: rules are first-match, so order and a shadowing rule decide keys.
+    const a = { path: '/watch/{id}', key: '/watch/{id}', watch: 'https://video.example/watch/{id}' };
+    const b = { path: '/{kind}/{id}', key: '/any/{id}', watch: 'https://video.example/any/{id}' };
+    const ex = (key: string) => [{ url: 'https://video.example/watch/abc', key }];
+    const ab = variant({ identity: [a, b], examples: ex('example:/watch/abc') });
+    const ba = variant({ identity: [b, a], examples: ex('example:/any/abc') });
+    const onlyB = variant({ identity: [b], examples: ex('example:/any/abc') });
+    const keyOf = (d: Descriptor) => {
+      const c = compileDescriptor(d);
+      assert.ok(c.ok, c.ok ? '' : c.errors.join('; '));
+      return c.provider.keyFor(new URL('https://video.example/watch/abc'));
+    };
+    assert.notEqual(keyOf(ab), keyOf(ba), 'control: the order decides the key');
+    assert.notEqual(keyOf(ab), keyOf(onlyB), 'control: removing the shadowing rule changes the key');
+    assert.equal(widens(ab, ba), true, 'rules reordered');
+    assert.equal(widens(ab, onlyB), true, 'a shadowing rule removed');
+    assert.equal(widens(ab, variant({ identity: [a] })), false, 'a trailing rule removed');
+    assert.equal(widens(variant({ identity: [a, b], pathFallback: true }), variant({ identity: [a], pathFallback: true })), true,
+      'a trailing rule removed hands its pages to the generic rule');
   });
 
   it('shows the difference field by field', () => {
