@@ -148,8 +148,10 @@ what it left open:
   proxy's user header or `proxy`, and `preferred_username`/`email`/`sub` for OIDC.
 - **Limits.** Per client: session 5 then 1 per 2 s, ticket 20 then 2/s, begin 5 then 1 per 5 s,
   poll 30 then 2/s. Concurrent PBKDF2 checks are capped at half the CPUs, and an unknown user is
-  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 1 000
-  logins in progress, of which one client holds at most 16 (`begin` answers `429 rate_limited`
+  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 100 000
+  logins in progress *(review 3: was 1 000, which a thousand people signing in at once filled)*,
+  of which one client holds at most 16 — the tighter bound, since the begin bucket alone admits
+  about 65 in a TTL (`begin` answers `429 rate_limited`
   past that, with `retryMs` until its oldest expires; a full table is `503 busy`). *(Review 3:)* a
   client is an IPv4 address or an IPv6 `/64`. `-trusted-proxies` without `-auth` does nothing and says so; no per-address
   room-creation limit was built (F39 is closed by the ticket instead).

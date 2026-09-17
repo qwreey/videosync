@@ -54,9 +54,14 @@ type flows struct {
 	// share is how many live flows one client may hold. The table is
 	// everybody's and begin needs no credentials, so without it one client
 	// pacing itself under the begin limit could hold every slot for a TTL.
-	// A person needs one or two; a deployment behind an unconfigured proxy is
-	// one client, and the begin limit already paces it more tightly than this.
+	// A person needs one or two. The begin limit does not bound this: at its
+	// refill rate one client begins about 65 flows in a TTL, so the share is
+	// the tighter limit -- which also means a deployment behind an
+	// unconfigured proxy, where everybody is one client, can have only this
+	// many sign-ins in progress at once.
 	share int
+
+	lastSweep time.Time
 
 	mu      sync.Mutex
 	byID    map[string]*flow
@@ -107,7 +112,11 @@ func newCode() string {
 func (fs *flows) begin(client string, now time.Time) (*flow, time.Duration, error) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	fs.sweep(now)
+	// A sweep walks the whole table, so it runs once a TTL -- or when an
+	// expired flow might be what refuses this one.
+	if now.Sub(fs.lastSweep) >= fs.ttl || len(fs.byID) >= fs.max || fs.byOwner[client] >= fs.share {
+		fs.sweep(now)
+	}
 	if fs.byOwner[client] >= fs.share {
 		var first time.Time
 		for _, f := range fs.byID {
@@ -136,6 +145,7 @@ func (fs *flows) sweep(now time.Time) {
 			fs.drop(f)
 		}
 	}
+	fs.lastSweep = now
 }
 
 func (fs *flows) drop(f *flow) {
