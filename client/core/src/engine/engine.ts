@@ -1806,7 +1806,8 @@ export class SyncEngine {
    */
   private nameRoomIfUnnamed(state: PlayerState): void {
     if (this.anchor.mediaKey !== '' || this.localMediaKey === '' || this.namedFor === this.localMediaKey) return;
-    if (!this.clock.ready || this.d.isHidden() || state.readyState < 1 || !(state.durationS > 0)) return;
+    // Metadata, not a finite duration: see `readyToAcquire`.
+    if (!this.clock.ready || this.d.isHidden() || state.readyState < 1) return;
     this.namedFor = this.localMediaKey;
     this.adoptFor = this.localMediaKey;
     this.foreignMove = false;
@@ -1852,12 +1853,17 @@ export class SyncEngine {
    */
   private readyToAcquire(now: number, state: PlayerState): boolean {
     if (!this.clock.ready || !this.onRoomMedia() || this.d.isHidden()) return false;
-    if (state.readyState < 1 || !(state.durationS > 0)) return false;
+    // HAVE_METADATA is where the duration becomes known -- and it can be
+    // Infinity (a live stream), which the adapter reports as 0. Waiting for a
+    // positive duration as well left such an element detached for good:
+    // acquiring forever, holding every play of the room, applying none.
+    if (state.readyState < 1) return false;
     const a = this.acq;
     if (a.metadataAt === 0) a.metadataAt = now;
     if (state.readyState < 3 && now - a.metadataAt < METADATA_ONLY_MS) return false;
     const expected = expectedAt(this.anchor, this.serverNow());
-    a.pastEnd = expected > state.durationS * 1000 + PAST_DURATION_SLACK_MS;
+    // With no end, nothing is past it.
+    a.pastEnd = state.durationS > 0 && expected > state.durationS * 1000 + PAST_DURATION_SLACK_MS;
     return !a.pastEnd;
   }
 

@@ -1188,6 +1188,37 @@ describe('a creator of a room with no media, who then names it', () => {
   });
 });
 
+describe('an element with no finite duration (a live stream)', () => {
+  // Html5Adapter reports an Infinity or NaN duration as 0; past HAVE_METADATA
+  // it is Infinity, not unknown.
+  it('is acquired, and follows the room', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 0 } });
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.equal(h.lastHb().acquiring, undefined, 'held every play of the room for good');
+    await h.state({ positionMs: 30_000, paused: false }, 'play');
+    await h.vt.advance(500);
+    assert.equal(h.player.paused, false, 'the room\'s play was never applied');
+    assert.equal(h.engine.stats.skippedAcquiring, 0);
+  });
+
+  it('names a room that names nothing', async () => {
+    const h = harness({ player: { paused: false, positionS: 42, durationS: 0 } });
+    await h.join({ mediaKey: '' }, 2);
+    assert.deepEqual(h.kinds(), ['media']);
+  });
+
+  it('control: an element with no metadata yet is still waited for', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 0 } });
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.lastHb().acquiring, true);
+  });
+});
+
 describe('a creator moved by somebody else, then pressed', () => {
   it('while still loading: the press is sent', async () => {
     const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
