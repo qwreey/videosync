@@ -1214,9 +1214,33 @@ single extra correction after a seek.
 | A's `play` starts | after 1.04 s (the hold) | **after 27.2 s** — the gate timeout | — |
 | the hidden member is not moved | yes | yes | — |
 
-So both fixes are real in a browser, and the probe tells the builds apart. Not measured here:
-N20 (a change made while reconnecting) needs a connection dropped under a live room; it is covered
-by unit tests only.
+So both fixes are real in a browser, and the probe tells the builds apart.
+
+**N20, and two bugs it turned up (`probe-offline.mjs`).** Member B reaches `videosyncd` through a
+TCP relay inside the probe, which cuts B off (open sockets destroyed, new ones refused) for 8 s; the
+server sees B leave, and B reconnects to a fresh `welcome`. B's pause is a trusted CDP click on
+Laftel's player. Three cases: (1) the room stays put and B pauses offline — B's pause must reach
+the room; (2) A seeks the room 60 s on while B is away and B pauses offline — B must follow the
+room and A must not be paused; (3) a cut with nobody doing anything.
+
+- On the round-3 build (`ext-r3`), case 1 passed and case 2 failed: B was moved to the room's
+  position but **stayed paused in a playing room**, and never recovered. Its engine had taken
+  8 `correct{seek}` in 16 s — one every ~2 s — and **0 reconciles**. A paused member in a playing
+  room falls behind, so the servo free-seeks it about every 2 s; every correction is an apply, and
+  an apply used to restart the reconciler's `RECONCILE_AFTER` (3 s) wait. The wait never ran out.
+  This is not N20's doing: any member left paused against a playing room while the room corrects
+  it is stuck the same way. It is very likely §23's unexplained run 1 (a Firefox member playing in
+  a paused room, a free seek every ~2 s, never put right) — the mirror image of this, and the same
+  starvation. Fixed: an apply in flight neither starts nor ends the wait.
+- With that fixed (`ext-r3b`, `offline-r3b.json`), case 3 failed: after the cut B was **660 ms
+  ahead** of A. `onClose` kept the servo's last nudge (1.06× here), so B ran fast for the whole
+  outage. Fixed: a dropped connection hands the rate back, as leaving does (`releaseRate`). The
+  simulation's disconnect now does the same (seed-averaged, `reconnect`/servo unchanged; pll's
+  rateTime 620 -> 618 ms).
+- On the build with both fixes (`ext-r3c`), two runs (`offline-r3c-1.json`, `offline-r3c-2.json`):
+  **4/4 each.** (1) B's offline pause reached the room, gap 0 ms. (2) B sent nothing and followed
+  the room, playing, gap −2 / −67 ms; A stayed playing. (3) nothing sent, gap −127 / −155 ms five
+  seconds after the reconnect.
 
 ## Reproducing
 

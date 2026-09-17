@@ -344,7 +344,8 @@ Open after D6–D8, needing a browser, a person or a decision:
   Firefox MV2 sign-in and site registration (API choice unverified); descriptor update notice,
   auto-adopt, replace-built-in; YouTube ads (Y3) and fullscreen consuming activation (Y4); real
   Tampermonkey for all of the above. (Laftel in Firefox: done, BROWSER-FINDINGS §23 — 9/10 in
-  three runs; one earlier run misbehaved and did not recur; a Widevine seek in Firefox reads
+  three runs; one earlier run misbehaved and did not recur (§24: very likely the reconciler
+  starvation fixed there); a Widevine seek in Firefox reads
   frozen for ~1 s, which can earn a member extra correction seeks.)
 - A descriptor's `watch` must be https, so an http-only site cannot be followed by descriptor.
 - An invite link only fills in the room and secret; the member still presses 참가.
@@ -417,7 +418,10 @@ What changed in behaviour (details in the commit bodies):
 
 Still open from this round: a failed sign-out delete survives only until the MV3 worker restarts
 (then the old token is read back); `continuesMedia` without a page host falls back to the prefix
-check; the GM status-0 rule is unrun in Tampermonkey; N20 is covered by unit tests only. **Convergence:** round 3 was not dry; the next
+check; the GM status-0 rule is unrun in Tampermonkey. Measuring N20 live found two more bugs, both fixed
+(BROWSER-FINDINGS §24): seek corrections starved the reconciler, so a member left paused in a
+playing room stayed paused forever (very likely §23's unexplained run 1), and a dropped connection
+kept the servo's nudge running for the whole outage. **Convergence:** round 3 was not dry; the next
 probe decides whether 47 was the tail of the new D6–D8 code or a steady rate.
 
 ## Open questions that block things

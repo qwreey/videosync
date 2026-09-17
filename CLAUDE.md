@@ -117,6 +117,10 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   present, an unloaded hidden tab (readyState 0 — media never loads there) gates every `play` for
   30 s, and a hidden seeder is corrected to the placeholder anchor and seeds the room from 0. And
   no correction may move a member that has not acquired, visible or not.
+- **The reconciler's wait must survive the room's corrections.** A paused member in a playing room
+  is free-seeked about every 2 s — sooner than `RECONCILE_AFTER` — so a wait restarted by every
+  apply never ends and the member stays paused forever. And a dropped connection hands back the
+  nudge (`releaseRate`), or the player runs fast for the whole outage.
 - **The end of media is a `pause` with `ended` set.** Never send it, and never re-apply play to an
   ended element (it restarts from 0).
 - **Never collect a secret in the panel.** It lives in the site's DOM and key events are composed:
