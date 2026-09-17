@@ -670,15 +670,17 @@ Whatever authenticates a person, the server hands out two credentials of its own
 | `POST /api/auth/poll` | `{"pollId"}` | `200 {"pending":true}`; once: `200 {"token","expiresMs","sub"}` or `403 {"error":"login_denied","msg"}`; then `404 {"error":"login_expired"}` |
 | `GET /api/providers`, `GET /api/providers/<id>.json` | `Authorization: Bearer <device token>` | as in §7; without a valid device token `401 {"error":"auth_required","methods"}`, in every scope, like room creation. A device token rather than a ticket: an index and its files are several requests, and a ticket is single-use. The proxy's word does not count, as on `/api/ticket`. *(Integration.)* |
 | `GET /auth/login?flow=<id>` | a browser tab | the login page: shows `code`, offers every enabled method (a key form for `token`, user and password for `password`, the account button, the proxy confirm), sets `vs_flow_<id>` (`Path=/auth/`, `HttpOnly`, `SameSite=Lax`) |
-| `POST /auth/login` | form `flow` and the flow cookie; with `method=token` and `key`, or `method=password`, `user` and `password`; with no `method`, through the trusted proxy | completes the flow as that method; a wrong secret answers `401` with the page again and leaves the flow pending; attempts share the `session` bucket (`429`). Cross-origin POSTs refused (`http.CrossOriginProtection`) |
-| `GET /auth/oidc/start?flow=<id>` | the flow cookie | `302` to the IdP: code flow, PKCE S256, `state`, `nonce` |
+| `POST /auth/login` | form `flow` and the flow cookie; with `method=token` and `key`, or `method=password`, `user` and `password`; with no `method`, through the trusted proxy | completes the flow as that method; a wrong secret answers `401` with the page again and leaves the flow pending; attempts share the `session` bucket (`429`). Cross-origin POSTs refused (`http.CrossOriginProtection`). *(Review 3:)* the body must be `application/x-www-form-urlencoded` (else `415`) and at most 8 KiB (else `400`), checked before anything else — the route is unauthenticated and a multipart body used to be spooled to disk uncapped |
+| `GET /auth/oidc/start?flow=<id>` | the flow cookie; `Sec-Fetch-Site` absent, `same-origin` or `none` | `302` to the IdP: code flow, PKCE S256, `state`, `nonce`. Any other `Sec-Fetch-Site` answers `403` *(review 3: the Lax flow cookie rides on a cross-site top-level GET, so a page that called `begin` and opened the tab could drive it here and, with a live IdP session, poll for the victim's device token)*. The login pages send `Cross-Origin-Opener-Policy: same-origin`, so the opener loses its handle to the tab |
 | `GET /auth/oidc/callback` | the IdP's redirect, the flow cookie | exchanges the code at the token endpoint (TLS), checks the ID token, completes the flow |
 
 The sign-in answers carry `Cache-Control: no-store`; every JSON endpoint above is CORS-wrapped like
 `/api/rooms` and answers its own `OPTIONS`. `429 {"error":"rate_limited","retryMs"}` with
 `Retry-After` comes from a per-client token bucket on `session`, `ticket`, `begin` and `poll`; the
 client is the TCP peer, or — only when that peer is in `-trusted-proxies` — the rightmost
-`X-Forwarded-For` hop that is not itself a trusted proxy, or `X-Real-IP`. When both are present
+`X-Forwarded-For` hop that is not itself a trusted proxy, or `X-Real-IP` — an IPv6 client is
+charged per `/64` *(review 3: per address, a single host with a /64 had a fresh bucket for every
+request)*. When both are present
 they must name the same address; otherwise one of them is the visitor's own (a proxy passes the
 header it does not write through untouched) and the request is charged to the proxy's address.
 

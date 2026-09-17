@@ -29,6 +29,7 @@ type flow struct {
 	code    string // shown in the panel and on the page
 	binding string // the flow cookie's value: which browser opened the page
 	exp     time.Time
+	owner   string // the client that began it (bucketKey), for its share
 
 	// OIDC, set by /auth/oidc/start.
 	state, nonce, verifier string
@@ -50,21 +51,40 @@ const (
 type flows struct {
 	ttl time.Duration
 	max int
+	// share is how many live flows one client may hold. The table is
+	// everybody's and begin needs no credentials, so without it one client
+	// pacing itself under the begin limit could hold every slot for a TTL.
+	// A person needs one or two. The begin limit does not bound this: at its
+	// refill rate one client begins about 65 flows in a TTL, so the share is
+	// the tighter limit -- which also means a deployment behind an
+	// unconfigured proxy, where everybody is one client, can have only this
+	// many sign-ins in progress at once.
+	share int
+
+	lastSweep time.Time
 
 	mu      sync.Mutex
 	byID    map[string]*flow
 	byPoll  map[string]*flow
 	byState map[string]*flow
+	byOwner map[string]int
 }
+
+const flowShare = 16
 
 func newFlows(ttl time.Duration, max int) *flows {
 	return &flows{
-		ttl: ttl, max: max,
+		ttl: ttl, max: max, share: min(flowShare, max),
 		byID: map[string]*flow{}, byPoll: map[string]*flow{}, byState: map[string]*flow{},
+		byOwner: map[string]int{},
 	}
 }
 
-var errTooManyFlows = errors.New("auth: too many logins in progress")
+var (
+	errTooManyFlows = errors.New("auth: too many logins in progress")
+	// errFlowShare: this client holds its share; retry after the returned wait.
+	errFlowShare = errors.New("auth: too many logins in progress from this client")
+)
 
 // codeAlphabet leaves out what reads ambiguously (0/O, 1/I/L) and vowels, so a
 // code never spells anything.
@@ -87,20 +107,36 @@ func newCode() string {
 	return string(out)
 }
 
-func (fs *flows) begin(now time.Time) (*flow, error) {
+// begin opens a flow for client. With errFlowShare it also says when that
+// client's oldest flow expires.
+func (fs *flows) begin(client string, now time.Time) (*flow, time.Duration, error) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	fs.sweep(now)
+	// A sweep walks the whole table, so it runs once a TTL -- or when an
+	// expired flow might be what refuses this one.
+	if now.Sub(fs.lastSweep) >= fs.ttl || len(fs.byID) >= fs.max || fs.byOwner[client] >= fs.share {
+		fs.sweep(now)
+	}
+	if fs.byOwner[client] >= fs.share {
+		var first time.Time
+		for _, f := range fs.byID {
+			if f.owner == client && (first.IsZero() || f.exp.Before(first)) {
+				first = f.exp
+			}
+		}
+		return nil, first.Sub(now), errFlowShare
+	}
 	if len(fs.byID) >= fs.max {
-		return nil, errTooManyFlows
+		return nil, 0, errTooManyFlows
 	}
 	f := &flow{
 		id: randomToken(16), pollID: randomToken(32), code: newCode(),
-		binding: randomToken(24), exp: now.Add(fs.ttl),
+		binding: randomToken(24), exp: now.Add(fs.ttl), owner: client,
 	}
 	fs.byID[f.id] = f
 	fs.byPoll[f.pollID] = f
-	return f, nil
+	fs.byOwner[client]++
+	return f, 0, nil
 }
 
 func (fs *flows) sweep(now time.Time) {
@@ -109,9 +145,15 @@ func (fs *flows) sweep(now time.Time) {
 			fs.drop(f)
 		}
 	}
+	fs.lastSweep = now
 }
 
 func (fs *flows) drop(f *flow) {
+	if fs.byID[f.id] == f {
+		if fs.byOwner[f.owner]--; fs.byOwner[f.owner] <= 0 {
+			delete(fs.byOwner, f.owner)
+		}
+	}
 	delete(fs.byID, f.id)
 	delete(fs.byPoll, f.pollID)
 	if f.state != "" {
@@ -249,6 +291,10 @@ func pageHeaders(w http.ResponseWriter) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
+	// Whoever opened this tab (a site the panel runs in, or any page that
+	// called begin) loses its handle to it, so it cannot navigate the tab
+	// onward once the flow cookie is set.
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 }
 
@@ -354,6 +400,20 @@ func expiredPage() pageData {
 // CrossOriginProtection and needs the flow cookie of the browser that opened
 // the page, so a link someone forwarded does not sign its sender in.
 func (s *Server) handleLoginConfirm(w http.ResponseWriter, r *http.Request) {
+	// Nothing here is authenticated yet, and CrossOriginProtection admits a
+	// request that carries no Origin at all. The page's forms are urlencoded
+	// and a few hundred bytes; PostFormValue alone would also take multipart,
+	// spooling file parts past 32 MB to disk uncapped, and read an urlencoded
+	// body to 10 MB.
+	if ct, _, _ := strings.Cut(r.Header.Get("Content-Type"), ";"); !strings.EqualFold(strings.TrimSpace(ct), "application/x-www-form-urlencoded") {
+		s.render(w, http.StatusUnsupportedMediaType, pageData{Title: "로그인할 수 없어요", Message: "이 페이지의 양식으로만 로그인할 수 있어요."})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	if err := r.ParseForm(); err != nil {
+		s.render(w, http.StatusBadRequest, pageData{Title: "로그인할 수 없어요", Message: "요청을 읽지 못했어요."})
+		return
+	}
 	switch r.PostFormValue("method") {
 	case "":
 		s.confirmProxy(w, r)

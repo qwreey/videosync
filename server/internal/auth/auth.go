@@ -109,6 +109,9 @@ type Config struct {
 	FlowTTL time.Duration
 	// MaxTickets bounds the outstanding-ticket table.
 	MaxTickets int
+	// MaxFlows bounds the browser-login table. It is a flood bound, not a
+	// quota: one client's share of it is flowShare.
+	MaxFlows int
 
 	// PublicURL is where a browser reaches this server. Required for OIDC,
 	// because the IdP's redirect must go to exactly the URI registered with
@@ -127,6 +130,7 @@ func DefaultConfig() Config {
 		TicketTTL:  60 * time.Second,
 		FlowTTL:    5 * time.Minute,
 		MaxTickets: 100_000,
+		MaxFlows:   100_000,
 	}
 }
 
@@ -172,6 +176,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxTickets <= 0 {
 		cfg.MaxTickets = d.MaxTickets
+	}
+	if cfg.MaxFlows <= 0 {
+		cfg.MaxFlows = d.MaxFlows
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -227,7 +234,7 @@ func New(cfg Config) (*Server, error) {
 		sign:    signer{key: cfg.Key},
 		tickets: newTickets(cfg.TicketTTL, cfg.MaxTickets),
 		peers:   peers{trusted: cfg.TrustedProxies},
-		flows:   newFlows(cfg.FlowTTL, 1000),
+		flows:   newFlows(cfg.FlowTTL, cfg.MaxFlows),
 		// A person retyping a password is well inside this; a guesser is not.
 		limSession: newLimiter(0.5, 5),
 		// One per connect and room creation, and a reconnect storm is paced
@@ -490,7 +497,15 @@ func (s *Server) handleBegin(w http.ResponseWriter, r *http.Request) {
 	if s.limited(w, r, s.limBegin) {
 		return
 	}
-	f, err := s.flows.begin(s.cfg.Now())
+	f, wait, err := s.flows.begin(s.peers.client(r), s.cfg.Now())
+	if errors.Is(err, errFlowShare) {
+		// This client's own doing, and it clears as its flows expire: the
+		// panel says "too many attempts" for this, not "server busy".
+		ms := max(wait.Milliseconds(), 1)
+		w.Header().Set("Retry-After", fmt.Sprint((ms+999)/1000))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate_limited", "retryMs": ms})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "busy"})
 		return

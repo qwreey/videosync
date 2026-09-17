@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -26,7 +27,9 @@ func main() {
 		os.Exit(hashPassword(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	addr := flag.String("addr", ":8787", "listen address")
-	origins := flag.String("allowed-origins", "", "comma-separated Origin allowlist for the WebSocket upgrade (empty = any)")
+	origins := flag.String("allowed-origins", "",
+		"comma-separated Origin allowlist (e.g. \"https://www.youtube.com, https://laftel.net\") for the "+
+			"WebSocket upgrade and for CORS on the /api endpoints (empty = any)")
 	idle := flag.Duration("idle-ttl", 3*time.Minute, "delete a room this long after its last member leaves")
 	maxMembers := flag.Int("max-members", 32, "members per room")
 	maxRooms := flag.Int("max-rooms", 10000, "rooms held in memory")
@@ -64,9 +67,11 @@ func main() {
 	}
 
 	hcfg := hub.DefaultHTTPConfig()
-	if *origins != "" {
-		hcfg.AllowedOrigins = strings.Split(*origins, ",")
+	allowed, err := parseOrigins(*origins)
+	if err != nil {
+		log.Fatal(err)
 	}
+	hcfg.AllowedOrigins = allowed
 
 	authServer, notes, err := af.build()
 	if err != nil {
@@ -95,13 +100,7 @@ func main() {
 		}()
 	}
 
-	srv := &http.Server{
-		Addr:    *addr,
-		Handler: h.Handler(hcfg),
-		// No WriteTimeout: a hijacked WebSocket outlives any request deadline,
-		// and the connection sets its own (internal/ws).
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := newHTTPServer(*addr, h.Handler(hcfg), defaultTimeouts)
 
 	go func() {
 		if *tlsCert != "" {
@@ -137,4 +136,53 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(ctx)
+}
+
+// parseOrigins reads -allowed-origins. Entries are trimmed, as -oidc-allow's
+// are: the hub compares them to the Origin header exactly, so " https://b"
+// from "a, b" would match nothing and refuse that site with no word at
+// startup. Blank entries are dropped, because an empty one matches a request
+// that sends no Origin. A flag that names nothing but blanks is an error,
+// not "any origin": it was meant to restrict.
+func parseOrigins(s string) ([]string, error) {
+	if s == "" {
+		return nil, nil
+	}
+	var out []string
+	for _, o := range strings.Split(s, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("-allowed-origins %q names no origin (leave it out to allow any)", s)
+	}
+	return out, nil
+}
+
+type timeouts struct{ header, read, idle time.Duration }
+
+// Every body this server reads is a few KiB of JSON or form, so 30 s is
+// generous for the slowest link; two minutes idle outlasts a panel's pauses
+// between API calls without holding a descriptor per departed browser.
+var defaultTimeouts = timeouts{header: 10 * time.Second, read: 30 * time.Second, idle: 2 * time.Minute}
+
+// newHTTPServer bounds everything that happens before a handler can decide
+// anything, all of it unauthenticated: without ReadTimeout a body that never
+// arrives holds its handler forever (MaxBytesReader caps size, not time), and
+// without IdleTimeout -- which falls back to ReadTimeout, and zero there is no
+// limit -- neither does a kept-alive connection that never sends again.
+func newHTTPServer(addr string, h http.Handler, t timeouts) *http.Server {
+	return &http.Server{
+		Addr:    addr,
+		Handler: h,
+		// None of these reaches a WebSocket: net/http's Hijack clears the
+		// connection's deadlines (SetDeadline(time.Time{})) as it hands it
+		// over, and ws.Conn sets its own from then on (ReadMessage before
+		// every frame). No WriteTimeout all the same: it would bound how long
+		// a handler may take to answer, and nothing here needs that bound.
+		ReadHeaderTimeout: t.header,
+		ReadTimeout:       t.read,
+		IdleTimeout:       t.idle,
+	}
 }

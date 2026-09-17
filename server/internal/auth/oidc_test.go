@@ -205,7 +205,10 @@ func (b *browser) get(path string, withCookie bool) reply {
 // toIdP presses the login button and returns where it redirected.
 func (b *browser) toIdP() string {
 	b.t.Helper()
-	r := b.get("/auth/oidc/start?flow="+flowID(b.t, b.f.LoginURL), true)
+	// What a browser sends for a click on the page's own link.
+	r := b.g.do("GET", "/auth/oidc/start?flow="+flowID(b.t, b.f.LoginURL), client, "", map[string]string{
+		"Cookie": b.cookie.Name + "=" + b.cookie.Value, "Sec-Fetch-Site": "same-origin",
+	})
 	if r.code != http.StatusFound {
 		b.t.Fatalf("start: %d %s", r.code, r.raw)
 	}
@@ -262,6 +265,35 @@ func TestTheCallbackBelongsToTheBrowserThatStartedIt(t *testing.T) {
 	c := g.startBrowser(t)
 	if r := c.get("/auth/oidc/start?flow="+flowID(t, c.f.LoginURL), false); r.code == http.StatusFound {
 		t.Fatal("started an IdP round trip for a browser that never opened the page")
+	}
+}
+
+// The account button is a GET link, and the flow cookie is Lax, so a page that
+// opened the login tab could drive that tab to the start route itself: with a
+// live IdP session the round trip needs no click from the user, and the page
+// that called begin polls for the victim's device token. Only a navigation
+// the login page itself made may start one.
+func TestOnlyTheLoginPageCanStartAnIdPRoundTrip(t *testing.T) {
+	idp := newIdP(t)
+	g := oidcRig(t, idp, nil)
+	b := g.startBrowser(t)
+	page, _ := g.openPage(b.f, client, nil)
+	if page.hdr.Get("Cross-Origin-Opener-Policy") != "same-origin" {
+		t.Error("the page that opened the login tab keeps a handle to it and can navigate it")
+	}
+	start := "/auth/oidc/start?flow=" + flowID(t, b.f.LoginURL)
+	for _, site := range []string{"cross-site", "same-site"} {
+		r := g.do("GET", start, client, "", map[string]string{
+			"Cookie": b.cookie.Name + "=" + b.cookie.Value, "Sec-Fetch-Site": site,
+		})
+		if r.code == http.StatusFound {
+			t.Errorf("Sec-Fetch-Site %s: redirected to the IdP", site)
+		}
+	}
+	// The refusals did not spend the flow: the real button still works.
+	state, code := idp.authorize(t, b.toIdP())
+	if r := b.callback(state, code); r.code != 200 {
+		t.Fatalf("callback after a refused start: %d %s", r.code, r.raw)
 	}
 }
 

@@ -128,7 +128,12 @@ what it left open:
 - **Sign-out** is `DELETE /api/session` inside `authFetch` and never reaches the server: the
   server keeps no sessions, so signing out is forgetting the token.
 - **The login page** is Korean like the panel, is not frameable, and offers what applies: an
-  account button (`GET /auth/oidc/start`, which the table did not list) and, for a request that
+  account button (`GET /auth/oidc/start`, which the table did not list; *review 3:* refused
+  unless `Sec-Fetch-Site` is absent, `same-origin` or `none`, since the Lax cookie would otherwise
+  let a foreign page that opened the tab start the IdP round trip itself — a GET rather than a
+  POST under `CrossOriginProtection` because a form POST that redirects to the IdP would need the
+  IdP in the page's CSP `form-action`; the page also sends `Cross-Origin-Opener-Policy:
+  same-origin`) and, for a request that
   came through the trusted proxy, a confirm button (`POST /auth/login`, under
   `http.CrossOriginProtection`). The code is 8 characters from a 27-letter alphabet without
   lookalikes or vowels.
@@ -143,8 +148,12 @@ what it left open:
   proxy's user header or `proxy`, and `preferred_username`/`email`/`sub` for OIDC.
 - **Limits.** Per client: session 5 then 1 per 2 s, ticket 20 then 2/s, begin 5 then 1 per 5 s,
   poll 30 then 2/s. Concurrent PBKDF2 checks are capped at half the CPUs, and an unknown user is
-  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 1 000
-  logins in progress. `-trusted-proxies` without `-auth` does nothing and says so; no per-address
+  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 100 000
+  logins in progress *(review 3: was 1 000, which a thousand people signing in at once filled)*,
+  of which one client holds at most 16 — the tighter bound, since the begin bucket alone admits
+  about 65 in a TTL (`begin` answers `429 rate_limited`
+  past that, with `retryMs` until its oldest expires; a full table is `503 busy`). *(Review 3:)* a
+  client is an IPv4 address or an IPv6 `/64`. `-trusted-proxies` without `-auth` does nothing and says so; no per-address
   room-creation limit was built (F39 is closed by the ticket instead).
 - **No cookies from the privileged side.** The background and the userscript call with
   `credentials: 'omit'` / `anonymous` and `redirect: 'manual'`: a gateway's redirect or HTML
