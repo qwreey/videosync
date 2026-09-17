@@ -7,12 +7,12 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
-import { start } from '../src/app/bootstrap.ts';
+import { rewriteInviteSecret, start } from '../src/app/bootstrap.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
 import { FakePlayer, FakeTransport, flush, realTime } from './fakes.ts';
-import { CODE, FakeServer, json, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
+import { CODE, FakeServer, gatewayPage, json, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
 import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
@@ -234,6 +234,40 @@ describe('following the room to its video', () => {
     assert.equal(savedRejoin(h)?.secret, 'S2', 'the next page would be refused');
   });
 
+  it('carries a secret rotated after the navigation began, before the page unloaded', async () => {
+    for (const async of [false, true]) {
+      const store = makeStore(async);
+      const tab: TabStorage = new Map();
+      const h = harness(HOME, store, tab);
+      h.join();
+      h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+      await h.tick(2000);
+      store.release();
+      await h.tick(50);
+      assert.equal(h.dom.loc.assigned.length, 1, 'control: the navigation began');
+      // The old document is still live and joined until the next one commits.
+      h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+      assert.equal(savedRejoin(h)?.secret, 'S2', `async=${async}: the next page would be refused`);
+      unload(h);
+
+      // The next page joins with it.
+      const next = harness(ROOM_URL, store, tab);
+      assert.equal(next.app.api.engine() !== null, true, 'control: the next page rejoined');
+      next.tr().open();
+      assert.equal(next.tr().sentOf('hello')[0]!.secret, 'S2');
+      unload(next);
+    }
+  });
+
+  it('does not write a rejoin record for a follow that is not under way', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await h.tick(2000);
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.equal(savedRejoin(h), null);
+  });
+
   it('survives a reconnect inside the grace period', async () => {
     const h = harness(HOME);
     h.join();
@@ -416,6 +450,66 @@ describe('a refused join', () => {
   });
 });
 
+describe('leaving', () => {
+  const dot = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'dot')!;
+
+  it('is possible while the session is reconnecting, and stops it', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(h.button('나가기')!.disabled, false, 'no way out of a session that keeps retrying');
+    assert.equal(h.button('초대 링크 복사')!.disabled, true, 'control: what needs a live room stays off');
+    h.button('나가기')!.click();
+    const connects = h.tr().connects;
+    await h.tick(60_000);
+    assert.equal(h.app.api.engine(), null);
+    assert.equal(h.tr().connects, connects, 'reconnected to a room the member left');
+    assert.equal(h.button('나가기')!.disabled, true);
+  });
+
+  it('is possible while the session waits for a sign-in', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore(false, { authScope: JSON.stringify({ [new URL(SERVER).origin]: 'all' }) });
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    h.join();
+    await h.tick(50);
+    assert.equal(h.app.api.engine()?.state, 'refused', 'control: the session waits for a sign-in');
+    assert.equal(h.button('나가기')!.disabled, false);
+  });
+
+  it('does not say the connection was lost', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.match(dot(h).className, /\bjoined\b/, 'control: the dot is found');
+    h.button('나가기')!.click();
+    assert.doesNotMatch(h.status().text, /끊겼/, 'a member who left on purpose is told the network failed');
+    assert.doesNotMatch(dot(h).className, /\bclosed\b/, 'a red dot for a deliberate leave');
+  });
+});
+
+describe('a rotated secret', () => {
+  it('is saved with its own room, never paired with another tab\'s', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.equal(h.store.data.get('secret'), 'S2', 'control: the room this page is in');
+    // Another tab of the profile joins room Y and saves its pair.
+    h.store.save('room', 'Y');
+    h.store.save('secret', 'Ys');
+    h.tr().deliver({ t: 'secret', secret: 'S3', rotated: 'other' });
+    assert.deepEqual([h.store.data.get('room'), h.store.data.get('secret')], ['Y', 'Ys'],
+      'a new tab would prefill room Y with room R\'s secret, and be refused');
+  });
+});
+
 describe('an invite link', () => {
   it('fills the room fields', () => {
     const h = harness(`${ROOM_URL}#videosync=R1.S1`);
@@ -435,11 +529,55 @@ describe('an invite link', () => {
     }
   });
 
+  it('left in the address bar carries a rotated secret (N37)', async () => {
+    const h = harness(`${ROOM_URL}&t=5#videosync=R.S`);
+    h.dom.history.state = { app: 'the site\'s' };
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S/2', rotated: 'other' });
+    await flush();
+    assert.equal(h.dom.loc.href, `${ROOM_URL}&t=5#videosync=R.S%2F2`,
+      'a reload would prefill the old secret over the stored one, and be refused');
+    assert.deepEqual(h.dom.history.replaced, [[{ app: 'the site\'s' }, h.dom.loc.href]],
+      'replaced, not pushed, and the site\'s own history state kept');
+  });
+
+  it('for another room is left alone when this room\'s secret rotates', async () => {
+    const h = harness(`${ROOM_URL}#videosync=Q.S`);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    await flush();
+    assert.equal(h.store.data.get('secret'), 'S2', 'control: the rotation was handled');
+    assert.equal(h.dom.loc.href, `${ROOM_URL}#videosync=Q.S`);
+    assert.deepEqual(h.dom.history.replaced, []);
+  });
+
   it('does not leak its secret through dump()', () => {
     const h = harness(`${ROOM_URL}#videosync=R1.SUPERSECRET`);
     const d = h.app.api.dump();
     assert.ok(!d.includes('SUPERSECRET'), 'the dump is meant to be pasted into an issue');
     assert.match(JSON.parse(d).url as string, /watch\?v=abc/, 'the page itself is still worth knowing');
+  });
+});
+
+describe('rewriteInviteSecret', () => {
+  const U = 'https://laftel.net/player/1/2?videosync=R.q';
+  it('rewrites only the secret, keeping the rest of the fragment', () => {
+    assert.equal(rewriteInviteSecret(`${U}#t=10&videosync=R.old&x=1`, 'R', 'new'),
+      `${U}#t=10&videosync=R.new&x=1`);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=R%20x.old`, 'R x', 'a&b.c'),
+      `${U}#videosync=R%20x.a%26b.c`);
+  });
+  it('leaves a link to another room, or no link, alone', () => {
+    assert.equal(rewriteInviteSecret(`${U}#videosync=Q.old`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=RR.old`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(U, 'R', 'new'), null, 'the query is not the fragment');
+    assert.equal(rewriteInviteSecret(`${U}#t=10`, 'R', 'new'), null);
+    assert.equal(rewriteInviteSecret(`${U}#videosync=%E0.old`, 'R', 'new'), null);
+  });
+  it('has nothing to do when the secret is already the new one', () => {
+    assert.equal(rewriteInviteSecret(`${U}#videosync=R.new`, 'R', 'new'), null);
   });
 });
 
@@ -784,6 +922,29 @@ describe('signing in to a server', () => {
     assert.equal(h.transports.length, 2, 'retried more than once');
   });
 
+  it('keeps reconnecting a signed-in member through a gateway error page', async () => {
+    // -auth-scope all behind nginx, and videosyncd restarting: /api/ticket is
+    // nginx's 502 for a moment. Every device token is still good.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    server.override = (p) => (p === '/api/ticket' ? gatewayPage(502) : undefined);
+    h.join();
+    await h.tick(50);
+    assert.equal(signInShown(h), false, 'an outage asked a signed-in member to sign in');
+    assert.notEqual(h.app.api.engine()?.state, 'refused', 'an outage ended the session for good');
+    server.override = () => undefined;
+    await h.tick(20_000);
+    assert.equal(h.transports.length, 1, 'never reconnected once the server was back');
+    h.tr().open();
+    assert.ok(server.spend(h.tr().sentOf('hello')[0]!.ticket), 'the reconnect carried no live ticket');
+    assert.equal(signInShown(h), false);
+  });
+
   it('signs in through a browser tab and shows the code the tab will show', async () => {
     const server = new FakeServer();
     server.methods = ['oidc'];
@@ -891,6 +1052,111 @@ describe('signing in to a server', () => {
     assert.equal(server.to('/api/auth/poll').length, 1, 'the scenario needs a poll that was in flight');
     assert.equal(server.to('/api/rooms').length, 1, 'a room was created for a member who had left');
     assert.equal(h.transports.length, 0);
+  });
+
+  it('keeps the code of a login that replaced a cancelled one still on its way', async () => {
+    const server = new FakeServer();
+    server.methods = ['oidc'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    // Login A: its begin hangs (a request holds the gate it was sent under).
+    let release: () => void = () => {};
+    server.gate = new Promise((res) => { release = res; });
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    h.visibleButton('취소')!.click();
+    // Login B goes through.
+    server.gate = Promise.resolve();
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    assert.equal(code(h).textContent, CODE, 'control: B shows its code');
+    release(); // A's begin finally answers, and A finds itself cancelled
+    await h.tick(50);
+    assert.equal(server.to('/api/auth/begin').length, 2, 'control: both logins began');
+    assert.equal(code(h).textContent, CODE, 'a cancelled login blanked the code of the one that replaced it');
+    assert.ok(code(h).shown);
+    server.browserDone = true;
+    await h.tick(2100);
+    assert.equal(signInShown(h), false);
+    assert.equal(h.transports.length, 1, 'control: B still finishes what it was for');
+  });
+
+  it('finishes a pending login when the same server asks again meanwhile', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    assert.equal(code(h).textContent, CODE);
+    await create(h); // 방 만들기 again, while the tab is still open
+    assert.equal(code(h).textContent, CODE, 'the code of the login in progress was taken off screen');
+    server.browserDone = true;
+    await h.tick(2100);
+    assert.equal(signInShown(h), false, 'signed in, and still asked to');
+    assert.equal(h.transports.length, 1, 'the login finished and nothing was retried');
+  });
+
+  it('ignores a second refusal answered after the member joined another room on the same server', async () => {
+    // Refused twice in a row, so the page reads /healthz for the methods to
+    // offer. Before that answer lands the member leaves and joins another room
+    // on the same server, which works: the late answer is not about it.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    h.join();
+    for (let i = 0; i < 2; i++) {
+      await h.tick(50);
+      h.tr().open();
+      h.tr().deliver({ t: 'error', code: 'auth_required' });
+      h.tr().drop('1008 auth required');
+    }
+    // Same turn as the second refusal: its /healthz answer is still to come.
+    h.app.api.leave();
+    h.app.api.join(SERVER, 'R2', 'S2', 'me');
+    await h.tick(50);
+    assert.equal(h.transports.length, 3, 'control: refused twice, then joined the other room');
+    h.tr().open();
+    assert.ok(server.spend(h.tr().sentOf('hello')[0]!.ticket), 'control: the new join carried a live ticket');
+    h.welcome({ mediaKey: ROOM_KEY });
+    assert.equal(signInShown(h), false, 'asked to sign in for a session the member already left');
+    assert.equal(h.app.api.engine()?.state, 'joined');
+    assert.equal(h.transports.length, 3, 'the new session was torn down and rebuilt');
+  });
+
+  it('ignores a join ticket refused after the member left, or moved to another server', async () => {
+    const OTHER = 'https://other.example';
+    for (const then of ['leave', 'join elsewhere'] as const) {
+      const server = new FakeServer();
+      server.methods = ['token'];
+      server.scope = 'all';
+      const store = makeStore(false, { authScope: JSON.stringify({ [new URL(SERVER).origin]: 'all' }) });
+      const h = harness(ROOM_URL, store, new Map(), {}, server);
+      let release: () => void = () => {};
+      server.gate = new Promise((res) => { release = res; });
+      h.join();
+      await h.tick(50);
+      assert.equal(server.requests.length, 0, 'control: the ticket request is held');
+      if (then === 'leave') {
+        h.app.api.leave();
+      } else {
+        h.app.api.join(OTHER, 'R2', 'S2', 'me');
+        h.welcome({ mediaKey: ROOM_KEY });
+        assert.equal(h.app.api.engine()?.state, 'joined', 'control: joined the other server');
+      }
+      const before = h.status().text;
+      release();
+      await h.tick(100);
+      assert.ok(server.to('/api/ticket').length === 1, 'control: the ticket was refused late');
+      assert.equal(signInShown(h), false, `${then}: asked to sign in to a server the member is not on`);
+      assert.equal(h.status().text, before, `${then}: the status was taken over by the old server`);
+      assert.equal(h.transports.length, then === 'leave' ? 1 : 2, `${then}: something rejoined`);
+      unload(h);
+    }
   });
 
   it('hides the signed-in row as soon as the server says otherwise', async () => {

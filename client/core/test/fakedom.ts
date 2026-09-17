@@ -4,9 +4,10 @@
  * The app layer is where a session meets the page -- the panel, the follow
  * timer, the rejoin record -- and it had no tests because it needed a browser.
  * It does not need much of one: elements that hold text, attributes, children
- * and listeners, a location that records `assign`, and a window that accepts
- * listeners. Nothing here lays anything out, so anything that depends on
- * layout is out of reach and has to be probed in `harness/browser/`.
+ * and listeners, a location that records `assign`, a history that records
+ * `replaceState`, and a window that accepts listeners. Nothing here lays
+ * anything out, so anything that depends on layout is out of reach and has to
+ * be probed in `harness/browser/`.
  */
 
 type Listener = (e: FakeEvent) => void;
@@ -167,6 +168,20 @@ export class FakeLocation {
   toString(): string { return this.href; }
 }
 
+/** `history`, as far as `replaceState` goes: it records, and moves `location`. */
+export class FakeHistory {
+  state: unknown = null;
+  /** Every `replaceState` call, as `[state, url]`. */
+  readonly replaced: Array<[unknown, string]> = [];
+  private readonly location: FakeLocation;
+  constructor(location: FakeLocation) { this.location = location; }
+  replaceState(state: unknown, _unused: string, url?: string): void {
+    this.replaced.push([state, url ?? '']);
+    this.state = state;
+    if (url !== undefined) this.location.href = new URL(url, this.location.href).href;
+  }
+}
+
 export class FakeWindow {
   private readonly listeners = new Map<string, Set<() => void>>();
   readonly location: FakeLocation;
@@ -183,6 +198,7 @@ export interface Installed {
   doc: FakeDocument;
   loc: FakeLocation;
   win: FakeWindow;
+  history: FakeHistory;
   /** What `navigator.clipboard` should be for this test. */
   setClipboard(c: { writeText(s: string): Promise<void> } | undefined): void;
   uninstall(): void;
@@ -193,7 +209,8 @@ export function installDom(href: string): Installed {
   const doc = new FakeDocument();
   const loc = new FakeLocation(href);
   const win = new FakeWindow(loc);
-  const saved = ['document', 'window', 'location', 'navigator']
+  const history = new FakeHistory(loc);
+  const saved = ['document', 'window', 'location', 'history', 'navigator']
     .map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)] as const);
   let clipboard: { writeText(s: string): Promise<void> } | undefined;
   const define = (k: string, v: unknown) =>
@@ -201,9 +218,10 @@ export function installDom(href: string): Installed {
   define('document', doc);
   define('window', win);
   define('location', loc);
+  define('history', history);
   define('navigator', { userAgent: 'fake', get clipboard() { return clipboard; } });
   return {
-    doc, loc, win,
+    doc, loc, win, history,
     setClipboard(c) { clipboard = c; },
     uninstall() {
       for (const [k, d] of saved) {

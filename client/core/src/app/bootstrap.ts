@@ -183,6 +183,28 @@ export function redactInvite(href: string): string {
 }
 
 /**
+ * `href` with the secret of its invite for `roomId` replaced by `secret`, or
+ * null if its fragment carries no invite for that room or already this one.
+ * Only the fragment is looked at, and only the secret in it changes. An invite
+ * left in the address bar wins over the stored secret on the next load, so
+ * after a rotation a reload would join with the old one and be refused.
+ */
+export function rewriteInviteSecret(href: string, roomId: string, secret: string): string | null {
+  const at = href.indexOf('#');
+  if (at < 0) return null;
+  const hash = href.slice(at);
+  const m = /([#&]videosync=)([^.&]+)\.([^&]+)/.exec(hash);
+  if (!m || !m[1] || !m[2]) return null;
+  try {
+    if (decodeURIComponent(m[2]) !== roomId) return null;
+  } catch {
+    return null;
+  }
+  const next = `${hash.slice(0, m.index)}${m[1]}${m[2]}.${encodeURIComponent(secret)}${hash.slice(m.index + m[0].length)}`;
+  return next === hash ? null : href.slice(0, at) + next;
+}
+
+/**
  * What a refused join tells the user to do. Only `join_refused` is about the
  * ID or the secret; a full room was reached with both right, and sending that
  * user off to re-check them is sending them the wrong way. (`auth_required`
@@ -261,12 +283,18 @@ export function start(p: Platform): App {
   let wasJoined = false;
   /** The rejoin record this page last wrote, exactly as written. */
   let ownRejoin = '';
+  /** How many `followRoom` passes are writing their rejoin record. */
+  let writingRejoin = 0;
   let lastStatus: EngineStatus = 'idle';
   let session: { server: string; roomId: string; secret: string; name: string } | null = null;
   /** Whether `session` was started by its room's creator (`adoptLocalStateOnJoin`). */
   let sessionAdopts = false;
   /** What a successful sign-in should do next, and for which server. */
   let signInFor: { server: string; retry: () => void } | null = null;
+  /** Bumped by every browser login and by whatever abandons one. */
+  let loginAttempt = 0;
+  /** A browser login is waiting on its tab. */
+  let loginPending = false;
   /** The server this page knows the device to be signed in to. */
   let signedInTo = '';
   /**
@@ -299,7 +327,7 @@ export function start(p: Platform): App {
     onGesture: () => { void engine?.resumeAfterGesture(); },
     onBrowserSignIn: () => { void browserSignIn(); },
     onCancelSignIn: () => {
-      auth.cancelBrowser();
+      abandonLogin();
       panel.showSignInCode(null);
       panel.setSignInNotice('취소했어요. 다시 로그인할 수 있어요.', '');
     },
@@ -469,6 +497,25 @@ export function start(p: Platform): App {
     ownRejoin = '';
   }
 
+  /**
+   * The secret rotated after a follow wrote its record: the next page would
+   * join with the old one and be refused, which is final. Rewritten only
+   * while it is still this page's record -- consumed, or replaced by another
+   * tab, it is not ours to write -- and not while `followRoom` is writing,
+   * which rebuilds it from `session` itself.
+   */
+  function refreshRejoin(): void {
+    if (writingRejoin || !ownRejoin || !session) return;
+    if (p.store.load('rejoin', '') !== ownRejoin) return;
+    let r: Rejoin;
+    try { r = JSON.parse(ownRejoin) as Rejoin; } catch { return; }
+    if (r.server !== session.server || r.roomId !== session.roomId || r.secret === session.secret) return;
+    const record = JSON.stringify({ ...r, secret: session.secret });
+    p.store.save('rejoin', record);
+    ownRejoin = record;
+    void p.store.flush?.();
+  }
+
   function cancelFollow(): void {
     if (followTimer) clearTimeout(followTimer);
     followTimer = 0;
@@ -523,24 +570,31 @@ export function start(p: Platform): App {
       // scheduled: a secret rotated meanwhile -- during the write, too -- is
       // the only one the server still accepts, so a record that changed while
       // it was being written is written again.
-      for (;;) {
-        const record = JSON.stringify({
-          ...session, key: roomMediaKey, until, tab: tabId, origin: location.origin,
-        } satisfies Rejoin);
-        if (record === ownRejoin) break;
-        p.store.save('rejoin', record);
-        ownRejoin = record;
-        // The write is what carries the session to the next page; an async
-        // store that is still writing when the document unloads would drop it.
-        await p.store.flush?.();
-        if (gen !== followGen || engine !== e || e.state !== 'joined' || !session) {
-          // Cancelled while writing. Whatever cancelled it decides what
-          // happens next; a record left behind would pull a later page into
-          // this room.
-          forgetRejoin();
-          return;
+      writingRejoin++;
+      try {
+        for (;;) {
+          const record = JSON.stringify({
+            ...session, key: roomMediaKey, until, tab: tabId, origin: location.origin,
+          } satisfies Rejoin);
+          if (record === ownRejoin) break;
+          p.store.save('rejoin', record);
+          ownRejoin = record;
+          // The write is what carries the session to the next page; an async
+          // store that is still writing when the document unloads would drop it.
+          await p.store.flush?.();
+          if (gen !== followGen || engine !== e || e.state !== 'joined' || !session) {
+            // Cancelled while writing. Whatever cancelled it decides what
+            // happens next; a record left behind would pull a later page into
+            // this room.
+            forgetRejoin();
+            return;
+          }
         }
+      } finally {
+        writingRejoin--;
       }
+      // From here the old document stays live, and joined, until the next one
+      // commits; a rotation meanwhile is carried by `refreshRejoin`.
       location.assign(target);
     };
     mediaUi = 'follow';
@@ -630,18 +684,40 @@ export function start(p: Platform): App {
 
   /** Stop and ask. `retry` is what the sign-in was for. */
   function askSignIn(server: string, methods: readonly string[], retry: () => void): void {
-    signInFor = { server, retry };
     if (signedInTo === server) {
       // Whatever this page believed, the server just said otherwise.
       signedInTo = '';
       panel.setSignedIn(null);
     }
-    panel.showSignIn({ methods, notice: '이 서버는 로그인이 필요해요.' });
     panel.setStatus('로그인이 필요해요 — 아래에서 로그인해주세요.', 'warn');
+    if (signInFor && signInFor.server === server) {
+      // Asked again (방 만들기 pressed twice) while already asking: the same
+      // sign-in, now for the newest request. A login in its tab is left
+      // alone -- replacing the target used to drop its success on the floor,
+      // and redrawing the section took its code off screen.
+      signInFor.retry = retry;
+      if (loginPending) return;
+    } else {
+      abandonLogin();
+      signInFor = { server, retry };
+    }
+    panel.showSignIn({ methods, notice: '이 서버는 로그인이 필요해요.' });
   }
 
-  function finishSignIn(target: { server: string; retry: () => void }, r: SignInResult): void {
+  /** Stop the browser login in progress, if any; its late result is dropped. */
+  function abandonLogin(): void {
+    auth.cancelBrowser();
+    loginAttempt++;
+    loginPending = false;
+  }
+
+  function finishSignIn(target: { server: string; retry: () => void }, r: SignInResult, attempt: number): void {
     if (signInFor !== target) return; // superseded, or the member left
+    // Cancelled or replaced. A cancelled login can settle long after the
+    // member started the next one for the same target (its request is not
+    // aborted), and must not take that one's code off screen.
+    if (attempt !== loginAttempt) return;
+    loginPending = false;
     panel.showSignInCode(null);
     if (!r.ok) {
       if (r.why !== 'cancelled') panel.setSignInNotice(r.text, 'err');
@@ -658,9 +734,14 @@ export function start(p: Platform): App {
   async function browserSignIn(): Promise<void> {
     const target = signInFor;
     if (!target) return;
+    const attempt = ++loginAttempt;
+    loginPending = true;
     panel.setSignInNotice('새 탭에서 로그인하세요. 탭에 아래와 같은 코드가 보일 때만 계속하세요.', '');
     panel.showSignInCode('…');
-    finishSignIn(target, await auth.browserSignIn(target.server, (code) => { panel.showSignInCode(code); }));
+    const r = await auth.browserSignIn(target.server, (code) => {
+      if (attempt === loginAttempt) panel.showSignInCode(code);
+    });
+    finishSignIn(target, r, attempt);
   }
 
   async function signOut(): Promise<void> {
@@ -678,12 +759,17 @@ export function start(p: Platform): App {
    */
   function joinTicket(server: string): Promise<string> | string {
     if (auth.needs(server) !== 'all') return '';
+    // Called from inside the engine's connect, so `engine` is the one asking.
+    // The answer can take seconds; a member who left, or joined elsewhere,
+    // meanwhile must not be asked to sign in to the old server -- which would
+    // also, on success, tear down the session they are in now.
+    const e = engine;
     return auth.ticket(server, 'join').then((t) => {
-      if (t) noteSignedIn(server);
+      if (t && engine === e) noteSignedIn(server);
       return t;
-    }, (e: unknown) => {
-      if (e instanceof AuthRequiredError) askSignIn(server, e.methods, joinAgain);
-      throw e;
+    }, (err: unknown) => {
+      if (err instanceof AuthRequiredError && engine === e) askSignIn(server, err.methods, joinAgain);
+      throw err;
     });
   }
 
@@ -696,16 +782,18 @@ export function start(p: Platform): App {
   /** The server refused `hello` for want of a ticket. */
   function onAuthRefused(server: string): void {
     if (signInFor) return; // already asking
+    // Both answers below come later; by then the member may be in another
+    // session, on this very server, which nothing here is about.
+    const e = engine;
     if (!authRetried) {
       authRetried = true;
-      const e = engine;
       void auth.learnRefusal(server, 'join').then(() => {
         if (engine === e && session?.server === server) joinAgain();
       });
       return;
     }
     void auth.info(server).then((i) => i.methods, () => [] as readonly string[]).then((methods) => {
-      if (session?.server === server && !signInFor) askSignIn(server, methods, joinAgain);
+      if (engine === e && session?.server === server && !signInFor) askSignIn(server, methods, joinAgain);
     });
   }
 
@@ -759,7 +847,7 @@ export function start(p: Platform): App {
     }, {
       onStatus: (s: EngineStatus, detail?: string) => {
         panel.setConnection(s);
-        panel.setJoined(s === 'joined');
+        panel.setJoined(s === 'joined', engine !== null);
         if (wasJoined && s !== 'joined') suspendMedia();
         wasJoined = s === 'joined';
         const prev = lastStatus;
@@ -793,8 +881,23 @@ export function start(p: Platform): App {
       },
       onSecretRotated: (sec, by) => {
         panel.setFields({ secret: sec });
-        p.store.save('secret', sec);
-        if (session) session = { ...session, secret: sec };
+        // 'room' and 'secret' are separate keys in a store every tab of the
+        // profile shares, and a join writes both. Saved alone over another
+        // tab's room, this secret makes a pair no server accepts, and a new
+        // tab prefills it.
+        if (session && p.store.load('server', '') === session.server && p.store.load('room', '') === session.roomId) {
+          p.store.save('secret', sec);
+        }
+        if (session) {
+          session = { ...session, secret: sec };
+          const href = rewriteInviteSecret(location.href, session.roomId, sec);
+          // `replaceState` fires neither `hashchange` nor `popstate`, and the
+          // site's own state goes back as it was.
+          if (href) {
+            try { history.replaceState(history.state, '', href); } catch { /* the link just stays stale */ }
+          }
+        }
+        refreshRejoin();
         panel.addChat('', by === engine?.id
           ? '비밀키를 교체했어요. 예전 링크로는 아무도 들어올 수 없어요.'
           : '누군가 비밀키를 교체했어요. 새 초대 링크를 공유해주세요.', true);
@@ -853,7 +956,7 @@ export function start(p: Platform): App {
   function leave(): void {
     cancelFollow();
     // A sign-in asked for by what is being left would, on success, bring it back.
-    auth.cancelBrowser();
+    abandonLogin();
     signInFor = null;
     panel.hideSignIn();
     // A follow may already be on its way to the next page. The navigation
@@ -876,6 +979,11 @@ export function start(p: Platform): App {
     panel.setMembers([], '', []);
     clearMediaAction();
     panel.hideGesturePrompt();
+    // `stop()` just reported 'closed' through the old engine's `onStatus`,
+    // which reads as a network failure. Nobody's network failed: say what a
+    // page with no session says. A join calling this says its own next.
+    panel.setConnection('idle');
+    refreshStatus();
   }
 
   // A member who navigates away or closes the tab should leave cleanly, so the

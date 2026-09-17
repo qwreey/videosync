@@ -52,6 +52,55 @@ describe('a gateway answering in the server\'s place', () => {
     await assert.rejects(r.auth.ticket(SERVER, 'create'), AuthRequiredError);
   });
 
+  it('is a request to sign in only when it looks like a login: a redirect, 401, 403 or a page', async () => {
+    for (const [status, redirected] of [[200, false], [302, true], [0, true], [401, false], [403, false]] as const) {
+      const r = rig(['token']);
+      await r.auth.signIn(SERVER, { key: KEY });
+      r.server.override = (p) => (p === '/api/ticket' ? { ...gatewayPage(status), redirected } : undefined);
+      await assert.rejects(r.auth.ticket(SERVER, 'create'), AuthRequiredError, `gateway ${status}`);
+    }
+  });
+
+  it('is an outage, not a sign-in, when it is an error page -- and the device stays signed in', async () => {
+    // nginx's 502 while videosyncd restarts, a 504, a 503 from limit_req.
+    for (const status of [502, 503, 504, 500]) {
+      const r = rig(['token'], 'all');
+      await r.auth.signIn(SERVER, { key: KEY });
+      r.server.override = (p) => (p === '/api/ticket' ? gatewayPage(status) : undefined);
+      const err = await r.auth.ticket(SERVER, 'join').then(() => null, (e: unknown) => e);
+      assert.ok(err instanceof Error, `gateway ${status} gave a ticket`);
+      assert.ok(!(err instanceof AuthRequiredError), `gateway ${status} asked a signed-in member to sign in`);
+      r.server.override = () => undefined;
+      assert.match(await r.auth.ticket(SERVER, 'join'), /^T/, 'control: the device was good all along');
+    }
+  });
+
+  it('is an outage when it answers with no status and no redirect', async () => {
+    // Status 0 is what an opaque redirect reads as, and also what an answer
+    // that says nothing does; only `redirected` separates a login from that.
+    const r = rig(['token'], 'all');
+    await r.auth.signIn(SERVER, { key: KEY });
+    r.server.override = (p) => (p === '/api/ticket' ? { status: 0, body: '', contentType: '', redirected: false } : undefined);
+    const err = await r.auth.ticket(SERVER, 'join').then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof Error && !(err instanceof AuthRequiredError), `${String(err)}: a status 0 was guessed to be a login`);
+    r.server.override = (p) => (p === '/api/ticket' ? { status: 0, body: '', contentType: '', redirected: true } : undefined);
+    await assert.rejects(r.auth.ticket(SERVER, 'join'), AuthRequiredError, 'control: a refused redirect is a login');
+  });
+
+  it('that is a bare 404 asks the server again what it needs', async () => {
+    // Restarted without -auth: /api/ticket is not registered, Go answers
+    // text/plain 404, and /healthz now says access control is off.
+    const r = rig(['token'], 'all');
+    await r.auth.signIn(SERVER, { key: KEY });
+    assert.match(await r.auth.ticket(SERVER, 'join'), /^T/);
+    r.server.methods = [];
+    r.server.override = (p) => (p === '/api/ticket' ? { ...gatewayPage(404), contentType: 'text/plain' } : undefined);
+    const err = await r.auth.ticket(SERVER, 'join').then(() => null, (e: unknown) => e);
+    assert.ok(err instanceof Error && !(err instanceof AuthRequiredError), `${String(err)}: a missing endpoint is not a sign-in`);
+    assert.equal(await r.auth.ticket(SERVER, 'join'), '', 'still asking for a ticket a server without -auth has no endpoint for');
+    assert.equal(r.auth.needs(SERVER), 'none');
+  });
+
   it('does not stand in for the proxy\'s word at /api/session', async () => {
     const r = rig(['proxy']);
     let tickets = 0;

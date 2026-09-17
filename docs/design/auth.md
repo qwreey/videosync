@@ -156,9 +156,10 @@ what it left open:
   client is an IPv4 address or an IPv6 `/64`. `-trusted-proxies` without `-auth` does nothing and says so; no per-address
   room-creation limit was built (F39 is closed by the ticket instead).
 - **No cookies from the privileged side.** The background and the userscript call with
-  `credentials: 'omit'` / `anonymous` and `redirect: 'manual'`: a gateway's redirect or HTML
-  answer is reported as "a gateway wants a login" (and does not drop the token), which leads to
-  the tab flow. So the first open question below is moot for the shipped flow — cached proxy
+  `credentials: 'omit'` / `anonymous` and `redirect: 'manual'`: an answer that is not
+  videosyncd's JSON is reported as a gateway's (`gateway`, with `redirected`), and does not drop
+  the token. A redirect, a page served as the answer (status 1-399), or a 401/403/407 means "a
+  gateway wants a login", which leads to the tab flow; see the review-3 note below for the rest. So the first open question below is moot for the shipped flow — cached proxy
   credentials and gateway cookies are never relied on — though a gateway that gates the tab page
   still needs its own browser login, which is the point.
 - **Login tabs** are opened by the extension's background (`tabs.create`, no permission needed)
@@ -181,6 +182,15 @@ what it left open:
   `chrome.storage.onChanged` besides.
 - **A gateway's page is never a sign-in**: `gateway` is checked before the status everywhere, and
   success needs a stored token (`signedIn`). A late 401 forgets only the token it refused.
+  *(Review 3:)* nor is every gateway page a request to sign in. On `/api/ticket`,
+  `gatewayWantsLogin(status, redirected)` in `auth.ts` separates the two: a redirect (known from
+  `redirected`, never guessed from a status 0, which is also what an answer that says nothing
+  reads as), a page served as the answer, or 401/403/407 asks for the login tab. Anything else —
+  nginx's 502 while videosyncd restarts, a 503/504, Go's text/plain 404 from a server restarted
+  without `-auth`, a bare status 0 — is an outage: a plain error the engine retries with backoff,
+  and the cached `/healthz` is forgotten so the next connect asks what the server needs now. Read
+  as a sign-in, that 502 put every member's engine in the final `refused` state while their device
+  tokens were still good.
 - **The browser-login deadline is local** (`LOGIN_WAIT_MS` from `begin`), not the server's
   `expiresMs` compared with this machine's clock.
 - **A ticket that never comes** fails the connect attempt after `TICKET_TIMEOUT_MS` (20 s) and takes
@@ -209,7 +219,9 @@ what it left open:
 - Does the extension background's `fetch` send cached proxy Basic credentials or gateway cookies?
 - tinyauth's answer (302 vs 401 + `X-Tinyauth-Location`) to a non-navigating client.
 - Real Tampermonkey `GM_xmlhttpRequest` (still unverified in this project), including whether it
-  honours `redirect: 'manual'` and how `@connect *` asks.
+  honours `redirect: 'manual'` and how `@connect *` asks. Until it is measured, the userscript
+  takes an `onload` with status 0 for a redirect (`gmxhr.ts`): a failed request comes back
+  through `onerror`/`ontimeout`/`onabort` instead, and `fetch`'s opaque redirect reads as 0.
 - Nothing of the client flow has run in a browser: the extension background's IndexedDB and
   `tabs.create` (Chromium and Firefox MV2), the panel's sign-in section, and a real IdP. All of it
   is tested against fakes and, for the wire, against a real `videosyncd` (`test-e2e`).

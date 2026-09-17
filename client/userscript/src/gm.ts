@@ -10,31 +10,16 @@
  * its own CSP and can reach the server. This is the single most load-bearing
  * line in the metadata block.
  */
-import type { HttpResult, RawHttp, TokenStore } from '@videosync/core/app/authfetch.ts';
+import type { RawHttp, TokenStore } from '@videosync/core/app/authfetch.ts';
 import { fetchHttp, memoryTokens } from '@videosync/core/app/authfetch.ts';
+
+import { gmRequest } from './gmxhr.ts';
+import type { GmXhr } from './gmxhr.ts';
 
 declare const GM_getValue: undefined | ((k: string, d?: string) => string | undefined);
 declare const GM_setValue: undefined | ((k: string, v: string) => void);
 
-interface GmResponse {
-  status: number;
-  responseText?: string;
-  responseHeaders?: string;
-  finalUrl?: string;
-}
-declare const GM_xmlhttpRequest: undefined | ((d: {
-  method: string;
-  url: string;
-  headers?: Record<string, string>;
-  data?: string;
-  anonymous?: boolean;
-  redirect?: 'follow' | 'error' | 'manual';
-  timeout?: number;
-  onload?: (r: GmResponse) => void;
-  onerror?: (r: unknown) => void;
-  ontimeout?: () => void;
-  onabort?: () => void;
-}) => unknown);
+declare const GM_xmlhttpRequest: undefined | GmXhr;
 declare const GM_openInTab: undefined | ((url: string, o?: { active?: boolean }) => unknown);
 
 const PREFIX = 'videosync.';
@@ -67,29 +52,7 @@ export function save(key: string, value: string): void {
  */
 export const gmHttp: RawHttp = (url, init) => {
   if (typeof GM_xmlhttpRequest !== 'function') return fetchHttp(url, init);
-  return new Promise<HttpResult>((resolve, reject) => {
-    GM_xmlhttpRequest({
-      method: init.method,
-      url,
-      headers: init.headers,
-      ...(init.body !== undefined ? { data: init.body } : {}),
-      anonymous: true,
-      redirect: 'manual',
-      timeout: 15_000,
-      onload: (r) => {
-        const type = /^content-type:\s*(.*)$/im.exec(r.responseHeaders ?? '')?.[1]?.trim() ?? '';
-        resolve({
-          status: r.status,
-          body: r.responseText ?? '',
-          contentType: type,
-          redirected: (r.status >= 300 && r.status < 400) || (!!r.finalUrl && r.finalUrl !== url),
-        });
-      },
-      onerror: () => reject(new Error('network error')),
-      ontimeout: () => reject(new Error('timed out')),
-      onabort: () => reject(new Error('aborted')),
-    });
-  });
+  return gmRequest(GM_xmlhttpRequest, url, init);
 };
 
 const TOKENS_KEY = `${PREFIX}tokens`;

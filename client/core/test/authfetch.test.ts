@@ -149,9 +149,14 @@ describe('authFetch', () => {
     ticket = { status: 401, body: '<html>', contentType: 'text/html', redirected: false };
     const g = await r.fetch(S, '/api/ticket', { method: 'POST' });
     assert.equal(g.gateway, true);
+    assert.equal(g.redirected, false);
     assert.equal(await r.tokens.get(ORIGIN), 'DEVICE');
     ticket = { status: 0, body: '', contentType: '', redirected: true };
-    assert.equal((await r.fetch(S, '/api/ticket', { method: 'POST' })).gateway, true);
+    const opaque = await r.fetch(S, '/api/ticket', { method: 'POST' });
+    assert.equal(opaque.gateway, true);
+    // Carried through: an opaque redirect reads as status 0, and so does an
+    // answer that says nothing at all. Only this tells them apart.
+    assert.equal(opaque.redirected, true, 'a redirect was reported as a bare status 0');
     assert.equal(await r.tokens.get(ORIGIN), 'DEVICE');
 
     ticket = json(401, { error: 'auth_required' });
