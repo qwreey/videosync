@@ -857,7 +857,13 @@ export function start(p: Platform): App {
       },
       onSecretRotated: (sec, by) => {
         panel.setFields({ secret: sec });
-        p.store.save('secret', sec);
+        // 'room' and 'secret' are separate keys in a store every tab of the
+        // profile shares, and a join writes both. Saved alone over another
+        // tab's room, this secret makes a pair no server accepts, and a new
+        // tab prefills it.
+        if (session && p.store.load('server', '') === session.server && p.store.load('room', '') === session.roomId) {
+          p.store.save('secret', sec);
+        }
         if (session) session = { ...session, secret: sec };
         refreshRejoin();
         panel.addChat('', by === engine?.id

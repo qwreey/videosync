@@ -494,6 +494,22 @@ describe('leaving', () => {
   });
 });
 
+describe('a rotated secret', () => {
+  it('is saved with its own room, never paired with another tab\'s', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.equal(h.store.data.get('secret'), 'S2', 'control: the room this page is in');
+    // Another tab of the profile joins room Y and saves its pair.
+    h.store.save('room', 'Y');
+    h.store.save('secret', 'Ys');
+    h.tr().deliver({ t: 'secret', secret: 'S3', rotated: 'other' });
+    assert.deepEqual([h.store.data.get('room'), h.store.data.get('secret')], ['Y', 'Ys'],
+      'a new tab would prefill room Y with room R\'s secret, and be refused');
+  });
+});
+
 describe('an invite link', () => {
   it('fills the room fields', () => {
     const h = harness(`${ROOM_URL}#videosync=R1.S1`);
