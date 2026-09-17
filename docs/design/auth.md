@@ -128,7 +128,12 @@ what it left open:
 - **Sign-out** is `DELETE /api/session` inside `authFetch` and never reaches the server: the
   server keeps no sessions, so signing out is forgetting the token.
 - **The login page** is Korean like the panel, is not frameable, and offers what applies: an
-  account button (`GET /auth/oidc/start`, which the table did not list) and, for a request that
+  account button (`GET /auth/oidc/start`, which the table did not list; *review 3:* refused
+  unless `Sec-Fetch-Site` is absent, `same-origin` or `none`, since the Lax cookie would otherwise
+  let a foreign page that opened the tab start the IdP round trip itself — a GET rather than a
+  POST under `CrossOriginProtection` because a form POST that redirects to the IdP would need the
+  IdP in the page's CSP `form-action`; the page also sends `Cross-Origin-Opener-Policy:
+  same-origin`) and, for a request that
   came through the trusted proxy, a confirm button (`POST /auth/login`, under
   `http.CrossOriginProtection`). The code is 8 characters from a 27-letter alphabet without
   lookalikes or vowels.

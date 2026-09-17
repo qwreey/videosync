@@ -357,6 +357,25 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// The flow cookie is Lax, so it rides along on ANY top-level GET here --
+	// including one a foreign page makes, by navigating the login tab it
+	// opened (it got the flow from the unauthenticated begin). With a live IdP
+	// session the round trip then completes without the user doing anything,
+	// and that page polls for their device token. The key and password forms
+	// are POSTs under CrossOriginProtection; this is a GET, because a form
+	// whose POST redirects to the IdP would need the IdP in the page's CSP
+	// form-action. So check what CrossOriginProtection would: only the login
+	// page's own link (same-origin) or a URL the user typed (none) starts a
+	// round trip. same-site is refused too -- a sibling subdomain is not this
+	// server. A browser that sends no fetch metadata is let through, as
+	// CrossOriginProtection does; every browser that does send it is covered.
+	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+		s.render(w, http.StatusForbidden, pageData{
+			Title:   "로그인할 수 없어요",
+			Message: "이 로그인은 VideoSync 로그인 페이지의 버튼으로만 시작할 수 있어요.",
+		})
+		return
+	}
 	id := r.URL.Query().Get("flow")
 	now := s.cfg.Now()
 	if _, ok := s.flows.pending(id, now); !ok {

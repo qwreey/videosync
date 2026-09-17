@@ -249,6 +249,10 @@ func pageHeaders(w http.ResponseWriter) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
+	// Whoever opened this tab (a site the panel runs in, or any page that
+	// called begin) loses its handle to it, so it cannot navigate the tab
+	// onward once the flow cookie is set.
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 }
 
