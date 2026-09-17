@@ -1574,6 +1574,79 @@ describe('a local play waits for the room (holdLocalPlay)', () => {
     assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['play']);
   });
 
+  describe('alone, while the readiness gate would hold the play', () => {
+    // The server holds a `play` while anybody is gated, the presser included,
+    // whatever the room's size. Left playing, a lone presser ran ahead of an
+    // anchor still paused at the old position, and the ack that the release
+    // sent seeked them back by however long that took -- or the reconciler
+    // paused them first, if it took over `reconcileAfterMs` (review N25).
+
+    /** A room of one paused at 10 s, `before` done to it, then play pressed 800 ms before the gate lets it through. */
+    async function soloPress(before: (h: Harness) => Promise<void> | void) {
+      const h = harness({ paused: true, positionS: 10 });
+      await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: true }, 0, 1);
+      await h.vt.advance(500);
+      await before(h);
+      h.tr.sent.length = 0;
+      await h.player.play();
+      h.player.emit('play');
+      // The detector sees a play once the element can play: a stalled one's
+      // play-state is not read.
+      h.player.recover();
+      await h.vt.advance(100);
+      const cmds = h.tr.sentOf('cmd');
+      assert.deepEqual(cmds.map((c) => c.kind), ['play']);
+      const heldAtPress = h.player.paused;
+      await h.vt.advance(700);
+      h.tr.deliver({ t: 'gate', waiting: false, waitingOn: [] });
+      // The release: `CmdDelay` is 0 alone, so the play is due at once, from
+      // where the room was paused.
+      const seeks = h.player.seeks;
+      const when = h.vt.now + OFFSET;
+      h.tr.deliver({
+        t: 'ack', reqId: cmds[0]!.reqId, seq: 1, when, emittedAt: when, kind: 'play',
+        anchor: { positionMs: 10_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+      });
+      await h.vt.advance(200);
+      return { h, heldAtPress, seeksAtAck: h.player.seeks - seeks };
+    }
+
+    it('holds a play the gate frame says will wait', async () => {
+      // A `media` command gates every member, ready or not.
+      const m = await soloPress((h) => { h.tr.deliver({ t: 'gate', waiting: false, waitingOn: ['me-1'] }); });
+      assert.equal(m.heldAtPress, true, 'played on ahead of a room the gate holds');
+      assert.equal(m.h.player.paused, false, 'never started');
+      assert.equal(m.seeksAtAck, 0, 'the release seeked the presser back');
+      assert.ok(Math.abs(m.h.player.positionS - 10.2) < 0.05, `at ${m.h.player.positionS}`);
+      await m.h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+      assert.equal(m.h.engine.stats.reconciles, 0);
+      assert.deepEqual(m.h.tr.sentOf('cmd').map((c) => c.kind), ['play']);
+    });
+
+    it('holds a play while its own last report said unready', async () => {
+      // Seeked out of the buffer while paused: the report that gates the room
+      // is out, the gate frame not back yet.
+      const m = await soloPress(async (h) => {
+        h.player.stall();
+        await h.vt.advance(DEFAULT_ENGINE_CONFIG.hbIntervalMs + 100);
+        assert.ok(h.tr.sentOf('hb').at(-1)!.readyState < 3);
+      });
+      assert.equal(m.heldAtPress, true, 'played on ahead of a room the gate holds');
+      assert.equal(m.h.player.paused, false, 'never started');
+      assert.equal(m.seeksAtAck, 0);
+    });
+
+    it('control: a gate that has opened again holds nothing', async () => {
+      const m = await soloPress(async (h) => {
+        h.tr.deliver({ t: 'gate', waiting: false, waitingOn: ['me-1'] });
+        await h.vt.advance(100);
+        h.tr.deliver({ t: 'gate', waiting: false, waitingOn: [] });
+      });
+      assert.equal(m.heldAtPress, false);
+      assert.equal(m.h.engine.stats.playsHeld, 0);
+    });
+  });
+
   it('control: switched off, the presser keeps playing', async () => {
     const h = await pressPlay(2, { holdLocalPlay: false });
     await h.vt.advance(100);

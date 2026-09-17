@@ -94,7 +94,9 @@ export interface EngineConfig {
    * short wait before the picture moves, and nothing else.
    *
    * Not in a room of one: that room schedules nothing (`CmdDelay()` is 0),
-   * so there is nothing to wait for and the hold would only flicker.
+   * so there is nothing to wait for and the hold would only flicker -- unless
+   * the readiness gate is about to hold the play, which it does in a room of
+   * any size (see `holdsLocalPlay`).
    */
   holdLocalPlay: boolean;
   /**
@@ -400,6 +402,14 @@ const PLAY_WAIT_MS = 1000;
 const SILENT_PROBES = 3;
 
 /**
+ * What the server's corrector calls ready (`MinReadyState`, `MinBufferedS` in
+ * `server/internal/sync/corrector.go`): a report below either gates the
+ * member, and a gated member holds every `play`. See `holdsLocalPlay`.
+ */
+const GATE_MIN_READY_STATE = 3;
+const GATE_MIN_BUFFERED_S = 1;
+
+/**
  * The longest a conform waits for a not-yet-due anchor (see `conform`).
  * `CMD_DELAY` is at most 2 s; beyond that the wait is a clock error, and
  * conforming late is no better.
@@ -560,6 +570,10 @@ export class SyncEngine {
    * change from.
    */
   private intended: { reqId: string; seq: number; at: number; anchor: Anchor } | null = null;
+  /** The last `gate` frame said a `play` would be held: one is, or somebody is gated. */
+  private gateHolds = false;
+  /** The last report we sent is one the server gates this member on. See `holdsLocalPlay`. */
+  private reportedUnready = false;
   /** Periodic probes sent since anything was last received, and when the first went. See `timeLoop`. */
   private silentProbes = 0;
   private silentSince = 0;
@@ -1014,6 +1028,9 @@ export class SyncEngine {
     // Whatever the old socket was carrying back will never arrive.
     this.unacked = [];
     this.intended = null;
+    // The gate is the old session's: this member is not in it once it rejoins.
+    this.gateHolds = false;
+    this.reportedUnready = false;
     if (!this.running || clean || this.status === 'refused') {
       this.releaseRate();
       this.setStatus('closed', reason);
@@ -1199,8 +1216,10 @@ export class SyncEngine {
         break;
 
       case 'gate':
-        // UI only. The gate holds the COMMAND on the server, before the anchor
-        // moves; it needs no cooperation here and must never pause the player.
+        // The gate holds the COMMAND on the server, before the anchor moves;
+        // it needs no cooperation here and never pauses the player. It only
+        // says whether a local play of ours would be held (`holdsLocalPlay`).
+        this.gateHolds = f.waiting || (f.waitingOn ?? []).length > 0;
         this.ev.onGate?.(f.waiting, f.waitingOn ?? []);
         break;
 
@@ -1753,6 +1772,8 @@ export class SyncEngine {
       ...(finished ? { finished: true } : {}),
     };
     this.tx(hb);
+    this.reportedUnready = acquiring ||
+      (!absent && (hb.readyState < GATE_MIN_READY_STATE || hb.bufferedAheadS < GATE_MIN_BUFFERED_S));
     this.stats.reportsSent++;
     this.lastReportAt = now;
     this.lastAcquiringSent = acquiring;
@@ -2226,9 +2247,21 @@ export class SyncEngine {
     });
   }
 
-  /** Whether a local play in this room is held for the room. See `holdLocalPlay`. */
+  /**
+   * Whether a local play in this room is held for the room. See `holdLocalPlay`.
+   *
+   * Alone, only while the readiness gate will hold it: the server holds a
+   * `play` while anybody is gated, the presser included, whatever the room's
+   * size. Left playing, a lone presser ran ahead of an anchor still paused
+   * where they pressed, and the ack the release sent seeked them back by that
+   * much -- or, past `reconcileAfterMs`, the reconciler paused them first.
+   * Held, they start from the anchor when the room does, and nobody skips
+   * anything. Known from the last `gate` frame, or from our own last report
+   * when the frame it causes is not back yet.
+   */
   private holdsLocalPlay(): boolean {
-    return this.cfg.holdLocalPlay && this.members.length >= 2;
+    if (!this.cfg.holdLocalPlay) return false;
+    return this.members.length >= 2 || this.gateHolds || this.reportedUnready;
   }
 
   /**
