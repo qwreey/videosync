@@ -342,6 +342,9 @@ export function start(p: Platform): App {
     clearTimer: (h) => { clearTimeout(h); },
   }, openTab);
 
+  /** The element the watcher last handed over, and the adapter made for it. */
+  let wrapped: HTMLVideoElement | null = null;
+  let wrapper: Html5Adapter | null = null;
   const watcher = new PageWatcher({
     doc: document,
     win: window,
@@ -360,11 +363,21 @@ export function start(p: Platform): App {
         // media puts the new video at the old one's timestamp.
         engine?.setLocalMediaKey(key, mediaUrl);
       }
-      const d = providerAt(reg, href).entry?.provider.d;
-      adapter.setTarget(el ? new Html5Adapter(el, 'html5', {
-        ...(d?.capabilities ? { capabilities: d.capabilities } : {}),
-        ...(d?.seek ? { seek: d.seek } : {}),
-      }) : null);
+      // The same element on the same media is not new ground: an address that
+      // changed only in its query or fragment -- our own invite rewrite after a
+      // rotation, a site's `&t=` -- must not restart acquisition, which a
+      // hidden tab never finishes, so the member would ignore the room until
+      // the tab is shown (N5). The descriptor cannot differ either: a
+      // same-document URL change keeps the host.
+      if (el !== wrapped || mediaChanged || adapter.current !== wrapper) {
+        wrapped = el;
+        const d = providerAt(reg, href).entry?.provider.d;
+        wrapper = el ? new Html5Adapter(el, 'html5', {
+          ...(d?.capabilities ? { capabilities: d.capabilities } : {}),
+          ...(d?.seek ? { seek: d.seek } : {}),
+        }) : null;
+        adapter.setTarget(wrapper);
+      }
       if (mediaChanged) onMediaChanged();
       refreshStatus();
     },

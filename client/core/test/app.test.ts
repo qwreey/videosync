@@ -1355,3 +1355,48 @@ describe('provider descriptors on the page', () => {
     assert.deepEqual(JSON.parse(h.app.api.dump()).providerUpdates, ['laftel']);
   });
 });
+
+describe('an address change on the same video (N5)', () => {
+  /** One `<video>` on the page, found by the watcher's next check. */
+  async function putVideo(h: H) {
+    const v = h.dom.doc.createElement('video');
+    h.dom.doc.documentElement.append(v);
+    Object.assign(v, { videoWidth: 1920, videoHeight: 1080, duration: 60, paused: false, readyState: 4, muted: false,
+      volume: 1, currentTime: 5, playbackRate: 1, buffered: { length: 0 } });
+    h.dom.doc.querySelectorAll = (sel: string) => (sel === 'video' ? [v] : []);
+    await h.tick(1000);
+    return v;
+  }
+
+  it('keeps the element wrapped when only the invite fragment is rewritten', async () => {
+    const h = harness(`${ROOM_URL}#videosync=R.S`);
+    await putVideo(h);
+    const wrapped = h.app.api.adapter.current;
+    assert.ok(wrapped, 'control: the video was found');
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    let replaced = 0;
+    h.app.api.adapter.on('elementreplaced', () => { replaced++; });
+    // Another member rotates the secret; the app rewrites this tab's fragment.
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.match(h.dom.loc.href, /#videosync=R\.S2$/, 'control: the address did change');
+    await h.tick(2000);
+    // A retarget restarts acquisition, which a hidden tab never finishes: the
+    // member would ignore every room command until the tab is shown.
+    assert.equal(replaced, 0, 'the same element was announced as a new one');
+    assert.equal(h.app.api.adapter.current, wrapped);
+  });
+
+  it('still retargets when the address names another video on the same element', async () => {
+    const h = harness(ROOM_URL);
+    await putVideo(h);
+    const wrapped = h.app.api.adapter.current;
+    let replaced = 0;
+    h.app.api.adapter.on('elementreplaced', () => { replaced++; });
+    h.dom.loc.href = 'https://www.youtube.com/watch?v=other';
+    await h.tick(1000);
+    assert.equal(h.app.api.mediaKey(), 'yt:other');
+    assert.ok(replaced > 0, 'a single-page navigation reusing the element is a new media');
+    assert.notEqual(h.app.api.adapter.current, wrapped);
+  });
+});
