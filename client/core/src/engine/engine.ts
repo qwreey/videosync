@@ -395,9 +395,8 @@ const OWN_ACK_WAIT_MS = 5000;
 const PLAY_WAIT_MS = 1000;
 
 /**
- * Periodic clock probes left unanswered, over at least as many
- * `timeSyncIntervalMs`, before a socket counts as dead (see `timeLoop`):
- * 15-20 s at the default interval, against the server's own 90 s.
+ * Periodic clock probes left unanswered before a socket counts as dead (see
+ * `timeLoop`): 15-20 s at the default interval, against the server's own 90 s.
  */
 const SILENT_PROBES = 3;
 
@@ -1049,15 +1048,17 @@ export class SyncEngine {
     // Only the first drop of a session records the player: a failed reconnect
     // attempt has nothing newer to say about it.
     //
-    // A command of ours still unanswered may never have left: a socket is
-    // usually found dead by writing into it. The player already shows what
+    // A command of ours still unanswered may never have left: a socket that
+    // reset is found dead by writing into it. The player already shows what
     // that command did, so a snapshot of the player would find nothing to
     // send, and the reconciler then undid the member's change. Such a drop
     // records the room as the anchor had it instead -- the member's change is
     // then a difference like any made offline, and goes out if the room did
     // not move. A lost `play` left the player held, which looks like the
     // room; it is remembered as such. Only a command young enough to be
-    // waited for: an older one has been reconciled already.
+    // waited for: an older one has been reconciled already. That leaves a gap
+    // for a path that goes dark with no reset: `timeLoop` notices it 15-20 s
+    // in, so a command pressed in about the first 10 s is not resent.
     if (this.status === 'joined') {
       const s = this.d.adapter.readState();
       const room = lost.length > 0 && roomMs !== null;
@@ -1121,17 +1122,26 @@ export class SyncEngine {
    * sees the server's pings. Until then the member looked joined while their
    * commands and chat went nowhere and the room's moves never came. The server
    * answers every probe, so a socket that has let `SILENT_PROBES` of them go
-   * unanswered, over at least that many intervals, is dead: it is closed and
-   * handed to the ordinary reconnect path.
+   * unanswered is dead: it is closed and handed to the ordinary reconnect
+   * path.
    *
-   * Counted in probes as well as time: a throttled tab runs this once a
-   * minute, and a laptop coming back from suspend runs it before the socket
-   * has had a chance to deliver anything. Neither is a silence.
+   * Counted in probes, not in time since the last frame: a throttled tab runs
+   * this once a minute, so every tick finds a minute of quiet although each
+   * probe was answered at once. No time condition is added on top -- a timer
+   * never fires early, so `SILENT_PROBES` ticks always span at least that
+   * many intervals, and such a check could never change the outcome.
+   * `silentSince` only dates the silence for the close reason.
+   *
+   * Only a command pressed inside the last `OWN_ACK_WAIT_MS` before this
+   * fires is sent again after the reconnect (see `onClose`). A path that
+   * goes dark silently is found here 15-20 s later, so a press in roughly the
+   * first 10 s of it is still lost, and the reconciler undoes it. Accepted:
+   * resending older commands would replay intent the room may have moved on
+   * from.
    */
   private timeLoop(): void {
     const now = this.d.now();
-    if (this.silentProbes >= SILENT_PROBES &&
-      now - this.silentSince >= SILENT_PROBES * this.cfg.timeSyncIntervalMs) {
+    if (this.silentProbes >= SILENT_PROBES) {
       const silentMs = Math.round(now - this.silentSince);
       this.silentProbes = 0;
       this.d.transport.close();

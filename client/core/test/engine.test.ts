@@ -2102,9 +2102,32 @@ describe('a socket that dies without closing', () => {
     });
     await vt.advance(400);
     throttled = true;
+    const probes = tr.sentOf('time').length;
     await vt.advance(10 * 60_000);
     assert.equal(engine.state, 'joined');
     assert.equal(tr.connects, 1);
+    // Each tick found a minute without a frame; only the answered probes
+    // say the socket is alive.
+    assert.ok(tr.sentOf('time').length - probes >= 9, 'the liveness check never ran');
+  });
+
+  it('a new socket starts its own count', async () => {
+    // Two probes went unanswered on the old socket before it reset. The new
+    // one has not answered anything yet either -- but it has had no chance
+    // to miss three probes.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    silence(h);
+    await h.vt.advance(12_000);
+    assert.equal(h.engine.state, 'joined');
+    h.tr.drop('reset');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconnectBaseMs);
+    const connects = h.tr.connects;
+    h.tr.open();
+    await h.vt.advance(12_000);
+    assert.equal(h.tr.connects, connects, 'gave up on a socket that had missed two probes');
+    await h.vt.advance(10_000);
+    assert.ok(h.tr.connects > connects, 'never gave up on the silent new socket');
   });
 });
 
