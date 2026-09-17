@@ -47,6 +47,17 @@
       "identity": [{ "path": "/**", "query": { "v": "{id:any}" }, "key": "{id}", "watch": "https://video.example/w?v={id}" }],
       "examples": [{ "url": "https://video.example/zz?v=q", "key": "example:q", "watch": "https://video.example/w?v=q" }]
     } },
+    { "name": "a capture named like an Object member, captured by from alone", "valid": true, "set": {
+      "continues": [{ "from": "/watch/{constructor}", "to": "/next/{toString}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" },
+                   { "from": "example:/watch/a", "to": "example:/next/b", "continues": true }]
+    } },
+    { "name": "a continues example with a lone surrogate escape", "valid": true, "set": {
+      "continues": [{ "from": "/watch/{id:any}", "to": "/watch/{other:any}" }],
+      "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" },
+                   { "from": "example:/watch/\ud800", "to": "example:/watch/b", "continues": true },
+                   { "from": "example:/watch/\ud800/x", "to": "example:/watch/b", "continues": false }]
+    } },
 
     { "name": "unknown top-level field", "valid": false, "set": { "extra": 1 } },
     { "name": "a field in the wrong case", "valid": false, "set": { "ID": "example" } },
@@ -121,7 +132,16 @@
       "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/play/{id}" }],
       "examples": [{ "url": "https://video.example/watch/abc", "key": "example:/watch/abc" }] },
       "control": { "identity": [{ "path": "/watch/{id}", "key": "/watch/{id}", "watch": "https://video.example/watch/{id}" }] } },
-    { "name": "a :has( selector", "valid": false, "set": { "video": { "include": ["div:HAS(video)"] } } },
+    { "name": "a :has( selector", "valid": false, "set": { "video": { "include": ["div:HAS(video)"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a :has( selector written with an escape", "valid": false, "set": { "video": { "include": ["*:\\has(* *) video"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a :has( selector written with a hex escape", "valid": false, "set": { "video": { "include": ["div:h\\61s(video)"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a backslash anywhere in a selector", "valid": false, "set": { "video": { "include": [".md\\:hidden video"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a comment hiding :has(", "valid": false, "set": { "video": { "include": ["div:/**/has(video)"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a comment opener inside an attribute value", "valid": false, "set": { "video": { "include": ["[data-x=\"/*\"] video"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a CR LF in a selector", "valid": false, "set": { "video": { "include": ["div\r\nvideo"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a tab in a selector", "valid": false, "set": { "video": { "include": ["div\tvideo"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a form feed in a selector", "valid": false, "set": { "video": { "include": ["div\fvideo"] } }, "control": { "video": { "include": ["#player video"] } } },
+    { "name": "a C1 control character in a selector", "valid": false, "set": { "video": { "include": ["div\u0085video"] } }, "control": { "video": { "include": ["#player video"] } } },
     { "name": "an empty selector", "valid": false, "set": { "video": { "exclude": [""] } } },
     { "name": "outclassedFactor out of range", "valid": false, "set": { "video": { "outclassedFactor": 1 } } },
     { "name": "fractional minIntrinsicArea", "valid": false, "set": { "video": { "minIntrinsicArea": 1.5 } } },

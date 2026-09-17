@@ -167,6 +167,13 @@ function selectors(o: Obj, k: string, where: string, p: Problems): void {
   const list = strList(o, k, where, p, MAX_SELECTORS);
   for (const s of list ?? []) {
     if (s === '' || cpLen(s) > MAX_SELECTOR_LEN) p.add(`${where}.${k}: a selector must be 1..${MAX_SELECTOR_LEN} characters`);
+    // CSS decodes escapes and drops comments before it forms a function
+    // token, so `:\has(` and `:/**/has(` are :has( to the engine. Refusing
+    // what could spell it differently is the only check that needs no
+    // tokenizer; control characters go with them (a newline ends an escape).
+    else if (/[\\\u0000-\u001f\u007f-\u009f]|\/\*/.test(s)) {
+      p.add(`${where}.${k}: a selector must not contain a backslash, "/*" or a control character`);
+    }
     // The one selector feature whose cost grows with the whole document, run
     // on every mutation of a page that may be a feed of thousands of nodes.
     else if (s.toLowerCase().includes(':has(')) p.add(`${where}.${k}: ":has(" is not allowed`);
@@ -435,7 +442,9 @@ export class Provider {
       const ca = matchBody(c.from, a);
       const cb = ca && matchBody(c.to, b);
       if (!ca || !cb) continue;
-      if (Object.keys(ca).every((k) => !(k in cb) || cb[k] === ca[k])) return true;
+      // Own keys only: a capture may be named `constructor` or `toString`, and
+      // `in` would find those on Object.prototype where Go's map finds nothing.
+      if (Object.keys(ca).every((k) => !Object.hasOwn(cb, k) || cb[k] === ca[k])) return true;
     }
     return false;
   }
@@ -446,8 +455,15 @@ export class Provider {
  * segment, but without percent-decoding (the body is already decoded text).
  */
 function matchBody(t: PathTemplate, body: string): Captures | null {
-  return matchPath(t, body.split('/').map((s) => encodeURIComponent(s)).join('/'));
+  // A lone surrogate cannot be encoded (encodeURIComponent throws, and
+  // parseDescriptor would throw rather than refuse). Go's JSON decoder reads
+  // the same escape as U+FFFD, so read it that way too: both ports then
+  // judge the same text.
+  const wellFormed = body.replace(LONE_SURROGATE, '\uFFFD');
+  return matchPath(t, wellFormed.split('/').map((s) => encodeURIComponent(s)).join('/'));
 }
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 function wrap<T>(where: string, fn: () => T): T {
   try {

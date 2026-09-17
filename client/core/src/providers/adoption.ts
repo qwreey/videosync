@@ -198,17 +198,30 @@ export function diffDescriptors(before: Descriptor | null, after: Descriptor): F
     for (const f of ['hosts', 'pageHosts', 'canonicalHost', 'identity', 'pathFallback'] as const) {
       out.push({ field: f, before: undefined, after: after[f], widens: true });
     }
+    out.push({ field: 'keyPrefix', before: undefined, after: after.keyPrefix ?? after.id, widens: true });
+    out.push({ field: 'continues', before: undefined, after: after.continues ?? [], widens: true });
     return out;
   }
-  add('hosts', b.hosts, after.hosts, after.hosts.some((h) => !coveredBy(h, b.hosts)));
+  // Any host that is not literally an old one widens, even one an old
+  // wildcard covers: the registry picks by how specifically a host is
+  // claimed, across ids and tiers, so `*.x` -> `www.x` raises the claim on
+  // www.x and can tie or beat the user's own descriptor there.
+  add('hosts', b.hosts, after.hosts, after.hosts.some((h) => !b.hosts.includes(h)));
   const pb = b.pageHosts ?? b.hosts;
   const pa = after.pageHosts ?? after.hosts;
   add('pageHosts', pb, pa, pa.some((h) => !coveredBy(h, pb)));
   add('canonicalHost', b.canonicalHost, after.canonicalHost, true);
   // A rule that is not literally one of the old ones may name pages the old
   // ones did not. Deciding "narrower" for templates in general is not worth
-  // the code; removing a rule is the one change that is plainly narrower.
-  add('identity', b.identity, after.identity, after.identity.some((r) => !b.identity.some((o) => same(o, r))));
+  // the code. Rules are first-match, so order is part of the key: a reorder,
+  // or removing a rule that shadowed a later one, renames media that members
+  // on the old pin still call by the old key. Dropping rules from the end is
+  // the one plainly narrower change, and only when their pages get no key
+  // at all rather than the generic rule's.
+  const kept = after.identity.length <= b.identity.length &&
+    after.identity.every((r, i) => same(r, b.identity[i])) &&
+    (after.identity.length === b.identity.length || !after.pathFallback);
+  add('identity', b.identity, after.identity, !kept);
   add('pathFallback', b.pathFallback, after.pathFallback, !b.pathFallback && after.pathFallback);
   add('keyPrefix', b.keyPrefix ?? b.id, after.keyPrefix ?? after.id, true);
   const cb = b.capabilities ?? {};
