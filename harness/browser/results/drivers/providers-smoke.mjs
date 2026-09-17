@@ -3,13 +3,15 @@
 // BROWSER-FINDINGS §22. Needs a local-ext.mjs build in Helium and:
 //   mkdir d && cp harness/browser/results/drivers/localmedia.json d/ && videosyncd -verbose -providers d
 //   EXT_ID=<the build's id, if its worker is idle> node harness/browser/results/drivers/providers-smoke.mjs
+// Writes ../providers-smoke.json only if every check passes, else ../providers-smoke-failed.json; RESULT=<name> picks
+// the name (smoke.mjs).
 import { Session } from '../../cdp.mjs';
 import { smokeRun } from './smoke.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SERVER = 'http://127.0.0.1:8787';
 const PAGE = 'http://127.0.0.1:8898/watch/1';
-const run = smokeRun(new URL('../providers-smoke.json', import.meta.url), { server: SERVER, flags: '-providers <dir: localmedia.json>' });
+const run = smokeRun(new URL('../providers-smoke.json', import.meta.url), { server: SERVER, flags: '-providers <dir: localmedia.json>' }, console, { result: process.env.RESULT });
 const { out, check, step } = run;
 
 const code = await run.main(async () => {

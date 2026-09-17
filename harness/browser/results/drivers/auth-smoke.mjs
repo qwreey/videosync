@@ -3,6 +3,8 @@
 // device signed out. Drives a local-ext.mjs build (open shadow root) over CDP; BROWSER-FINDINGS §22.
 //   videosyncd -verbose -auth token -auth-tokens-file $KEY_FILE -auth-scope create
 //   KEY_FILE=... node harness/browser/results/drivers/auth-smoke.mjs
+// Writes ../auth-smoke.json only if every check passes, else ../auth-smoke-failed.json; RESULT=<name> picks
+// the name (smoke.mjs).
 import { readFileSync } from 'node:fs';
 import { Session } from '../../cdp.mjs';
 import { memberCount, smokeRun } from './smoke.mjs';
@@ -13,7 +15,7 @@ const SERVER_LOG = process.env.SERVER_LOG || new URL('../../../../.cache/run/ser
 // KEY_FILE: the one access key videosyncd's -auth-tokens-file holds (never written to the results).
 const KEY = readFileSync(process.env.KEY_FILE, 'utf8').trim();
 const A_URL = 'http://127.0.0.1:8898/watch/1';
-const run = smokeRun(new URL('../auth-smoke.json', import.meta.url), { server: SERVER, flags: '-auth token -auth-tokens-file <1 key> -auth-scope create' });
+const run = smokeRun(new URL('../auth-smoke.json', import.meta.url), { server: SERVER, flags: '-auth token -auth-tokens-file <1 key> -auth-scope create' }, console, { result: process.env.RESULT });
 const { out, check, step } = run;
 
 const code = await run.main(async () => {
