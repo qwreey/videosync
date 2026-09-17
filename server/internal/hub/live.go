@@ -175,7 +175,8 @@ func (l *Live) handle(c *conn, m room.Msg) {
 			return
 		}
 		// Anything still deferred is older than this. It is folded, not
-		// dropped -- see coalesce -- and goes out now, with this, in order.
+		// dropped -- see coalesce -- and goes out now, ahead of this, in the
+		// order it was sent.
 		batch := coalesce(c.pending, v)
 		c.pending = nil
 		if c.retry != nil {
@@ -222,9 +223,9 @@ func (l *Live) handle(c *conn, m room.Msg) {
 // stayed on an earlier skip, nothing resent the user's final position, and
 // the ack for that earlier skip then sought the user's own player back to it.
 // Coalescing keeps the limit -- one batch per window, and a batch is at most
-// three commands whatever the sender does -- while the newest intent wins, the
-// same rule the readiness gate applies to the command it holds. Nothing is
-// sent on deferral: the command will be applied, and its ack says so. A
+// three commands whatever the sender does -- while the newest intent of each
+// kind wins, the same rule the readiness gate applies to the command it holds.
+// Nothing is sent on deferral: the command will be applied, and its ack says so. A
 // command folded away gets no ack of its own; the client forgets it on the ack
 // of a later one (engine.ts ownAck).
 func (l *Live) deferCmd(c *conn, v room.Cmd, now int64) {
@@ -262,58 +263,50 @@ func (l *Live) retryCmd(c *conn) {
 	}
 }
 
-// coalesce folds v onto the deferred commands in pending, keeping the result
-// in the form [media] [seek] [play|pause], each part optional.
+// coalesce folds v onto the deferred commands in pending. The result holds at
+// most one `media`, one seek and one of play/pause, in the order they were
+// sent.
 //
 // "Newest wins" is only true between commands of one kind. A `play` carries
 // no position and a `pause` inside a lead anchors on the room's schedule, so
 // letting either replace a deferred seek threw the seek's target away: scrub,
 // press space, and the room started from an earlier skip. And a `media` that
-// anything later replaced was never applied or refused at all. So each kind
-// replaces only its own kind, and the batch is put in the order that makes it
-// mean what the sequence meant:
+// anything later replaced was never applied or refused at all. So:
 //   - `media` resets position, pause state and identity, so it replaces
 //     everything before it, and nothing after it may drop it;
-//   - a seek replaces a seek, and goes ahead of a play or pause: seeking a
-//     playing room is where it plays from, and a pause followed by a seek is
-//     a pause at the seek's target;
+//   - a seek replaces a seek;
 //   - `play` and `pause` replace each other.
+//
+// The one that replaces takes the place of the newest, never the oldest: the
+// batch is the sequence the sender made, minus what a later command made moot.
+// Order matters to the sender, not only to the room. engine.ts ownAck forgets
+// every unanswered command of ours older than the one acked, and treats a
+// paused ack as the hold for a play only if that play was sent after it; a
+// batch reordered to [seek][play] from "play, then seek" acked the seek as if
+// the play had never been pressed. Every command dropped here has a later one
+// in the batch, so its sender forgets it on that one's ack.
 func coalesce(pending []room.Cmd, v room.Cmd) []room.Cmd {
-	if v.Kind == "media" {
-		return []room.Cmd{v}
-	}
-	var media, seek, state *room.Cmd
-	for i := range pending {
-		switch pending[i].Kind {
-		case "media":
-			media = &pending[i]
-		case "seek":
-			seek = &pending[i]
-		case "play", "pause":
-			state = &pending[i]
+	group := func(kind string) string {
+		if kind == "pause" {
+			return "play"
 		}
+		return kind
 	}
 	switch v.Kind {
-	case "seek":
-		seek = &v
-		if state != nil && state.Kind == "pause" {
-			p := *state
-			p.PositionMs = v.PositionMs
-			state = &p
-		}
-	case "play", "pause":
-		state = &v
+	case "media":
+		return []room.Cmd{v}
+	case "seek", "play", "pause":
 	default:
 		// Not deferred (see deferCmd); never costs what already is.
 		return pending
 	}
-	out := make([]room.Cmd, 0, 3)
-	for _, c := range []*room.Cmd{media, seek, state} {
-		if c != nil {
-			out = append(out, *c)
+	out := make([]room.Cmd, 0, len(pending)+1)
+	for _, c := range pending {
+		if group(c.Kind) != group(v.Kind) {
+			out = append(out, c)
 		}
 	}
-	return out
+	return append(out, v)
 }
 
 // truncateUTF8 cuts to at most n bytes without splitting a rune -- a truncated
