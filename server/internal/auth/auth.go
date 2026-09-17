@@ -119,7 +119,8 @@ type Config struct {
 	// PublicURL is where a browser reaches this server. Required for OIDC,
 	// because the IdP's redirect must go to exactly the URI registered with
 	// it; otherwise login links are built from the request's Host, which a
-	// reverse proxy may have rewritten to its upstream (videosyncd warns).
+	// reverse proxy may have rewritten to its upstream, and are https only
+	// over TLS or on a trusted proxy's X-Forwarded-Proto (videosyncd warns).
 	PublicURL string
 	OIDC      OIDCConfig
 

@@ -90,8 +90,12 @@ never holds it.
 - Behind any reverse proxy, whatever the method: `-public-url`. *(Review 4:)* without it the
   login link is built from the `Host` the proxy sends, and nginx's `proxy_pass` sends the
   upstream's (`127.0.0.1:8080`) by default, so the tab opens on the visitor's own machine.
-  `videosyncd` warns when `-trusted-proxies` is set without it; `X-Forwarded-Host` is not read
-  (nginx does not send it by default either).
+  The scheme is `https` only for a TLS connection or a trusted proxy's `X-Forwarded-Proto:
+  https`, which nginx does not send by default either: with `proxy_set_header Host $host`
+  alone, a proxy that terminates TLS gets `http://` login links and a flow cookie without
+  `Secure`. Without `-public-url`, nginx needs `Host $host` *and* `X-Forwarded-Proto $scheme`,
+  with `-trusted-proxies` naming it. `videosyncd` warns when `-trusted-proxies` is set without
+  `-public-url`; `X-Forwarded-Host` is not read (nginx does not send it by default either).
 - An IdP: `-auth oidc` with the flags above; register `<public-url>/auth/oidc/callback`.
 
 ## As built (2026-09-17)

@@ -145,10 +145,16 @@ device signs in once.
   header it does not write through as the visitor sent it, so when both arrive
   and disagree the request is charged to the proxy itself. Pass **`-public-url
   https://sync.example.com`** too: without it the login link is built from the
-  `Host` header the proxy sends, and nginx's `proxy_pass` sends the upstream's
-  (`127.0.0.1:8080`) unless you add `proxy_set_header Host $host` — the login
-  tab then opens on the visitor's own machine. The server warns at startup when
-  `-trusted-proxies` is set without it. With `-auth proxy`, require sign-in at
+  request — its host from the `Host` header the proxy sends, and its scheme
+  `https` only from a trusted proxy's `X-Forwarded-Proto: https`. nginx's
+  `proxy_pass` sends neither: `Host` is the upstream's (`127.0.0.1:8080`), so the
+  login tab opens on the visitor's own machine, and with `Host $host` alone the
+  link is `http://` behind a proxy that terminates TLS (the flow cookie then
+  loses `Secure`). If you cannot pass `-public-url`, nginx needs both
+  `proxy_set_header Host $host;` and `proxy_set_header X-Forwarded-Proto
+  $scheme;`, and `-trusted-proxies` must name the proxy or the second is
+  ignored. The server warns at startup when `-trusted-proxies` is set without
+  `-public-url`. With `-auth proxy`, require sign-in at
   the proxy for **`/api/session` and `/auth/`** only, and leave everything else
   open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, `/api/providers`, and every
   `OPTIONS` request. The server checks those itself; a proxy that gates a
