@@ -44,11 +44,13 @@ interface Opts {
   gestures?: boolean;
   continues?: EngineDeps['continues'];
   adapter?: (p: FakePlayer) => EngineDeps['adapter'];
+  /** A player that ends as the HTML spec says. See `SpecPlayer`. */
+  spec?: boolean;
 }
 
 function harness(o: Opts = {}) {
   const vt = new VirtualTime();
-  const player = new FakePlayer(vt, { durationS: 1400, ...o.player });
+  const player = new (o.spec ? SpecPlayer : FakePlayer)(vt, { durationS: 1400, ...o.player });
   const tr = new FakeTransport();
   const g = new FakeGestures(vt);
   const acq: string[] = [];
@@ -345,6 +347,101 @@ describe('the end of the media', () => {
     h.player.emit('pause');
     await h.vt.advance(20);
     assert.deepEqual(h.kinds(), ['pause']);
+  });
+});
+
+/**
+ * The end of media as the HTML spec has it, which FakePlayer does not model:
+ * a seek clamps to the duration, playback that reaches the end pauses and
+ * sets `ended`, and play() on an ended element seeks back to 0 first.
+ */
+class SpecPlayer extends FakePlayer {
+  restarts = 0;
+  private atEnd(): void {
+    if (this.positionS < this.durationS) { this.ended = false; return; }
+    this.positionS = this.durationS;
+    this.ended = true;
+    this.paused = true;
+  }
+  override readState() {
+    super.readState();
+    this.atEnd();
+    return super.readState();
+  }
+  override async seekTo(positionS: number): Promise<void> {
+    await super.seekTo(Math.max(0, Math.min(positionS, this.durationS)));
+    this.atEnd();
+  }
+  override async play(): Promise<void> {
+    if (this.ended) {
+      this.restarts++;
+      this.positionS = 0;
+      this.ended = false;
+    }
+    await super.play();
+  }
+}
+
+describe('an ended element and the room\'s transitions', () => {
+  /** A room of two playing at `positionS`, and a steady member with it. */
+  async function playing(positionS: number) {
+    const h = harness({ spec: true, player: { paused: false, positionS } });
+    await h.join({ positionMs: positionS * 1000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    return { h, p: h.player as SpecPlayer };
+  }
+
+  it('a room seeked to the end leaves the member there, not at the start', async () => {
+    const { h, p } = await playing(1000);
+    await h.state({ positionMs: 1_400_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.ok(p.positionS > 1399, `at ${p.positionS}`);
+    assert.ok(!h.kinds().includes('seek'), 'a restart was sent to the room');
+  });
+
+  it('a member who already ended is not restarted by a pause and play just short of the end', async () => {
+    const { h, p } = await playing(1399);
+    await h.vt.advance(1500); // plays to its end
+    assert.equal(p.ended, true);
+    await h.state({ positionMs: 1_399_850, paused: true }, 'pause');
+    await h.state({ positionMs: 1_399_850, paused: false }, 'play');
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.deepEqual(h.kinds(), []);
+  });
+
+  it('the member who scrubs to the end is not restarted by its own ack', async () => {
+    const { h, p } = await playing(1000);
+    h.g.press();
+    await p.seekTo(1400);
+    p.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek']);
+    await h.ack(h.cmds()[0]!, { positionMs: 1_400_000, paused: false });
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.deepEqual(h.kinds(), ['seek']);
+  });
+
+  it('control: a room seeked short of the end is played', async () => {
+    const { h, p } = await playing(1000);
+    await h.state({ positionMs: 1_390_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.paused, false);
+    assert.ok(p.positionS > 1390, `at ${p.positionS}`);
+  });
+
+  it('control: an ended member is played again by a room seeked back into the media', async () => {
+    const { h, p } = await playing(1399);
+    await h.vt.advance(1500);
+    assert.equal(p.ended, true);
+    await h.state({ positionMs: 600_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.paused, false);
+    assert.equal(p.restarts, 0);
+    assert.ok(Math.abs(p.positionS - 600.5) < 0.3, `at ${p.positionS}`);
   });
 });
 

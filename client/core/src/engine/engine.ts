@@ -317,6 +317,8 @@ export interface EngineStats {
   fought: number;
   /** Pauses made by the end of the media, which are not a member's pause. */
   endsNotSent: number;
+  /** Room transitions to "playing" not pressed on an element at its end, which play() would restart. */
+  playsAtEnd: number;
   /** Our conditional `media` commands the room had already moved past. */
   mediaStale: number;
   /** Next-episode continuations sent. */
@@ -472,7 +474,7 @@ export class SyncEngine {
     skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0, ticketFailures: 0,
     playFailures: 0, playsHeld: 0, reportsDeferred: 0, reconciles: 0,
     mediaEpochs: 0, acquisitions: 0, siteMovesAbsorbed: 0, ungesturedIgnored: 0,
-    gesturedIntents: 0, fought: 0, endsNotSent: 0, mediaStale: 0, continuations: 0,
+    gesturedIntents: 0, fought: 0, endsNotSent: 0, playsAtEnd: 0, mediaStale: 0, continuations: 0,
     namings: 0, adoptions: 0, skippedAcquiring: 0,
   };
 
@@ -1303,8 +1305,14 @@ export class SyncEngine {
       }
       if (paused) {
         await a.pause();
-      } else {
+      } else if (!this.atEnd(targetMs)) {
         await this.tryPlay();
+      } else {
+        // play() on an ended element seeks it to 0 first (HTML spec), so the
+        // room's own transition would start this member over -- and a seek
+        // that lands on the duration ends the element itself. At the end of
+        // the media the member is finished, which is where the room is too.
+        this.stats.playsAtEnd++;
       }
     } finally {
       this.applyingRemote = null;
@@ -1315,6 +1323,12 @@ export class SyncEngine {
       // sent by `evaluate`, so adopting it here loses nothing.
       this.detector.rebaseline(s.positionS, s.paused);
     }
+  }
+
+  /** Whether the element is at its end, or `targetMs` is (read after any seek). */
+  private atEnd(targetMs: number): boolean {
+    const s = this.d.adapter.readState();
+    return s.ended === true || (s.durationS > 0 && landsAt(targetMs, s.durationS) >= s.durationS * 1000);
   }
 
   private async tryPlay(): Promise<void> {
