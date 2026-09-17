@@ -279,3 +279,16 @@ func (c ConfidenceGated) Forget(clientID string) {
 		f.Forget(clientID)
 	}
 }
+
+// rateReleaser is room.RateReleaser, which this package cannot import.
+type rateReleaser interface{ RateReleased(clientID string) }
+
+// RateReleased passes the room's "this member is back at 1.0" through to the
+// wrapped law, for the same reason as Forget: without it a wrapped
+// rate-modelling law keeps treating its last nudge as in effect after the
+// element's load algorithm reset the rate, and disagrees with the room.
+func (c ConfidenceGated) RateReleased(clientID string) {
+	if rr, ok := c.Inner.(rateReleaser); ok {
+		rr.RateReleased(clientID)
+	}
+}
