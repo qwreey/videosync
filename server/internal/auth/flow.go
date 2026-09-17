@@ -29,6 +29,7 @@ type flow struct {
 	code    string // shown in the panel and on the page
 	binding string // the flow cookie's value: which browser opened the page
 	exp     time.Time
+	owner   string // the client that began it (bucketKey), for its share
 
 	// OIDC, set by /auth/oidc/start.
 	state, nonce, verifier string
@@ -50,21 +51,35 @@ const (
 type flows struct {
 	ttl time.Duration
 	max int
+	// share is how many live flows one client may hold. The table is
+	// everybody's and begin needs no credentials, so without it one client
+	// pacing itself under the begin limit could hold every slot for a TTL.
+	// A person needs one or two; a deployment behind an unconfigured proxy is
+	// one client, and the begin limit already paces it more tightly than this.
+	share int
 
 	mu      sync.Mutex
 	byID    map[string]*flow
 	byPoll  map[string]*flow
 	byState map[string]*flow
+	byOwner map[string]int
 }
+
+const flowShare = 16
 
 func newFlows(ttl time.Duration, max int) *flows {
 	return &flows{
-		ttl: ttl, max: max,
+		ttl: ttl, max: max, share: min(flowShare, max),
 		byID: map[string]*flow{}, byPoll: map[string]*flow{}, byState: map[string]*flow{},
+		byOwner: map[string]int{},
 	}
 }
 
-var errTooManyFlows = errors.New("auth: too many logins in progress")
+var (
+	errTooManyFlows = errors.New("auth: too many logins in progress")
+	// errFlowShare: this client holds its share; retry after the returned wait.
+	errFlowShare = errors.New("auth: too many logins in progress from this client")
+)
 
 // codeAlphabet leaves out what reads ambiguously (0/O, 1/I/L) and vowels, so a
 // code never spells anything.
@@ -87,20 +102,32 @@ func newCode() string {
 	return string(out)
 }
 
-func (fs *flows) begin(now time.Time) (*flow, error) {
+// begin opens a flow for client. With errFlowShare it also says when that
+// client's oldest flow expires.
+func (fs *flows) begin(client string, now time.Time) (*flow, time.Duration, error) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 	fs.sweep(now)
+	if fs.byOwner[client] >= fs.share {
+		var first time.Time
+		for _, f := range fs.byID {
+			if f.owner == client && (first.IsZero() || f.exp.Before(first)) {
+				first = f.exp
+			}
+		}
+		return nil, first.Sub(now), errFlowShare
+	}
 	if len(fs.byID) >= fs.max {
-		return nil, errTooManyFlows
+		return nil, 0, errTooManyFlows
 	}
 	f := &flow{
 		id: randomToken(16), pollID: randomToken(32), code: newCode(),
-		binding: randomToken(24), exp: now.Add(fs.ttl),
+		binding: randomToken(24), exp: now.Add(fs.ttl), owner: client,
 	}
 	fs.byID[f.id] = f
 	fs.byPoll[f.pollID] = f
-	return f, nil
+	fs.byOwner[client]++
+	return f, 0, nil
 }
 
 func (fs *flows) sweep(now time.Time) {
@@ -112,6 +139,11 @@ func (fs *flows) sweep(now time.Time) {
 }
 
 func (fs *flows) drop(f *flow) {
+	if fs.byID[f.id] == f {
+		if fs.byOwner[f.owner]--; fs.byOwner[f.owner] <= 0 {
+			delete(fs.byOwner, f.owner)
+		}
+	}
 	delete(fs.byID, f.id)
 	delete(fs.byPoll, f.pollID)
 	if f.state != "" {

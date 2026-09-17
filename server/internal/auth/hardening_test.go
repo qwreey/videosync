@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -178,15 +179,15 @@ func TestTheLoginTableIsBounded(t *testing.T) {
 	fs := newFlows(time.Minute, 3)
 	now := time.Unix(1_800_000_000, 0)
 	for range 3 {
-		if _, err := fs.begin(now); err != nil {
+		if _, _, err := fs.begin("", now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := fs.begin(now); err == nil {
+	if _, _, err := fs.begin("", now); err == nil {
 		t.Fatal("a fourth login began in a table of three")
 	}
 	// Expired ones make room.
-	if _, err := fs.begin(now.Add(2 * time.Minute)); err != nil {
+	if _, _, err := fs.begin("", now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("expired logins still held the table: %v", err)
 	}
 	// And the endpoint says so instead of failing oddly.
@@ -196,8 +197,72 @@ func TestTheLoginTableIsBounded(t *testing.T) {
 	})
 	g.s.flows = newFlows(time.Minute, 1)
 	g.begin(client)
-	if r := g.do("POST", "/api/auth/begin", client, "", nil); r.code != http.StatusServiceUnavailable || r.body["error"] != "busy" {
+	// From somebody else: the first client's own second begin is its share.
+	if r := g.do("POST", "/api/auth/begin", "198.51.100.99:1", "", nil); r.code != http.StatusServiceUnavailable || r.body["error"] != "busy" {
 		t.Fatalf("a full table answered %d %v", r.code, r.body)
+	}
+}
+
+// An IPv6 host is routinely given a whole /64 and can source every request
+// from a fresh address in it. Keyed by /128, each one was a fresh bucket: the
+// guessing limit did nothing, and one host could fill the login table.
+func TestAnIPv6ClientIsChargedPerSlash64(t *testing.T) {
+	g := newRig(t, nil)
+	limited := 0
+	for i := range 50 {
+		r := g.do("POST", "/api/session", fmt.Sprintf("[2001:db8:0:1::%x]:1", i+1), "",
+			map[string]string{"Authorization": "Bearer wrong-key-" + fmt.Sprint(i)})
+		if r.code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Error("fifty wrong keys from one /64 were all checked")
+	}
+	// Another /64 is somebody else.
+	if r := g.do("POST", "/api/session", "[2001:db8:0:2::1]:1", "", map[string]string{"Authorization": "Bearer nope"}); r.code == http.StatusTooManyRequests {
+		t.Error("a neighbouring /64 was limited")
+	}
+	// IPv4 stays per address.
+	if r := g.do("POST", "/api/session", "198.51.100.8:1", "", map[string]string{"Authorization": "Bearer nope"}); r.code == http.StatusTooManyRequests {
+		t.Error("an unrelated IPv4 client was limited")
+	}
+
+	// The same through a trusted proxy, which names the client in a header.
+	trusted, _ := ParsePrefixes("10.0.0.2")
+	p := peers{trusted: trusted}
+	a := p.client(req("10.0.0.2:1", map[string]string{"X-Real-IP": "2001:db8:0:3::1"}))
+	b := p.client(req("10.0.0.2:1", map[string]string{"X-Forwarded-For": "2001:db8:0:3::ffff"}))
+	c := p.client(req("10.0.0.2:1", map[string]string{"X-Forwarded-For": "2001:db8:0:4::1"}))
+	if a != b || a == c {
+		t.Errorf("forwarded IPv6 clients: %q %q %q; want the first two equal and the third apart", a, b, c)
+	}
+}
+
+// The login table is shared by everybody, and begin needs no credentials. One
+// client -- even one pacing itself under the begin limit -- must not be able
+// to hold every slot, or nobody else can start a login until its flows expire.
+func TestOneClientCannotHoldTheWholeLoginTable(t *testing.T) {
+	g := newRig(t, nil)
+	g.s.flows = newFlows(5*time.Minute, 60)
+	got := 0
+	for range 60 {
+		// Slow enough that the begin bucket never says no.
+		g.clock.add(5 * time.Second)
+		if r := g.do("POST", "/api/auth/begin", client, "", nil); r.code == 200 {
+			got++
+		}
+	}
+	if got >= 60 {
+		t.Errorf("one client holds all %d login slots", got)
+	}
+	if r := g.do("POST", "/api/auth/begin", "198.51.100.99:1", "", nil); r.code != 200 {
+		t.Fatalf("another client could not begin a login: %d %s", r.code, r.raw)
+	}
+	// Its share comes back as its flows end.
+	g.clock.add(5 * time.Minute)
+	if r := g.do("POST", "/api/auth/begin", client, "", nil); r.code != 200 {
+		t.Fatalf("expired flows still count against their client: %d %s", r.code, r.raw)
 	}
 }
 

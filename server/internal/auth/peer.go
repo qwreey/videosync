@@ -89,22 +89,22 @@ func (p peers) client(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	if !p.fromTrustedProxy(r) {
-		return a.String()
+		return bucketKey(a)
 	}
 	var real netip.Addr
 	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
 		x, err := netip.ParseAddr(v)
 		if err != nil {
-			return a.String()
+			return bucketKey(a)
 		}
 		real = x.Unmap()
 	}
 	xff := r.Header.Values("X-Forwarded-For")
 	if len(xff) == 0 {
 		if real.IsValid() {
-			return real.String()
+			return bucketKey(real)
 		}
-		return a.String()
+		return bucketKey(a)
 	}
 	hop := a
 	hops := strings.Split(strings.Join(xff, ","), ",")
@@ -122,9 +122,23 @@ func (p peers) client(r *http.Request) string {
 		}
 	}
 	if real.IsValid() && real != hop {
+		return bucketKey(a)
+	}
+	return bucketKey(hop)
+}
+
+// bucketKey is who a request is charged to: an IPv4 address, or the /64 an
+// IPv6 one is in. A /64 is one network's worth of addresses and routinely a
+// single host's, which can source every request from a fresh one -- keyed by
+// the full address, each would be a fresh bucket and a fresh share of the
+// login table.
+func bucketKey(a netip.Addr) string {
+	a = a.Unmap().WithZone("")
+	if a.Is4() {
 		return a.String()
 	}
-	return hop.String()
+	p, _ := a.Prefix(64)
+	return p.String()
 }
 
 // limiter is a token bucket per peer. The hub's cytube throttle is per

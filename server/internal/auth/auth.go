@@ -490,7 +490,15 @@ func (s *Server) handleBegin(w http.ResponseWriter, r *http.Request) {
 	if s.limited(w, r, s.limBegin) {
 		return
 	}
-	f, err := s.flows.begin(s.cfg.Now())
+	f, wait, err := s.flows.begin(s.peers.client(r), s.cfg.Now())
+	if errors.Is(err, errFlowShare) {
+		// This client's own doing, and it clears as its flows expire: the
+		// panel says "too many attempts" for this, not "server busy".
+		ms := max(wait.Milliseconds(), 1)
+		w.Header().Set("Retry-After", fmt.Sprint((ms+999)/1000))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "rate_limited", "retryMs": ms})
+		return
+	}
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "busy"})
 		return
