@@ -710,24 +710,60 @@ describe('the wire contract', () => {
       hb: ['residualMs', 'positionMs', 'readyState', 'lastAppliedSeq',
         'atServerMs', 'uncertaintyMs', 'rttMs', 'clockSamples'],
     };
-    const h = harness({ paused: false, positionS: 10.4567 });
-    await h.join({ positionMs: 10_456, atServerMs: OFFSET, paused: false });
-    await h.vt.advance(3000);
-    h.player.positionS += 7; // provoke a seek command and an anomaly report
-    await h.vt.advance(2000);
+    //
+    // With a clock and a server that make those fields fractional: the
+    // shared harness has an integer clock and a zero-RTT server, so t0,
+    // atServerMs, uncertaintyMs and rttMs came out whole whether or not the
+    // engine rounded them, and this test could not fail for them (review 4 N31).
+    const FRACTION = 0.4567;
+    const vt = new VirtualTime();
+    const player = new FakePlayer(vt, { paused: false, positionS: 10.4567 });
+    /** A server 7 ms away, whose own timestamps are whole milliseconds. */
+    class DistantServer extends FakeTransport {
+      override send(f: Parameters<FakeTransport['send']>[0]): void {
+        super.send(f);
+        if (f.t !== 'time') return;
+        const t0 = f.t0;
+        vt.setTimer(() => {
+          const tRecv = Math.round(t0 + OFFSET + 3);
+          this.deliver({ t: 'time.reply', t0, tRecv, tSend: tRecv + 1 });
+        }, 7);
+      }
+    }
+    const tr = new DistantServer();
+    const engine = new SyncEngine({
+      adapter: player, transport: tr, now: () => vt.now + FRACTION,
+      setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false,
+    }, CFG);
+    engine.start();
+    tr.open();
+    tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 10_456, atServerMs: OFFSET, paused: false, mediaKey: 'yt:abc' },
+      members: [], serverMs: OFFSET, mediaKey: 'yt:abc',
+    });
+    await vt.advance(3000);
+    assert.equal(engine.stats.timeSamples > 0, true, 'the clock never settled');
+    player.positionS += 7; // provoke a seek command and an anomaly report
+    await vt.advance(2000);
 
+    const seen = new Set<string>();
     let checked = 0;
-    for (const f of h.tr.sent) {
+    for (const f of tr.sent) {
       const fields = INT_FIELDS[f.t];
       if (!fields) continue;
       for (const k of fields) {
         const v = (f as unknown as Record<string, unknown>)[k];
         assert.equal(typeof v, 'number', `${f.t}.${k} is ${typeof v}`);
         assert.ok(Number.isInteger(v), `${f.t}.${k} = ${v} is not an integer`);
+        seen.add(`${f.t}.${k}`);
         checked++;
       }
     }
     assert.ok(checked > 10, `only ${checked} integer fields were exercised`);
+    for (const [t, ks] of Object.entries(INT_FIELDS)) {
+      for (const k of ks) assert.ok(seen.has(`${t}.${k}`), `${t}.${k} was never sent`);
+    }
   });
 });
 
