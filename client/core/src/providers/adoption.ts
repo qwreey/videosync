@@ -198,6 +198,8 @@ export function diffDescriptors(before: Descriptor | null, after: Descriptor): F
     for (const f of ['hosts', 'pageHosts', 'canonicalHost', 'identity', 'pathFallback'] as const) {
       out.push({ field: f, before: undefined, after: after[f], widens: true });
     }
+    out.push({ field: 'keyPrefix', before: undefined, after: after.keyPrefix ?? after.id, widens: true });
+    out.push({ field: 'continues', before: undefined, after: after.continues ?? [], widens: true });
     return out;
   }
   // Any host that is not literally an old one widens, even one an old

@@ -585,6 +585,18 @@ describe('what a change widens', () => {
     assert.equal(widens(null, BASE), true, 'a descriptor nobody had');
   });
 
+  it('shows a new descriptor its key prefix and continuation rules', () => {
+    // Both are what an offer asks the user to trust: the prefix names every
+    // room on the site, and a continues rule moves a room on its own.
+    const cont = { from: '/watch/{id}', to: '/watch/{other}' };
+    const offer = diffDescriptors(null, variant({ keyPrefix: 'video.example', continues: [cont] }));
+    const field = (f: string) => offer.find((c) => c.field === f);
+    assert.deepEqual(field('keyPrefix'), { field: 'keyPrefix', before: undefined, after: 'video.example', widens: true });
+    assert.deepEqual(field('continues'), { field: 'continues', before: undefined, after: [cont], widens: true });
+    assert.equal(diffDescriptors(null, BASE).find((c) => c.field === 'keyPrefix')?.after, BASE.id,
+      'with no keyPrefix the id is the prefix');
+  });
+
   it('never lets a non-widening host change claim a host more strongly', () => {
     const probes = ['video.example', 'www.video.example', 'a.www.video.example', 'other.example'];
     const lists = [['video.example'], ['video.example', '*.video.example'], ['*.video.example', 'video.example'],
