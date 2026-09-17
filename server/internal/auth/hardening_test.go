@@ -1,12 +1,15 @@
 package auth
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"slices"
 	"strings"
@@ -71,8 +74,8 @@ func TestAnUnknownUserCostsWhatAKnownOneDoes(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := newRig(t, func(c *Config) { c.Methods = []string{MethodPassword}; c.Keys = nil; c.Users = users })
-	known := timeIt(5, func() { g.s.checkPassword("alice", "wrong") })
-	unknown := timeIt(5, func() { g.s.checkPassword("mallory", "wrong") })
+	known := timeIt(5, func() { g.s.checkPassword(context.Background(), "alice", "wrong") })
+	unknown := timeIt(5, func() { g.s.checkPassword(context.Background(), "mallory", "wrong") })
 	// The same work, give or take the machine: a miss that skipped the hash
 	// would be three orders of magnitude faster.
 	if unknown < known/3 {
@@ -90,7 +93,10 @@ func TestPasswordChecksAreCappedInConcurrency(t *testing.T) {
 		g.s.kdf <- struct{}{}
 	}
 	done := make(chan bool)
-	go func() { done <- g.s.checkPassword("alice", "hunter22") }()
+	go func() {
+		ok, _ := g.s.checkPassword(context.Background(), "alice", "hunter22")
+		done <- ok
+	}()
 	select {
 	case <-done:
 		t.Fatal("a password check ran with every slot taken")
@@ -365,5 +371,169 @@ func TestTheLoginFormReadsOnlyAFewKilobytes(t *testing.T) {
 		if read := strings.Contains(r.raw, "알 수 없는 로그인 방법이에요"); read != (tc.size <= 8<<10) {
 			t.Errorf("%s: form read = %v", tc.name, read)
 		}
+	}
+}
+
+func passwordOnlyRig(t *testing.T) *rig {
+	return newRig(t, func(c *Config) { c.Methods = []string{MethodPassword}; c.Keys = nil; c.Users = testUsers(t) })
+}
+
+// holdEveryKDFSlot takes the whole password-check pool until the test ends,
+// which is what a queue of attacker-supplied checks looks like from behind.
+func holdEveryKDFSlot(t *testing.T, s *Server) {
+	t.Helper()
+	for range cap(s.kdf) {
+		s.kdf <- struct{}{}
+	}
+	t.Cleanup(func() {
+		for range cap(s.kdf) {
+			<-s.kdf
+		}
+	})
+}
+
+// startSession serves one Basic /api/session on ctx in the background.
+func startSession(g *rig, ctx context.Context, peer string) <-chan int {
+	req := httptest.NewRequest("POST", "http://sync.example/api/session", nil).WithContext(ctx)
+	req.RemoteAddr = peer
+	req.Header.Set("Authorization", basic("mallory", "y"))
+	done := make(chan int, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		g.mux.ServeHTTP(rec, req)
+		done <- rec.Code
+	}()
+	return done
+}
+
+// answered is the status within d, or -1 if there was none by then.
+func answered(done <-chan int, d time.Duration) int {
+	select {
+	case c := <-done:
+		return c
+	case <-time.After(d):
+		return -1
+	}
+}
+
+// A handler outlives its client, so a check queued by a request that has
+// since gone away used to wait for a slot and then run the whole hash anyway:
+// a /48 could queue hours of PBKDF2 ahead of every real sign-in and leave.
+func TestAQueuedPasswordCheckGivesUpWhenItsRequestDoes(t *testing.T) {
+	g := passwordOnlyRig(t)
+	holdEveryKDFSlot(t, g.s)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startSession(g, ctx, "198.51.100.10:1")
+	if c := answered(done, 50*time.Millisecond); c != -1 {
+		t.Fatalf("answered %d with every slot taken", c)
+	}
+	cancel()
+	// The slots are still held: answering at all means it never took one.
+	if c := answered(done, 2*time.Second); c == -1 {
+		t.Fatal("a cancelled request is still queued for a password check")
+	}
+}
+
+// The same over a real connection. net/http cancels a request's context when
+// its client hangs up only once the handler has read the body to its end, so
+// a /api/session that declared a body and left it unread stayed queued for
+// the whole wait and then hashed for nobody.
+func TestAPasswordCheckGivesUpWhenItsClientHangsUp(t *testing.T) {
+	g := passwordOnlyRig(t)
+	g.s.kdfWait = time.Minute
+	holdEveryKDFSlot(t, g.s)
+	srv := httptest.NewServer(g.mux)
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /api/session HTTP/1.1\r\nHost: sync.example\r\nAuthorization: %s\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}", basic("mallory", "y"))
+	waitFor := func(n int64) bool {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			if g.s.kdfQueued.Load() == n {
+				return true
+			}
+		}
+		return false
+	}
+	if !waitFor(1) {
+		t.Fatalf("the check never queued (%d waiting)", g.s.kdfQueued.Load())
+	}
+	conn.Close()
+	if !waitFor(0) {
+		t.Fatal("a check whose client hung up is still queued")
+	}
+
+	// A body that never arrives is never queued at all.
+	conn, err = net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /api/session HTTP/1.1\r\nHost: sync.example\r\nAuthorization: %s\r\n"+
+		"Content-Length: 5\r\n\r\n", basic("mallory", "y"))
+	time.Sleep(50 * time.Millisecond)
+	if n := g.s.kdfQueued.Load(); n != 0 {
+		t.Fatalf("a request still sending its body queued a check (%d waiting)", n)
+	}
+	conn.Close()
+}
+
+func TestAPasswordCheckWaitsForASlotOnlySoLong(t *testing.T) {
+	g := passwordOnlyRig(t)
+	g.s.kdfWait = 50 * time.Millisecond
+	holdEveryKDFSlot(t, g.s)
+	if c := answered(startSession(g, context.Background(), "198.51.100.10:1"), 2*time.Second); c != http.StatusServiceUnavailable {
+		t.Fatalf("a check behind a full pool answered %d, want 503 once its wait ran out", c)
+	}
+
+	// The login tab too: it is the same queue.
+	g2 := passwordOnlyRig(t)
+	g2.s.kdfWait = 50 * time.Millisecond
+	f := g2.begin(client)
+	_, cookie := g2.openPage(f, client, nil)
+	holdEveryKDFSlot(t, g2.s)
+	done := make(chan reply, 1)
+	go func() {
+		done <- g2.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"hunter22"}}, nil)
+	}()
+	select {
+	case r := <-done:
+		if r.code != http.StatusServiceUnavailable {
+			t.Fatalf("login tab behind a full pool: %d", r.code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the login tab queued without bound")
+	}
+	// And once the pool frees, the same browser signs in: busy is not a denial.
+	for range cap(g2.s.kdf) {
+		<-g2.s.kdf
+	}
+	r := g2.submit(f, cookie, url.Values{"method": {"password"}, "user": {"alice"}, "password": {"hunter22"}}, nil)
+	for range cap(g2.s.kdf) {
+		g2.s.kdf <- struct{}{}
+	}
+	if r.code != 200 {
+		t.Fatalf("after the pool freed: %d", r.code)
+	}
+}
+
+func TestThePasswordQueueIsBounded(t *testing.T) {
+	g := passwordOnlyRig(t)
+	g.s.kdfWait = time.Minute
+	holdEveryKDFSlot(t, g.s)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Fill the queue, each waiter from its own /64 as a /48 would.
+	for i := range g.s.kdfQueueMax {
+		startSession(g, ctx, fmt.Sprintf("[2001:db8:0:%x::1]:1", i))
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for g.s.kdfQueued.Load() < int64(g.s.kdfQueueMax) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if c := answered(startSession(g, context.Background(), "198.51.100.10:1"), 2*time.Second); c != http.StatusServiceUnavailable {
+		t.Fatalf("a check past a full queue answered %d, want 503 at once", c)
 	}
 }

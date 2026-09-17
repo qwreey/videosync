@@ -49,7 +49,9 @@ func registerAuthFlags() authFlags {
 		userHeader: flag.String("auth-user-header", "",
 			"for -auth proxy: the header the proxy names the user in (e.g. Remote-User); without it the proxy's address alone vouches"),
 		publicURL: flag.String("public-url", "",
-			"where browsers reach this server, e.g. https://sync.example.com (an origin: the server must be at its root). Required for -auth oidc"),
+			"where browsers reach this server, e.g. https://sync.example.com (an origin: the server must be at its root). Required for -auth oidc, and behind a reverse proxy: "+
+				"without it login links are built from the Host header the request arrived with, and are https only over TLS or when "+
+				"a -trusted-proxies proxy sends X-Forwarded-Proto: https"),
 		issuer:       flag.String("oidc-issuer", "", "for -auth oidc: the issuer URL (https), exactly as the IdP names itself"),
 		clientID:     flag.String("oidc-client-id", "", "for -auth oidc: this server's client id at the IdP"),
 		clientSecret: flag.String("oidc-client-secret-file", "", "for -auth oidc: a file holding the client secret"),
@@ -154,6 +156,16 @@ func (f authFlags) build() (*auth.Server, []string, error) {
 		cfg.Key = auth.RandomKey()
 		notes = append(notes, "no -auth-key-file: device tokens are signed with a key that lives only in this process, so every device must sign in again after a restart")
 	}
+	if len(cfg.TrustedProxies) > 0 && cfg.PublicURL == "" {
+		// Without it the login link is built from the Host header, which is
+		// the visitor's only behind a proxy that forwards it. nginx's
+		// proxy_pass sends the upstream's (127.0.0.1:8080) unless told
+		// otherwise, and the panel would open that on the visitor's machine.
+		// A warning, not an error: Caddy and Traefik forward Host as it came.
+		notes = append(notes, "WARNING: -trusted-proxies is set but -public-url is not: login links are built from the Host "+
+			"header the proxy sends, so a proxy that rewrites it (nginx's default) sends every sign-in to the wrong "+
+			"address, and one that terminates TLS without X-Forwarded-Proto gets http:// links. Pass -public-url https://<your public name>")
+	}
 	if has(auth.MethodOIDC) {
 		cfg.OIDC.Issuer, cfg.OIDC.ClientID = *f.issuer, *f.clientID
 		if *f.clientSecret != "" {
@@ -202,6 +214,14 @@ func hashPassword(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	user := fs.Arg(0)
 	if user == "" || strings.ContainsAny(user, ":\r\n") {
 		fmt.Fprintln(stderr, "a user name cannot be empty or contain ':' (HTTP Basic cannot carry one)")
+		return 2
+	}
+	// The users file trims each line and reads a '#' line as a comment, so
+	// such a name would be printed here and then dropped or renamed there,
+	// leaving a 401 for every sign-in. Trailing space survives the file, but
+	// nobody typing the name at the login tab can see it either.
+	if strings.HasPrefix(user, "#") || strings.TrimSpace(user) != user {
+		fmt.Fprintln(stderr, "a user name cannot start with '#' or start or end with whitespace (the users file reads such a line differently)")
 		return 2
 	}
 	line, err := bufio.NewReader(stdin).ReadString('\n')

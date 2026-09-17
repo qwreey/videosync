@@ -81,13 +81,15 @@ you re-share with the people you meant.
 options page; optional hosts are not shown at install and each is asked for
 when you add a site. **No `host_permissions`** — the
 worker reaches your server with an ordinary CORS request, and `videosyncd` sends
-`Access-Control-Allow-Origin: *`. Measured both ways
+`Access-Control-Allow-Origin: *` — or, with `-allowed-origins`, the extension's
+origin, if the list admits it (`chrome-extension://*`, `moz-extension://*`; a list
+of sites alone refuses the extension, and the server warns). Measured both ways
 (`harness/browser/results/ext-permissions.json`): room creation and the relayed
 socket both work with the permission removed.
 
 The one thing that depends on: if you put the server behind a proxy that strips
 CORS headers, the extension will need `host_permissions` for that origin. The
-server itself always sends them.
+server itself always sends them to an origin its allowlist admits.
 
 The worker also makes every HTTP call to the server — room creation and, if the
 server asks for it, signing in. It takes a path from the content script, never

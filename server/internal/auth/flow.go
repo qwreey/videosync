@@ -449,8 +449,17 @@ func (s *Server) confirmSecret(w http.ResponseWriter, r *http.Request) {
 			sub = "key"
 		}
 	case MethodPassword:
-		if u := r.PostFormValue("user"); u != "" && s.checkPassword(u, r.PostFormValue("password")) {
-			sub = u
+		if u := r.PostFormValue("user"); u != "" {
+			good, err := s.checkPassword(r.Context(), u, r.PostFormValue("password"))
+			if err != nil {
+				// Not a wrong password: the flow stays open for another try.
+				w.Header().Set("Retry-After", "5")
+				s.render(w, http.StatusServiceUnavailable, s.loginPage(r, f, "서버가 바빠요 — 잠시 후 다시 해주세요."))
+				return
+			}
+			if good {
+				sub = u
+			}
 		}
 	}
 	if sub == "" {

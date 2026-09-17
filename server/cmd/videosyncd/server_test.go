@@ -181,3 +181,56 @@ func TestAllowedOriginsAreTrimmedAndBlanksDropped(t *testing.T) {
 		t.Fatal("a list of blanks was accepted")
 	}
 }
+
+// Only "*" and "<extension scheme>://*" are patterns. Anything else with a
+// star is compared literally and matches nothing. Such a value used to start
+// the server, so it still does -- refusing to start would break a config that
+// ran yesterday -- but it says so, and the entry still admits nothing: a list
+// of only such entries restricts, it never widens to "any".
+func TestAllowedOriginsWarnAboutAPatternThatMatchesNothing(t *testing.T) {
+	for _, bad := range []string{"https://*.example.com", "https://*", "*.example.com"} {
+		allowed, err := parseOrigins("https://laftel.net, " + bad)
+		if err != nil {
+			t.Errorf("%q: %v", bad, err)
+			continue
+		}
+		if n := strings.Join(originsNotes(allowed), "\n"); !strings.Contains(n, bad) {
+			t.Errorf("%q: no warning names it (%q)", bad, n)
+		}
+		only, err := parseOrigins(bad)
+		if err != nil || len(only) == 0 {
+			t.Errorf("%q alone = %q, %v; want a list that admits nothing", bad, only, err)
+		}
+	}
+	for _, good := range []string{"*", "moz-extension://*", "chrome-extension://*", "safari-web-extension://*"} {
+		allowed, err := parseOrigins("https://laftel.net, " + good)
+		if err != nil {
+			t.Errorf("%q: %v", good, err)
+		}
+		if n := strings.Join(originsNotes(allowed), "\n"); strings.Contains(n, good) {
+			t.Errorf("%q: warned about a real pattern (%q)", good, n)
+		}
+	}
+}
+
+// The extension's calls carry the extension's Origin. A list of sites alone
+// locks every extension user out while userscript users work, so the server
+// says so when it starts that way.
+func TestAnAllowlistWithoutExtensionsSaysSo(t *testing.T) {
+	for list, want := range map[string]bool{
+		"https://www.youtube.com, https://laftel.net":                      true,
+		"https://laftel.net, moz-extension://*":                            true, // Chrome is still out
+		"https://laftel.net, moz-extension://*, chrome-extension://*":      false,
+		"https://laftel.net, moz-extension://*, chrome-extension://abcdef": false,
+		"*": false,
+		"":  false,
+	} {
+		allowed, err := parseOrigins(list)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(originsNotes(allowed)) > 0; got != want {
+			t.Errorf("%q: warned = %v, want %v (%q)", list, got, want, originsNotes(allowed))
+		}
+	}
+}

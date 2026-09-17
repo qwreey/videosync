@@ -12,16 +12,19 @@
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -115,7 +118,9 @@ type Config struct {
 
 	// PublicURL is where a browser reaches this server. Required for OIDC,
 	// because the IdP's redirect must go to exactly the URI registered with
-	// it; otherwise login links are built from the request.
+	// it; otherwise login links are built from the request's Host, which a
+	// reverse proxy may have rewritten to its upstream, and are https only
+	// over TLS or on a trusted proxy's X-Forwarded-Proto (videosyncd warns).
 	PublicURL string
 	OIDC      OIDCConfig
 
@@ -150,6 +155,16 @@ type Server struct {
 	// kdf caps concurrent password checks. The per-peer limit bounds one
 	// address; this bounds what many addresses together can make the CPU do.
 	kdf chan struct{}
+	// A check waits for a slot at most kdfWait, and at most kdfQueueMax
+	// checks wait at once (kdfQueued counts them). Past either the answer is
+	// 503 busy. Without a bound the queue is the attack: a handler outlives
+	// its client (and learns it has gone only once it has read the body), so
+	// every request a /48 of fresh per-/64 buckets gets past
+	// the limiter waited its turn and then ran the full hash for nobody,
+	// hours of it, ahead of every real sign-in.
+	kdfWait     time.Duration
+	kdfQueueMax int
+	kdfQueued   atomic.Int64
 	// dummy is checked for an unknown user, so a miss costs what a hit costs.
 	dummy PasswordHash
 	cop   *http.CrossOriginProtection
@@ -244,8 +259,12 @@ func New(cfg Config) (*Server, error) {
 		// The client polls every couple of seconds, possibly from two tabs.
 		limPoll: newLimiter(2, 30),
 		kdf:     make(chan struct{}, max(1, runtime.NumCPU()/2)),
-		dummy:   dh,
-		cop:     http.NewCrossOriginProtection(),
+		// Long enough for a person behind a few honest retries; a queue this
+		// deep drains in seconds at the default iteration count.
+		kdfWait:     10 * time.Second,
+		kdfQueueMax: 16 * max(1, runtime.NumCPU()/2),
+		dummy:       dh,
+		cop:         http.NewCrossOriginProtection(),
 	}
 	if has(MethodOIDC) {
 		if cfg.PublicURL == "" {
@@ -367,22 +386,59 @@ func (s *Server) proxyUser(r *http.Request) (string, bool) {
 	return u, true
 }
 
-func (s *Server) checkPassword(user, pass string) bool {
-	s.kdf <- struct{}{}
+// errBusy is a password check that did not get a slot: 503, never 401, so
+// the client retries rather than treating it as a wrong password.
+var errBusy = errors.New("busy")
+
+// checkPassword waits for a kdf slot, but only while ctx is live and only so
+// long (Server.kdfWait). Whether it waits at all does not depend on the user,
+// so busy says nothing about which names exist. A request's context notices
+// its client hanging up only after the handler has read the body to its end
+// (net/http), so a caller passing r.Context() must have done that first.
+func (s *Server) checkPassword(ctx context.Context, user, pass string) (bool, error) {
+	if s.kdfQueued.Add(1) > int64(s.kdfQueueMax) {
+		s.kdfQueued.Add(-1)
+		return false, errBusy
+	}
+	wait := time.NewTimer(s.kdfWait)
+	defer wait.Stop()
+	var err error
+	if err = ctx.Err(); err == nil {
+		select {
+		case s.kdf <- struct{}{}:
+		case <-ctx.Done():
+			err = ctx.Err()
+		case <-wait.C:
+			err = errBusy
+		}
+	}
+	s.kdfQueued.Add(-1)
+	if err != nil {
+		return false, err
+	}
 	defer func() { <-s.kdf }()
 	h, ok := s.cfg.Users[user]
 	if !ok {
 		s.dummy.check(pass)
-		return false
+		return false, nil
 	}
-	return h.check(pass)
+	return h.check(pass), nil
 }
 
-// credentials is /api/session: whatever the enabled methods accept, once.
-func (s *Server) credentials(r *http.Request) (sub, via string, ok bool) {
+// refuseBusy is the API's answer to a check that could not run (nobody reads
+// it when the request is gone).
+func refuseBusy(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "5")
+	writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "busy"})
+}
+
+// credentials is /api/session: whatever the enabled methods accept, once. A
+// non-nil error is a password check that could not run (errBusy), not a wrong
+// credential.
+func (s *Server) credentials(r *http.Request) (sub, via string, ok bool, err error) {
 	if r.Header.Get(DeviceHeader) != "" {
 		if u, ok := s.proxyUser(r); ok {
-			return u, MethodProxy, true
+			return u, MethodProxy, true, nil
 		}
 	}
 	kind, val, _ := strings.Cut(r.Header.Get("Authorization"), " ")
@@ -390,27 +446,31 @@ func (s *Server) credentials(r *http.Request) (sub, via string, ok bool) {
 	switch strings.ToLower(kind) {
 	case "bearer":
 		if s.has(MethodToken) && matchKey(s.cfg.Keys, val) {
-			return "key", MethodToken, true
+			return "key", MethodToken, true, nil
 		}
 	case "basic":
-		raw, err := base64.StdEncoding.DecodeString(val)
-		if err != nil {
-			return "", "", false
+		raw, derr := base64.StdEncoding.DecodeString(val)
+		if derr != nil {
+			return "", "", false, nil
 		}
 		user, pass, found := strings.Cut(string(raw), ":")
 		if !found {
-			return "", "", false
+			return "", "", false, nil
 		}
-		if s.has(MethodPassword) && user != "" && s.checkPassword(user, pass) {
-			return user, MethodPassword, true
+		if s.has(MethodPassword) && user != "" {
+			good, cerr := s.checkPassword(r.Context(), user, pass)
+			if good {
+				return user, MethodPassword, true, nil
+			}
+			err = cerr
 		}
 		// Basic with the key as the password: the one form a proxy-era client
 		// or a browser credential prompt can produce.
 		if s.has(MethodToken) && matchKey(s.cfg.Keys, pass) {
-			return "key", MethodToken, true
+			return "key", MethodToken, true, nil
 		}
 	}
-	return "", "", false
+	return "", "", false, err
 }
 
 // device checks a device token, and that the method that minted it is still
@@ -452,7 +512,19 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if s.limited(w, r, s.limSession) {
 		return
 	}
-	sub, via, ok := s.credentials(r)
+	// Nothing here is in the body, but read it to its end first: net/http
+	// cancels r.Context() when the client hangs up only once the body is
+	// consumed, and a check queued on a context that never cancels hashes
+	// for a client long gone. A body still being sent is not queued at all.
+	if _, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 1024)); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
+		return
+	}
+	sub, via, ok, err := s.credentials(r)
+	if err != nil {
+		refuseBusy(w)
+		return
+	}
 	if !ok {
 		// Deliberately no `WWW-Authenticate: Basic`: a browser that sees one
 		// may pop its own credential dialog over the page.

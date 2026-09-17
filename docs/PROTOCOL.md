@@ -572,6 +572,14 @@ credentials are involved: the room secret travels in the `hello` frame, never in
 a cookie. The WebSocket upgrade is **not** subject to CORS; it is governed by
 the `Origin` allowlist instead.
 
+*(Amendment, review 4:)* the extension's background calls with its **own** origin
+(`chrome-extension://<id>`, `moz-extension://<per-install uuid>`), never the site's, so an
+allowlist of sites alone refuses its socket and hides every API answer from it. An entry
+`<extension scheme>://*` admits every origin of that scheme — a page cannot send one — and is,
+with `*`, the only pattern; before, it matched only its literal self. Any other star matches
+nothing; `videosyncd` warns about such an entry and about a list that admits no Chrome or no
+Firefox extension.
+
 The preflight allows `Content-Type, Authorization`. The sign-in endpoints (§8) carry a bearer header,
 and `Access-Control-Allow-Headers: *` would **not** cover `Authorization`. A bearer header is not a
 CORS credential, and nothing under `/api` reads a cookie, so `*` stays sound with access control on;

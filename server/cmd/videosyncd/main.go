@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/qwreey/videosync/server/internal/auth"
 	"github.com/qwreey/videosync/server/internal/hub"
 	"github.com/qwreey/videosync/server/internal/provider"
 )
@@ -28,8 +29,12 @@ func main() {
 	}
 	addr := flag.String("addr", ":8787", "listen address")
 	origins := flag.String("allowed-origins", "",
-		"comma-separated Origin allowlist (e.g. \"https://www.youtube.com, https://laftel.net\") for the "+
-			"WebSocket upgrade and for CORS on the /api endpoints (empty = any)")
+		"comma-separated Origin allowlist (e.g. \"https://www.youtube.com, https://laftel.net, "+
+			"chrome-extension://*, moz-extension://*\") for the WebSocket upgrade and for CORS on the /api "+
+			"endpoints (empty = any). The browser extension calls with its own Origin, never the site's: list "+
+			"chrome-extension://<id> or chrome-extension://*, and moz-extension://* (a Firefox origin differs per install). "+
+			"The only patterns are * and <extension scheme>://* (before review 4 an entry like chrome-extension://* "+
+			"matched only itself); any other star, such as https://*.example.com, matches nothing and is warned about at startup")
 	idle := flag.Duration("idle-ttl", 3*time.Minute, "delete a room this long after its last member leaves")
 	maxMembers := flag.Int("max-members", 32, "members per room")
 	maxRooms := flag.Int("max-rooms", 10000, "rooms held in memory")
@@ -72,6 +77,9 @@ func main() {
 		log.Fatal(err)
 	}
 	hcfg.AllowedOrigins = allowed
+	for _, n := range originsNotes(allowed) {
+		log.Print(n)
+	}
 
 	authServer, notes, err := af.build()
 	if err != nil {
@@ -158,6 +166,52 @@ func parseOrigins(s string) ([]string, error) {
 		return nil, fmt.Errorf("-allowed-origins %q names no origin (leave it out to allow any)", s)
 	}
 	return out, nil
+}
+
+// deadPattern is an entry with a star that is not one of the hub's patterns
+// (hub.originAllowed): it is compared literally and admits nothing.
+func deadPattern(o string) bool {
+	return strings.Contains(o, "*") && o != "*" && !(strings.HasSuffix(o, "://*") && auth.ExtensionOrigin(o))
+}
+
+// originsNotes are the startup warnings for an allowlist. An entry like
+// https://*.example.com is not a pattern; it has always started the server and
+// matched nothing, and it still does -- refusing it would stop a server that
+// ran yesterday -- but now it says so. And a list that leaves out an extension
+// build: the extension's background makes every call with its own Origin, so a
+// list of sites alone refuses its socket (403) and hides every API answer from
+// it (no Allow-Origin) while userscript users on the same server work -- which
+// looks like a server that is half down.
+func originsNotes(allowed []string) []string {
+	var notes []string
+	listed := map[string]bool{}
+	for _, a := range allowed {
+		if a == "*" {
+			return nil
+		}
+		if deadPattern(a) {
+			notes = append(notes, fmt.Sprintf("WARNING: -allowed-origins entry %q matches no origin and admits nothing: "+
+				"the only patterns are * and <extension scheme>://* (chrome-extension, moz-extension, "+
+				"safari-web-extension); list each site exactly", a))
+			continue
+		}
+		if auth.ExtensionOrigin(a) {
+			scheme, _, _ := strings.Cut(a, "://")
+			listed[strings.ToLower(scheme)] = true
+		}
+	}
+	var missing []string
+	for _, s := range []string{"chrome-extension", "moz-extension"} {
+		if !listed[s] {
+			missing = append(missing, s+"://*")
+		}
+	}
+	if len(allowed) == 0 || len(missing) == 0 {
+		return notes
+	}
+	return append(notes, fmt.Sprintf("WARNING: -allowed-origins admits no %s origin: the browser extension calls with its own Origin, "+
+		"so its users cannot connect. Add %s to admit them (a Chrome extension may be listed by its id instead)",
+		strings.Join(missing, " or "), strings.Join(missing, ", ")))
 }
 
 type timeouts struct{ header, read, idle time.Duration }

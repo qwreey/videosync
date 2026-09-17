@@ -143,7 +143,18 @@ device signs in once.
   append to `X-Forwarded-For` (Caddy, Traefik, nginx's
   `$proxy_add_x_forwarded_for`) or set `X-Real-IP`, or both. It passes the
   header it does not write through as the visitor sent it, so when both arrive
-  and disagree the request is charged to the proxy itself. With `-auth proxy`, require sign-in at
+  and disagree the request is charged to the proxy itself. Pass **`-public-url
+  https://sync.example.com`** too: without it the login link is built from the
+  request — its host from the `Host` header the proxy sends, and its scheme
+  `https` only from a trusted proxy's `X-Forwarded-Proto: https`. nginx's
+  `proxy_pass` sends neither: `Host` is the upstream's (`127.0.0.1:8080`), so the
+  login tab opens on the visitor's own machine, and with `Host $host` alone the
+  link is `http://` behind a proxy that terminates TLS (the flow cookie then
+  loses `Secure`). If you cannot pass `-public-url`, nginx needs both
+  `proxy_set_header Host $host;` and `proxy_set_header X-Forwarded-Proto
+  $scheme;`, and `-trusted-proxies` must name the proxy or the second is
+  ignored. The server warns at startup when `-trusted-proxies` is set without
+  `-public-url`. With `-auth proxy`, require sign-in at
   the proxy for **`/api/session` and `/auth/`** only, and leave everything else
   open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, `/api/providers`, and every
   `OPTIONS` request. The server checks those itself; a proxy that gates a
@@ -152,6 +163,20 @@ device signs in once.
   the server must not be reachable except through it.
 - The userscript makes these calls with `GM_xmlhttpRequest`; Tampermonkey asks
   you once to allow your server's domain.
+- **`-allowed-origins`** (not access control — the room key is the credential)
+  limits which pages may open a socket or read an API answer. The extension
+  calls with its *own* origin, not the site's, so list it too:
+  `-allowed-origins "https://www.youtube.com, https://laftel.net,
+  chrome-extension://*, moz-extension://*"` (a Chrome extension may be listed by
+  its id instead; a Firefox one cannot, its origin differs per install). A list
+  of sites alone locks out every extension user while userscript users work,
+  and the server warns at startup when it is started that way. The only
+  patterns are `*` and `<extension scheme>://*` (`chrome-extension`,
+  `moz-extension`, `safari-web-extension`). **Changed:** a list that already
+  named `chrome-extension://*` used to match only that literal string, so
+  admitted no extension; it now admits every extension of that browser. Any
+  other star (`https://*.example.com`) still matches nothing — the server starts
+  and warns about the entry; list each site exactly.
 
 The design, and what is still unmeasured, is in `docs/design/auth.md`.
 

@@ -87,6 +87,15 @@ never holds it.
   and every `OPTIONS` unauthenticated** (a gated preflight fails as a bare `Failed to fetch`); run
   `-auth proxy -trusted-proxies <proxy address>`. *(As built: the design first gated `/api/ticket`
   and `/api/auth/*` too; see below.)*
+- Behind any reverse proxy, whatever the method: `-public-url`. *(Review 4:)* without it the
+  login link is built from the `Host` the proxy sends, and nginx's `proxy_pass` sends the
+  upstream's (`127.0.0.1:8080`) by default, so the tab opens on the visitor's own machine.
+  The scheme is `https` only for a TLS connection or a trusted proxy's `X-Forwarded-Proto:
+  https`, which nginx does not send by default either: with `proxy_set_header Host $host`
+  alone, a proxy that terminates TLS gets `http://` login links and a flow cookie without
+  `Secure`. Without `-public-url`, nginx needs `Host $host` *and* `X-Forwarded-Proto $scheme`,
+  with `-trusted-proxies` naming it. `videosyncd` warns when `-trusted-proxies` is set without
+  `-public-url`; `X-Forwarded-Host` is not read (nginx does not send it by default either).
 - An IdP: `-auth oidc` with the flags above; register `<public-url>/auth/oidc/callback`.
 
 ## As built (2026-09-17)
@@ -148,7 +157,20 @@ what it left open:
   proxy's user header or `proxy`, and `preferred_username`/`email`/`sub` for OIDC.
 - **Limits.** Per client: session 5 then 1 per 2 s, ticket 20 then 2/s, begin 5 then 1 per 5 s,
   poll 30 then 2/s. Concurrent PBKDF2 checks are capped at half the CPUs, and an unknown user is
-  checked against a dummy hash of the same cost. At most 100 000 outstanding tickets and 100 000
+  checked against a dummy hash of the same cost. *(Review 4:)* a check waits for a slot at most
+  10 s, at most 16 per slot wait at once, and a check whose request has gone away gives up
+  instead of hashing for nobody; past either bound the answer is `503 busy` (the login tab says
+  so and keeps the flow). Unbounded, the queue was the attack: a /48 is 65 536 fresh per-/64
+  buckets, and every request they got past the limiter queued a full hash ahead of real
+  sign-ins, long after the sender left. "Gone away" needs the body read: `net/http` cancels a
+  request's context on hang-up only once the handler has consumed the body, so `/api/session`
+  drains it (1 KiB at most) before queueing, and the login form's parse already does.
+  **Still open:** the bound ends the backlog, not the attack. While it runs, the same /48 —
+  5 requests at once per /64, then one per 2 s — refills 16 waiters per slot for nearly
+  nothing, and every real password sign-in gets `503 busy` until it stops. Signed-in devices
+  are untouched (a password is checked once per device), and a key, the proxy and OIDC do not
+  queue. A coarser limit (per /48, or global on password checks) would narrow it; none is
+  built. At most 100 000 outstanding tickets and 100 000
   logins in progress *(review 3: was 1 000, which a thousand people signing in at once filled)*,
   of which one client holds at most 16 — the tighter bound, since the begin bucket alone admits
   about 65 in a TTL (`begin` answers `429 rate_limited`
