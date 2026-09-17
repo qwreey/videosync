@@ -500,6 +500,24 @@ describe('SeekDetector', () => {
     }
   });
 
+  test('a pause and a seek seen in the same unready sample are both reported', () => {
+    // A seek drops readyState, so "pause, then seek" inside one sample is
+    // seen by the stall branch. The seek is reported first; the pause must
+    // not be written into the baseline unreported.
+    for (const unreadyFrames of [1, 3]) {
+      const d = new SeekDetector(visible);
+      const kinds = run(d, [
+        ...Array.from({ length: 10 }, (_, i) => ({ positionS: 10 + i * 0.1 })),
+        ...Array.from({ length: unreadyFrames }, () => ({ positionS: 60, paused: true, readyState: 1, bufferedAheadS: 0, expectedS: 11 })),
+        ...Array.from({ length: 10 }, () => ({ positionS: 60, paused: true, expectedS: 11 })),
+      ]);
+      assert.equal(kinds[10], 'seek', `${unreadyFrames}: ${kinds.join(' ')}`);
+      assert.equal(kinds.filter((k) => k === 'seek').length, 1, `${unreadyFrames}: ${kinds.join(' ')}`);
+      assert.equal(kinds.filter((k) => k === 'playstate').length, 1, `${unreadyFrames}: ${kinds.join(' ')}`);
+      assert.equal(kinds.indexOf('playstate'), 11, `reported at the next sample: ${kinds.join(' ')}`);
+    }
+  });
+
   test('a buffering hidden tab that never made a sound is not reported as pausing', () => {
     // The browser's background pause, arriving while the element is unready:
     // it is still nobody's pause.
