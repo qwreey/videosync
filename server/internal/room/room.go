@@ -472,6 +472,15 @@ func (r *Room) apply(now int64, id string, m Cmd) {
 	when := now + r.CmdDelay()
 	if leavesRoomStopped(m.Kind, r.anchor) {
 		when = now
+	} else if when < r.lastCmdWhen {
+		// Never due before a command still waiting for its instant. CMD_DELAY
+		// is not monotonic -- it follows RTT and is 0 for a room of one -- so
+		// a command inside an earlier one's lead could otherwise be due first.
+		// A play would then project the earlier command's anchor BACKWARDS to
+		// reach that instant: the room started up to CMD_DELAY early, before a
+		// seek target or a paused position, or at a negative position. And
+		// commit's "later commands are never due earlier" would not hold.
+		when = r.lastCmdWhen
 	}
 
 	switch m.Kind {
