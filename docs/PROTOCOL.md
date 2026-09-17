@@ -627,7 +627,7 @@ natural rates and starving the clock bucket would degrade the timebase itself.
 
 | bucket | burst | sustained | cooldown | on refusal |
 |---|---|---|---|---|
-| `cmd` | 10 | 5/s | 4 s | **coalesced**: the newest refused `cmd` replaces any older one and is applied when the bucket allows; its `ack` arrives then. Nothing is sent on deferral |
+| `cmd` | 10 | 5/s | 4 s | **coalesced per kind**: a refused `cmd` is deferred and folded onto what is already deferred (below), and the batch is applied when the bucket allows, or ahead of the next `cmd` it admits; each surviving command's `ack` arrives then. Nothing is sent on deferral |
 | `rotate` | (shares `cmd`'s bucket) | | | `error{code:"rate_limited"}` |
 | `chat` | 4 | 1/s | 4 s | `error{code:"rate_limited"}` |
 | `hb` | 40 | 20/s | 2 s | dropped silently — a report is advisory, and answering would add traffic |
@@ -637,8 +637,25 @@ Why `cmd` is coalesced rather than refused: the one burst a person really produc
 arrow key or scrubbing — seeks ~100 ms apart, of which every other one was refused past the burst.
 When the *last* one was refused the room stayed on an earlier skip, nothing resent the final
 position, and the `ack` for that earlier skip sought the user's own player back to it. Coalescing
-keeps the rate (one command per window whatever the sender does) and lets the newest intent win, as
+keeps the rate (one batch per window whatever the sender does) and lets the newest intent win, as
 the readiness gate does for the command it holds.
+
+The newest intent wins **per kind**, not overall. A `play` carries no position and a `pause` inside
+a lead anchors on the room's schedule, so letting either replace a deferred seek threw the seek's
+target away (scrub, press space, and the room started from an earlier skip), and a deferred `media`
+that anything replaced was never applied or refused at all. The fold:
+
+- a `media` drops everything deferred before it, and nothing after it drops it;
+- a seek replaces a deferred seek;
+- `play` and `pause` replace each other.
+
+The batch is therefore at most one `media`, one seek and one `play`/`pause`, **in the order they
+were sent**; a command that replaces another takes the place of the newer one. The order is for the
+sender as much as for the room: a client forgets every unanswered command of its own older than the
+one acked, and treats a paused `ack` as the hold for its own `play` only while that play was sent
+after it (`engine.ts` `ownAck`). A batch reordered to seek-before-play answered "play, then seek" as
+if the play had not been pressed. A folded command gets no `ack`; it always has a later command in
+the batch, and its sender forgets it on that one.
 
 ### Errors
 
