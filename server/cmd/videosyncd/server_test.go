@@ -34,11 +34,11 @@ func TestTheServerHasReadAndIdleTimeouts(t *testing.T) {
 // scaled is defaultTimeouts shrunk so a test can outwait it.
 var scaled = timeouts{header: 200 * time.Millisecond, read: 300 * time.Millisecond, idle: 300 * time.Millisecond}
 
-func serve(t *testing.T) string {
+func serve(t *testing.T, to timeouts) string {
 	t.Helper()
 	h := hub.New(hub.DefaultConfig(), hub.NewClock())
 	t.Cleanup(h.Close)
-	srv := newHTTPServer("", h.Handler(hub.DefaultHTTPConfig()), scaled)
+	srv := newHTTPServer("", h.Handler(hub.DefaultHTTPConfig()), to)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func closedByServer(t *testing.T, c net.Conn, within time.Duration) bool {
 }
 
 func TestASilentRequestBodyIsDropped(t *testing.T) {
-	addr := serve(t)
+	addr := serve(t, scaled)
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -72,8 +72,14 @@ func TestASilentRequestBodyIsDropped(t *testing.T) {
 	}
 }
 
+// net/http falls back to ReadTimeout for an idle connection when IdleTimeout
+// is zero, so with the two equal this would pass without IdleTimeout at all.
+// ReadTimeout here is far longer than the wait, so only IdleTimeout can close
+// the connection in time.
 func TestAnIdleKeepAliveConnectionIsClosed(t *testing.T) {
-	addr := serve(t)
+	to := scaled
+	to.read = time.Minute
+	addr := serve(t, to)
 	c, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +96,7 @@ func TestAnIdleKeepAliveConnectionIsClosed(t *testing.T) {
 	if resp.Close {
 		t.Fatal("the server closed after one request; this test needs a kept-alive connection")
 	}
-	c.SetReadDeadline(time.Now().Add(10 * scaled.idle))
+	c.SetReadDeadline(time.Now().Add(10 * to.idle))
 	_, err = io.Copy(io.Discard, br)
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
@@ -99,7 +105,7 @@ func TestAnIdleKeepAliveConnectionIsClosed(t *testing.T) {
 }
 
 func TestAWebSocketOutlivesTheRequestTimeout(t *testing.T) {
-	addr := serve(t)
+	addr := serve(t, scaled)
 	resp, err := http.Post("http://"+addr+"/api/rooms", "application/json", strings.NewReader(`{"mediaKey":"yt:abc"}`))
 	if err != nil {
 		t.Fatal(err)

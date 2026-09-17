@@ -176,11 +176,11 @@ func newHTTPServer(addr string, h http.Handler, t timeouts) *http.Server {
 	return &http.Server{
 		Addr:    addr,
 		Handler: h,
-		// No WriteTimeout: a hijacked WebSocket outlives any request deadline,
-		// and the connection sets its own (internal/ws). ReadTimeout is safe
-		// for it for the same reason: Hijack keeps the request's read
-		// deadline, but ws.Conn.ReadMessage sets (or clears) its own before
-		// every frame.
+		// None of these reaches a WebSocket: net/http's Hijack clears the
+		// connection's deadlines (SetDeadline(time.Time{})) as it hands it
+		// over, and ws.Conn sets its own from then on (ReadMessage before
+		// every frame). No WriteTimeout all the same: it would bound how long
+		// a handler may take to answer, and nothing here needs that bound.
 		ReadHeaderTimeout: t.header,
 		ReadTimeout:       t.read,
 		IdleTimeout:       t.idle,
