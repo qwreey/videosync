@@ -59,6 +59,17 @@ func (c *ServoCorrector) state(id string) *servoState {
 
 // targetBuffered reports whether the position we would seek to is already in
 // the client's buffer -- the single fact that decides what a seek costs.
+//
+// The target is taken at serverMs, when the report is judged, not at the
+// report's own AtServerMs, on purpose. The buffered range is a range of MEDIA
+// time, sampled with PositionMs: [PositionMs - behind, PositionMs + ahead].
+// It does not move with the playhead (played data stays buffered; the end
+// only grows), and the client re-derives the target when it applies the
+// seek, a downlink later still. So the question is where Expected() will be
+// then, against that fixed range, and judging at arrival is off by the
+// downlink only. Judging at AtServerMs would drop the uplink as well:
+// measured with the 8-seed table, it only moved long-stalls, and the wrong
+// way (POC-FINDINGS 45).
 func targetBuffered(r Report, a Anchor, serverMs int64) bool {
 	delta := float64(a.Expected(serverMs) - r.PositionMs)
 	if delta >= 0 {
