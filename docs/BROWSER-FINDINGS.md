@@ -1130,6 +1130,49 @@ changed (the update notice and the diff of an update), auto-adopt,
 `replaceBuiltin`, the site-permission prompt, and Firefox for either D6 or
 D7.
 
+## 23. Laftel in Firefox, and a room with Chromium on it (2026-09-17)
+
+The Firefox profile (`.cache/firefox-profile`, flatpak Firefox 156) was logged in to Laftel by the
+user; Widevine had already been fetched into it.
+
+**Alone** (page world over BiDi, episode 93304): DRM playback works (`mediaKeys` set); a scripted
+`pause()` holds for 5 s; `playbackRate` 1.1 holds for 10 s and media advances at **1.0996×**; a seek
+600 s away, far outside the buffer, plays on.
+
+**A seek in Firefox + Widevine reads frozen for about a second.** Six in-buffer seeks while
+playing: `seeked` after 10–18 ms, but after the first two `currentTime` stopped advancing for
+**1010–1037 ms** (readyState dipping to 1), then caught up — 3 s later the element was only
+90–156 ms behind the line through the target. So the picture is roughly where it should be, but
+any report taken during that second says the member is up to a second behind. That is a way for
+a correction seek to earn another one; in the first room run below the Firefox member did draw a
+free seek every ~2 s for a while.
+
+**Chromium ↔ Firefox on Laftel** — `LAFTEL=1 probe-firefox.mjs` (Helium on episode 93304 creates
+the room; Firefox starts on 93295 and joins through the panel). The probe build now mirrors the
+engine's `dump()` onto the panel host (`data-dump`, probe builds only), so the Firefox member's
+state can be read — the one thing BiDi could not reach.
+
+| run | result | failing check | 30 s hold, gap every 5 s |
+|---|---|---|---|
+| 1 (`firefox-laftel.json`, earlier build without the dump) | 7/10 | not paused 5 s after arriving; Firefox's pause never reached the server; 933/844 ms during the hold | 121, 156, 933, 844, 18, −62 ms |
+| 2 | 9/10 | play from Chromium, gap 355 ms | 55, 113, 47, 57, 45, 29 ms |
+| 3 | 9/10 | play from Firefox, gap 374 ms | 179, 242, 195, 197, 204, 146 ms |
+| 4 | 9/10 | seek from Chromium, gap 331 ms | 9, −54, 24, −43, −6, −43 ms |
+
+Every run: taken to the room's episode 1.7–1.8 s after joining and rejoined 2.0–2.5 s after
+joining, rate 1 after leaving. In runs 2–4 the Firefox member was `steady` by the conform check and
+every command crossed; the single failure each time is one transition landing 330–374 ms apart
+— over the probe's 300 ms bound, inside the servo's 500 ms band — which the hold then closes or
+leaves at ~200 ms. Run 4's dump: 5 correction seeks and 29 deferred reports in a minute, 2
+un-gestured changes ignored while acquiring, no reconciles.
+
+**Run 1 is not explained.** Its server log shows the Firefox member playing in a paused room right
+after the conform, a `pause` it made never sent, and free seeks every ~2 s for twenty seconds
+(reports frozen for a second after each, as above). It did not recur in three runs, and that run
+had no dump. A deterministic e2e reproduction with a player that freezes `currentTime` for 1 s
+after each seek (scratch only) did not loop either. Kept here as an open observation: if it comes
+back, the dump will say which acquisition state swallowed the pause.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

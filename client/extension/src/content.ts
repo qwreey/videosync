@@ -100,5 +100,14 @@ if (!globalThis.__videosyncLoaded) {
   void (async () => {
     const app = start(await platform(await hydrate()));
     window.VideoSync = app.api;
+    if (OPEN_PANEL) {
+      // Probe builds only (see OPEN_PANEL): Firefox gives a test driver no way
+      // into this world, so the diagnostic dump is mirrored where the page --
+      // and so the driver -- can read it. A shipped build never does this: the
+      // dump carries the room id and the anchor.
+      setInterval(() => {
+        document.getElementById('videosync-root')?.setAttribute('data-dump', app.api.dump());
+      }, 500);
+    }
   })();
 }

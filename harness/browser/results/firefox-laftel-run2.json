@@ -1,0 +1,847 @@
+{
+  "when": "2026-09-17T02:18:15.413Z",
+  "checks": [
+    {
+      "name": "the Firefox build loads and mounts its panel",
+      "ok": true,
+      "detail": "영상을 찾았어요. 방을 만들거나 참가하세요."
+    },
+    {
+      "name": "Firefox is taken to the room's video",
+      "ok": true,
+      "detail": "after 1688 ms"
+    },
+    {
+      "name": "and rejoins there (the rejoin survived Firefox's storage)",
+      "ok": true,
+      "detail": "after 1950 ms"
+    },
+    {
+      "name": "B conformed to the room: paused at A's position",
+      "ok": true,
+      "detail": "A 30.00 B 30.00 B paused=true"
+    },
+    {
+      "name": "Chromium presses play, Firefox follows",
+      "ok": false,
+      "detail": "gap 355 ms"
+    },
+    {
+      "name": "Firefox pauses, Chromium follows",
+      "ok": true,
+      "detail": "gap 0 ms"
+    },
+    {
+      "name": "Firefox presses play, both run together",
+      "ok": true,
+      "detail": "gap -42 ms"
+    },
+    {
+      "name": "Chromium seeks, Firefox follows",
+      "ok": true,
+      "detail": "target 200: A 204.39 B 204.26, gap 128 ms"
+    },
+    {
+      "name": "still together over 30 s",
+      "ok": true,
+      "detail": "gaps 55, 113, 47, 57, 45, 29 ms"
+    },
+    {
+      "name": "Firefox hands back its playback rate on leaving",
+      "ok": true,
+      "detail": "rate 1"
+    }
+  ],
+  "measurements": {
+    "gapAfterPlayMs": 355,
+    "gapAfterFirefoxPlayMs": -42,
+    "gapsEvery5sMs": [
+      55,
+      113,
+      47,
+      57,
+      45,
+      29
+    ]
+  },
+  "notes": [],
+  "chromium": "Chrome/153.0.8010.36",
+  "firefox": "Session already started",
+  "dumps": {
+    "conformed": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 0,
+        "statesApplied": 0,
+        "acksApplied": 0,
+        "correctionsSeek": 0,
+        "correctionsNudge": 1,
+        "nudgesUnsupported": 0,
+        "reportsSent": 16,
+        "timeSamples": 6,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 30000,
+        "atServerMs": 1789609942491,
+        "paused": true,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 30,
+        "paused": true,
+        "rate": 1,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 45.075,
+        "bufferedBehindS": 4.975000000000001
+      },
+      "trace": [
+        {
+          "at": 256,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "laftel:/player/45462/93304",
+            "mediaUrl": "https://laftel.net/player/45462/93304"
+          }
+        },
+        {
+          "at": 302,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "laftel:/player/45462/93304",
+            "anchor": "30000P@1789609942491"
+          }
+        },
+        {
+          "at": 302,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 591,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 601,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 3858,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609946746,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 3858,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        }
+      ]
+    },
+    "after-pause": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 1,
+        "statesApplied": 1,
+        "acksApplied": 1,
+        "correctionsSeek": 2,
+        "correctionsNudge": 2,
+        "nudgesUnsupported": 0,
+        "reportsSent": 30,
+        "timeSamples": 7,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 1,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 10,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 33154,
+        "atServerMs": 1789609952475,
+        "paused": true,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 33.154312,
+        "paused": true,
+        "rate": 1,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 48.176938,
+        "bufferedBehindS": 8.129311999999999
+      },
+      "trace": [
+        {
+          "at": 256,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "laftel:/player/45462/93304",
+            "mediaUrl": "https://laftel.net/player/45462/93304"
+          }
+        },
+        {
+          "at": 302,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "laftel:/player/45462/93304",
+            "anchor": "30000P@1789609942491"
+          }
+        },
+        {
+          "at": 302,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 591,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 601,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 3858,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609946746,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 3858,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 5482,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 2,
+            "when": 1789609948920,
+            "kind": "play",
+            "anchor": "30000-@1789609948920"
+          }
+        },
+        {
+          "at": 6463,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 6770,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609949695,
+            "mode": "seek"
+          }
+        },
+        {
+          "at": 6770,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 7078,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 7802,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 8832,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609951771,
+            "mode": "seek"
+          }
+        },
+        {
+          "at": 9136,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609952075,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 9533,
+          "dir": "tx",
+          "t": "cmd",
+          "detail": {
+            "kind": "pause",
+            "positionMs": 33154,
+            "reqId": "8nj-D7Dn8GA-1"
+          }
+        },
+        {
+          "at": 9540,
+          "dir": "rx",
+          "t": "ack",
+          "detail": {
+            "seq": 3,
+            "when": 1789609952475,
+            "kind": "pause",
+            "reqId": "8nj-D7Dn8GA-1",
+            "anchor": "33154P@1789609952475"
+          }
+        }
+      ]
+    },
+    "after-hold": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 2,
+        "statesApplied": 2,
+        "acksApplied": 2,
+        "correctionsSeek": 3,
+        "correctionsNudge": 41,
+        "nudgesUnsupported": 0,
+        "reportsSent": 81,
+        "timeSamples": 14,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 2,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 1,
+        "reportsDeferred": 16,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 200000,
+        "atServerMs": 1789609958478,
+        "paused": false,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 234.166284,
+        "paused": false,
+        "rate": 0.9964842395063309,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 47.36496600000001,
+        "bufferedBehindS": 40.222533999999996
+      },
+      "trace": [
+        {
+          "at": 15041,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 5,
+            "when": 1789609958478,
+            "kind": "seek",
+            "anchor": "200000-@1789609958478"
+          }
+        },
+        {
+          "at": 15971,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 16574,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609959513,
+            "mode": "seek"
+          }
+        },
+        {
+          "at": 16574,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 16875,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609959814,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 17590,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609960529,
+            "mode": "nudge",
+            "rate": 1.0102927564085318
+          }
+        },
+        {
+          "at": 17892,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609960830,
+            "mode": "nudge",
+            "rate": 1.0148745212845514
+          }
+        },
+        {
+          "at": 17997,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609960936,
+            "mode": "nudge",
+            "rate": 1.0160688866146956
+          }
+        },
+        {
+          "at": 18301,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609961240,
+            "mode": "nudge",
+            "rate": 1.0184079349358652
+          }
+        },
+        {
+          "at": 18603,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609961542,
+            "mode": "nudge",
+            "rate": 1.0200219104374888
+          }
+        },
+        {
+          "at": 18906,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609961844,
+            "mode": "nudge",
+            "rate": 1.0210919821790538
+          }
+        },
+        {
+          "at": 19616,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609962555,
+            "mode": "nudge",
+            "rate": 1.0223087685423995
+          }
+        },
+        {
+          "at": 20023,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609962958,
+            "mode": "nudge",
+            "rate": 1.0208234605276962
+          }
+        },
+        {
+          "at": 21040,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609963979,
+            "mode": "nudge",
+            "rate": 1.0133933710037686
+          }
+        },
+        {
+          "at": 22053,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609964991,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 23064,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609966003,
+            "mode": "nudge",
+            "rate": 0.9883812153183326
+          }
+        },
+        {
+          "at": 24076,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609967015,
+            "mode": "nudge",
+            "rate": 0.9832088922400689
+          }
+        },
+        {
+          "at": 25103,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609968043,
+            "mode": "nudge",
+            "rate": 0.9868925097751554
+          }
+        },
+        {
+          "at": 26114,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609969053,
+            "mode": "nudge",
+            "rate": 0.994715815142287
+          }
+        },
+        {
+          "at": 27131,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609970070,
+            "mode": "nudge",
+            "rate": 1.0025770861838612
+          }
+        },
+        {
+          "at": 27635,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609970571,
+            "mode": "nudge",
+            "rate": 1.005903765315893
+          }
+        },
+        {
+          "at": 28133,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609971073,
+            "mode": "nudge",
+            "rate": 1.0086237492851293
+          }
+        },
+        {
+          "at": 29154,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609972094,
+            "mode": "nudge",
+            "rate": 1.0110616199890574
+          }
+        },
+        {
+          "at": 31216,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609974155,
+            "mode": "nudge",
+            "rate": 1.003033432945067
+          }
+        },
+        {
+          "at": 32233,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609975171,
+            "mode": "nudge",
+            "rate": 0.9932680743589336
+          }
+        },
+        {
+          "at": 33237,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609976176,
+            "mode": "nudge",
+            "rate": 0.9909596372943908
+          }
+        },
+        {
+          "at": 34256,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609977195,
+            "mode": "nudge",
+            "rate": 0.9939992561651421
+          }
+        },
+        {
+          "at": 35280,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609978219,
+            "mode": "nudge",
+            "rate": 0.9984284193550171
+          }
+        },
+        {
+          "at": 36284,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609979222,
+            "mode": "nudge",
+            "rate": 1.002111765311414
+          }
+        },
+        {
+          "at": 37298,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609980238,
+            "mode": "nudge",
+            "rate": 1.0071017111060439
+          }
+        },
+        {
+          "at": 38309,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609981248,
+            "mode": "nudge",
+            "rate": 1.0099851657034167
+          }
+        },
+        {
+          "at": 40349,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609983287,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 41365,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609984304,
+            "mode": "nudge",
+            "rate": 0.991496880039282
+          }
+        },
+        {
+          "at": 43410,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609986349,
+            "mode": "nudge",
+            "rate": 0.9947742291269401
+          }
+        },
+        {
+          "at": 44418,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609987357,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 45422,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609988361,
+            "mode": "nudge",
+            "rate": 1.0028592472134399
+          }
+        },
+        {
+          "at": 46441,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609989379,
+            "mode": "nudge",
+            "rate": 1.0069210433176394
+          }
+        },
+        {
+          "at": 47446,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609990385,
+            "mode": "nudge",
+            "rate": 1.0082515248873871
+          }
+        },
+        {
+          "at": 48468,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609991407,
+            "mode": "nudge",
+            "rate": 1.0055141938706258
+          }
+        },
+        {
+          "at": 49477,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789609992416,
+            "mode": "nudge",
+            "rate": 0.9964842395063309
+          }
+        }
+      ]
+    }
+  }
+}
