@@ -84,6 +84,10 @@ async function main() {
   await a.waitFor("VideoSync.status().state === 'joined'", { isolated: true });
   results.roomId = room.roomId;
   const invite = `${E1}#videosync=${encodeURIComponent(room.roomId)}.${encodeURIComponent(room.secret)}`;
+  // From another document: onto the same page, only the fragment would change,
+  // which is a same-document navigation and loads nothing.
+  await b.send('Page.navigate', { url: 'about:blank' });
+  await sleep(500);
   await navigate(b, invite);
   const pre = await inputs(b);
   check('an invite link prefills the room and its secret', pre.includes(room.roomId) && pre.includes(room.secret));

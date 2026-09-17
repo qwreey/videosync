@@ -1253,6 +1253,21 @@ happened to exercise live.
 Laftel run in Firefox — play from Chromium 18 ms, pause from Firefox 50 ms, play from Firefox
 101 ms, seek 243 ms; 30 s at 173–262 ms. One run; the steady ~200 ms lag is still there.
 
+## 25. Review round 4, live (2026-09-18)
+
+The merged round-4 build (`NAME=ext-r4`, `videosyncd` from the same commit), Helium only:
+
+| probe | result |
+|---|---|
+| `probe-laftel-room.mjs` (`laftel-room-r4.json`) | presser 517–528 ms, the other 531–544 ms; re-aim at the press in 2 of 6 (82, 93 ms); 0 correction seeks, 0 reconciles; pause moves the presser by 0; gap −246 to −5 ms |
+| `probe-offline.mjs` (`offline-r4.json`) | **4/4**: offline pause reached the room (gap 0 ms); moved room followed (175 ms), A not paused; a cut alone sent nothing (69 ms) |
+| `probe-round3.mjs` (`round3-r4.json`) | **12/12**: rewrite in 0 ms, site untouched, reload rejoins; hidden member not waited on, A starts after 934 ms |
+
+The first `probe-round3.mjs` run failed its first check. That was the probe's fault: tab B was
+already on the episode, so the invite URL was a same-document fragment navigation and loaded
+nothing. The probe now goes through `about:blank` first. The product gap it shows (an invite pasted
+into a tab already on that page is not read until a reload) is in `docs/REVIEW-NEXT.md`.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

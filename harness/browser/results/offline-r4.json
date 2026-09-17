@@ -1,0 +1,79 @@
+{
+  "when": "2026-09-17T14:57:37.088Z",
+  "server": "http://127.0.0.1:8787",
+  "relay": "http://127.0.0.1:8788",
+  "page": "https://laftel.net/player/45462/93304",
+  "outageMs": 8000,
+  "checks": [
+    {
+      "name": "1. B's offline pause reaches the room once it is back",
+      "ok": true,
+      "detail": "A paused=true B paused=true, B sent 1, gap 0 ms"
+    },
+    {
+      "name": "2. the room moved meanwhile: A is not paused by B",
+      "ok": true,
+      "detail": "A paused=false, B sent 0"
+    },
+    {
+      "name": "   and B follows the room",
+      "ok": true,
+      "detail": "target 132: A 167.41 B 167.23 B paused=false, gap 175 ms"
+    },
+    {
+      "name": "3. an outage alone sends nothing",
+      "ok": true,
+      "detail": "B sent 0, both playing=true, gap 69 ms"
+    }
+  ],
+  "cases": {
+    "unmoved": {
+      "aSent": 0,
+      "bSent": 1,
+      "bReconciles": 0,
+      "a": {
+        "at": 1789657084878,
+        "pos": 68.411,
+        "paused": true
+      },
+      "b": {
+        "at": 1789657084879,
+        "pos": 68.410628,
+        "paused": true
+      }
+    },
+    "moved": {
+      "aSent": 1,
+      "bSent": 0,
+      "bReconciles": 1,
+      "target": 132,
+      "a": {
+        "at": 1789657124199,
+        "pos": 167.407692,
+        "paused": false
+      },
+      "b": {
+        "at": 1789657124200,
+        "pos": 167.23331,
+        "paused": false
+      }
+    },
+    "control": {
+      "aSent": 0,
+      "bSent": 0,
+      "bReconciles": 0,
+      "a": {
+        "at": 1789657147863,
+        "pos": 191.095111,
+        "paused": false
+      },
+      "b": {
+        "at": 1789657147864,
+        "pos": 191.027076,
+        "paused": false
+      }
+    }
+  },
+  "notes": [],
+  "roomId": "3kXiUYIhFPs5D6FYHJAWBA"
+}

@@ -15,6 +15,7 @@ corrected. Read it before picking up work, then the Traps below.
 | Doc | What it is |
 |---|---|
 | `docs/STATE.md` | Where the project is, what is next, and what was retracted. The handover document. |
+| `docs/REVIEW-NEXT.md` | The review work list: what the last rounds changed, known leftovers, what to dig into, and how to run the next (small) passes. |
 | `docs/DECISIONS.md` | **Locked constraints.** Inputs, not open questions. Changing one needs an explicit decision from the user. Each carries a note on what measurement later found. |
 | `research/SYNTHESIS.md` | **The design's reasoning.** 9 reference implementations distilled per sub-problem, with citations. Read its `### Amendment:` blocks — §4c's classifier table was falsified by measurement and replaced. Where it disagrees with STATE.md, STATE.md wins. |
 | `docs/PROTOCOL.md` | Wire protocol spec. Derived from SYNTHESIS; keep them consistent. |
@@ -90,7 +91,9 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   and then refuses to let the script read it — `TypeError: Failed to fetch`, naming nothing.
   The WebSocket upgrade is not subject to CORS; it uses the `Origin` allowlist.
 - **`@grant none` puts a userscript in the page context**, where the site's CSP governs its
-  WebSocket. No OTT site's `connect-src` lists your self-hosted server. Grant any GM API.
+  WebSocket. No OTT site's `connect-src` lists your self-hosted server. Grant any GM API — and
+  keep `@inject-into content`: Violentmonkey's default runs even a granted script in the page,
+  where the room secret and device token are the page's to read.
 - **The anchor is truth about *pause state* too.** Nothing in the correction table can press play,
   so a client that ends up paused against a playing room stays there forever, reporting a growing
   residual and being seek-corrected. The client re-applies the anchor after `RECONCILE_AFTER`.
@@ -170,6 +173,8 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   rewound by the whole lead when their own ack landed (~650 ms on Laftel). The re-pause is an
   applied transition — `applyingRemote` + `rebaseline(pos, paused)` — never a flag waiting for the
   ack, so a play the gate holds or drops just leaves a paused member in a paused room.
+  A lone presser holds too while the readiness gate would hold the play (the server gates a room
+  of any size) — `gateHolds`/`reportedUnready`.
 - **The extension's store only reads the keys it lists.** `content.ts` hydrates `chrome.storage`
   for a fixed `KEYS` list before anything can await; a key saved but not listed is written and never
   seen again. And its writes are async — anything that must survive a navigation awaits
@@ -200,6 +205,15 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   moved and wins.
 - **Continuation belongs to the page's descriptor, not to the key's prefix.** A single-label host
   (`http://nas`) mints generic keys under a bare name that looks exactly like a descriptor id.
+- **Judge a member's change against where their own pending command takes the room.** Until its
+  `seq` is applied the anchor is the room *before* it, so a member undoing their own seek inside
+  the lead looked like agreement and was never sent (`intended`/`roomAnchor`). Reports and the
+  reconciler stay on the anchor.
+- **An href change is not a new element.** Retarget the adapter only when the element or the media
+  key changed; our own `replaceState` re-wrapped the video and restarted acquisition.
+- **Only the transport ends a session, and a black-holed path sends no close for minutes.** The
+  time probe is the client's liveness check (3 unanswered probes); count probes, not time — a
+  throttled tab sees a minute of quiet on every tick.
 - **`ws.Conn.ReadTimeout` is per frame.** Use `ReadBefore` for an absolute bound — every ping used to
   restart the wait for `hello`.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**

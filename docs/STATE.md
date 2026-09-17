@@ -3,6 +3,8 @@
 Written so a session with no memory of the work can continue without re-deriving anything.
 Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 
+**Current work (2026-09-18): converging the many-eyes review in small passes — `docs/REVIEW-NEXT.md`.**
+
 ## Status by phase
 
 | phase | state |
@@ -423,6 +425,59 @@ check; the GM status-0 rule is unrun in Tampermonkey. Measuring N20 live found t
 playing room stayed paused forever (very likely §23's unexplained run 1), and a dropped connection
 kept the servo's nudge running for the whole outage. **Convergence:** round 3 was not dry; the next
 probe decides whether 47 was the tail of the new D6–D8 code or a steady rate.
+
+## Review round 4 (2026-09-17/18)
+
+A second convergence probe (same shape, 32 finders) on c30c41f: 51 raw, **35 confirmed** (69 → 47
+→ 35 across rounds 1, 3, 4). Fixed on seven branches, each checked by two reviewers, a follow-up
+pass on what they found, merged (one conflict in `isEcho`/`act`, resolved by keeping both
+branches' rules). `mise run test` (Go incl. `-race`; core 511; extension, harness and meta tests)
+and `test-e2e` (21) pass. Live on the merged build: BROWSER-FINDINGS §25.
+
+- **Engine.**
+  - A member's change is judged against where its own pending command takes the room
+    (`intended`/`roomAnchor`), so undoing one's own seek inside the lead, or playing right after
+    one's own pause, is sent (N1). Reports and the reconciler stay on the anchor.
+  - `play()` is waited on for at most 1 s (N2).
+  - Three unanswered time probes end a silently dead socket (N8).
+  - A command lost with the connection is resent if the room did not move, excusing only its own
+    change from the gesture check (N16).
+  - A joiner welcomed inside a play's lead waits for it (N29).
+  - A lone member's play is held while the readiness gate would hold it (N25, recommended option
+    A).
+  - Activation is sampled before the join, so a panel click is no media key (N3).
+  - A hidden tab holds its continuation until shown (C1).
+  - A member who starts playing by key is unblocked (N18, overlay wired).
+  - A seeder's early press is retried (N19).
+  - The detector reports a play state that changed while unready (N4), except under our own seek.
+- **App.**
+  - An href-only change no longer re-wraps the element (N5); this was a regression from round 3's
+    `replaceState`.
+  - Key events stop at the panel's shadow root (N7).
+  - A late room creation is dropped after a member's own leave/join (N9).
+  - A page restored from the bfcache leaves the room (N20).
+  - The userscript asks for `@inject-into content` (N14; Violentmonkey runs even a granted script
+    in the page otherwise).
+- **Server.**
+  - `-allowed-origins` accepts `chrome-extension://*`-style patterns and warns when extensions are
+    left out (N6, recommended option a: never implicit).
+  - `-trusted-proxies` without `-public-url` warns (N12).
+  - Password checks wait only while their request is alive, bounded (N13).
+  - `hash-password` refuses names the users file would mangle (N24).
+  - The verbose trace redacts rotated secrets (N26).
+  - The servo ignores paused slopes and keeps its learned bias across a free seek (N27, N28;
+    POC-FINDINGS §46).
+  - Missing guard tests added (N32–N35, C2, C3).
+- **Providers/extension.**
+  - Dropping a host widens (N10).
+  - Example and watch URLs must be "plain URLs" both ports parse alike; `xn--` labels are refused
+    (N11).
+  - Lone surrogates are normalised (N21).
+  - The options page no longer eats the first click (N22) and offers held-back pins a review
+    (N23).
+
+**The next passes are smaller and slower, by the user's direction: `docs/REVIEW-NEXT.md` is the
+work list** (what changed, known leftovers, what is worth digging, and the order).
 
 ## Open questions that block things
 
