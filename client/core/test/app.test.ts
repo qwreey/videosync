@@ -12,7 +12,7 @@ import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
 import { FakePlayer, FakeTransport, flush, realTime } from './fakes.ts';
-import { CODE, FakeServer, json, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
+import { CODE, FakeServer, gatewayPage, json, KEY, LOGIN_URL, PASSWORD, USER } from './fakeserver.ts';
 import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
@@ -782,6 +782,29 @@ describe('signing in to a server', () => {
     await h.tick(50);
     assert.ok(signInShown(h), 'refused twice and still not asking');
     assert.equal(h.transports.length, 2, 'retried more than once');
+  });
+
+  it('keeps reconnecting a signed-in member through a gateway error page', async () => {
+    // -auth-scope all behind nginx, and videosyncd restarting: /api/ticket is
+    // nginx's 502 for a moment. Every device token is still good.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    server.override = (p) => (p === '/api/ticket' ? gatewayPage(502) : undefined);
+    h.join();
+    await h.tick(50);
+    assert.equal(signInShown(h), false, 'an outage asked a signed-in member to sign in');
+    assert.notEqual(h.app.api.engine()?.state, 'refused', 'an outage ended the session for good');
+    server.override = () => undefined;
+    await h.tick(20_000);
+    assert.equal(h.transports.length, 1, 'never reconnected once the server was back');
+    h.tr().open();
+    assert.ok(server.spend(h.tr().sentOf('hello')[0]!.ticket), 'the reconnect carried no live ticket');
+    assert.equal(signInShown(h), false);
   });
 
   it('signs in through a browser tab and shows the code the tab will show', async () => {
