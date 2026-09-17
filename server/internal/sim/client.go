@@ -329,6 +329,9 @@ func (c *Client) Welcome(seq uint64, a vsync.Anchor, serverMs int64) {
 // longer exists) and the detector's history.
 func (c *Client) Disconnect() {
 	c.pending = nil
+	// The engine hands back a nudge when the connection drops (engine.ts
+	// onClose -> releaseRate): it corrects against a room nobody can hear.
+	c.appliedRate = 1.0
 	c.haveOffset, c.clockSamples, c.bestRTT, c.estOffsetMs = false, 0, 0, 0
 	c.haveEvalPos, c.stallSuspected = false, false
 	c.residualHist = nil

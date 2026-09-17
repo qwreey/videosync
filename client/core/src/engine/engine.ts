@@ -969,6 +969,7 @@ export class SyncEngine {
     // Whatever the old socket was carrying back will never arrive.
     this.unacked = [];
     if (!this.running || clean || this.status === 'refused') {
+      this.releaseRate();
       this.setStatus('closed', reason);
       return;
     }
@@ -985,6 +986,10 @@ export class SyncEngine {
         media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
       } : null;
     }
+    // A nudge is a correction against a room this member can no longer hear.
+    // Left on, it runs the player away for the whole outage -- 660 ms in an
+    // 8 s drop on Laftel (BROWSER-FINDINGS §24).
+    this.releaseRate();
     this.detector.reset();
     // NOT zeroed: `welcome` sets it from the server, and zeroing it here
     // disarmed the supersede guard for any mutation still queued from the old
@@ -1524,8 +1529,14 @@ export class SyncEngine {
     // Only once acquired: until then the conform step and `guarded` do this,
     // and a player at its end is finished, not paused -- play() on an ended
     // element starts it again from the beginning.
-    if (
-      this.clock.ready && onRoomMedia && !this.autoplayBlocked && !this.applyingRemote &&
+    // An apply in flight neither starts nor ends the wait: a paused member in a
+    // playing room is seek-corrected about every 2 s, which is sooner than
+    // `reconcileAfterMs`, so restarting the wait on each one kept that member
+    // paused forever (BROWSER-FINDINGS §24).
+    if (this.applyingRemote) {
+      // hold
+    } else if (
+      this.clock.ready && onRoomMedia && !this.autoplayBlocked &&
       this.acq.state === 'steady' && !state.ended && state.paused !== this.anchor.paused
     ) {
       if (this.disagreeingSince === 0) {

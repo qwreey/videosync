@@ -1360,6 +1360,18 @@ describe('going absent', () => {
     assert.equal(h.player.rate, 1, 'kept the room\'s nudge after leaving it');
   });
 
+  it('hands the playback rate back when the connection drops', async () => {
+    // BROWSER-FINDINGS §24: an 8 s outage at a held nudge put the member
+    // 660 ms away from the room by the time it was back.
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    h.tr.deliver({ t: 'correct', mode: 'nudge', rate: 1.06, when: h.vt.now + OFFSET });
+    await h.vt.advance(300);
+    assert.equal(h.player.rate, 1.06);
+    h.tr.drop();
+    assert.equal(h.player.rate, 1, 'ran on at the nudge with nobody to answer to');
+  });
+
   it('leaves a rate somebody else chose after the last nudge', async () => {
     const h = harness({ paused: false, positionS: 10 });
     await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
@@ -1392,6 +1404,30 @@ describe('the anchor is truth about being paused, too', () => {
     await h.vt.advance(2500);
     assert.equal(h.player.paused, false, 'never came back to what the room is doing');
     assert.ok(h.engine.stats.reconciles >= 1);
+  });
+
+  it('re-applies even while the room keeps seek-correcting the paused player', async () => {
+    // BROWSER-FINDINGS §24: a paused member in a playing room falls behind,
+    // so the server sends it a free seek about every 2 s. Each seek is an
+    // apply, and an apply used to restart the reconciler's wait -- 2 s is less
+    // than reconcileAfterMs, so the member stayed paused, seek-corrected
+    // forever. A seek that takes time (~100 ms on Laftel) is what exposes it.
+    const h = harness({ paused: false, positionS: 10 });
+    const seekTo = h.player.seekTo.bind(h.player);
+    h.player.seekTo = (s: number) => new Promise<void>((r) => {
+      h.vt.setTimer(() => { void seekTo(s).then(r); }, 150);
+    });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(500);
+
+    h.player.paused = true;
+    for (let i = 0; i < 5 && h.player.paused; i++) {
+      h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+      await h.vt.advance(2000);
+    }
+    assert.equal(h.player.paused, false, 'the seek corrections starved the reconciler');
+    assert.ok(h.engine.stats.reconciles >= 1);
+    assert.ok(h.engine.stats.correctionsSeek >= 1, 'the corrections were not applied at all');
   });
 
   it('leaves a genuine local pause alone long enough to become a command', async () => {
