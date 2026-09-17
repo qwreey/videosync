@@ -1976,6 +1976,63 @@ describe('a play() that waits for data does not hold up the room', () => {
   });
 });
 
+describe('a socket that dies without closing', () => {
+  // A network change can black-hole a TCP path with no FIN or RST reaching
+  // the client. The browser then reports no close until the kernel gives up
+  // retransmitting -- about fifteen minutes on Linux -- and page code never
+  // sees the server's pings. Until then the panel said "joined" while every
+  // command and chat line went nowhere.
+
+  function silence(h: Harness): void {
+    (h.tr as unknown as { timeOffset: number | null }).timeOffset = null;
+  }
+
+  it('is given up on when the server stops answering, and reconnected', async () => {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    const connects = h.tr.connects;
+    silence(h);
+    await h.vt.advance(60_000);
+    assert.notEqual(h.engine.state, 'joined', 'still "joined" a minute into a dead socket');
+    assert.ok(h.tr.connects > connects, 'never tried to reconnect');
+    assert.equal(h.engine.stats.reconnects >= 1, true);
+  });
+
+  it('control: a server that answers keeps the session, however quiet the room', async () => {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(20 * 60_000);
+    assert.equal(h.engine.state, 'joined');
+    assert.equal(h.tr.connects, 1);
+  });
+
+  it('control: a throttled tab whose probes go out a minute apart is not given up on', async () => {
+    // Chrome's intensive throttling runs a hidden tab's timers once a
+    // minute; the replies still arrive at once.
+    const vt = new VirtualTime();
+    const player = new FakePlayer(vt, { paused: false, positionS: 10 });
+    const tr = new FakeTransport();
+    let throttled = false;
+    const engine = new SyncEngine({
+      adapter: player, transport: tr, now: () => vt.now, clearTimer: vt.clearTimer, isHidden: () => throttled,
+      setTimer: (fn, ms) => vt.setTimer(fn, throttled ? Math.max(ms, 60_000) : ms),
+    }, CFG);
+    tr.autoAnswerTime(OFFSET);
+    engine.start();
+    tr.open();
+    tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 10_000, atServerMs: OFFSET, paused: false, mediaKey: 'yt:abc' },
+      members: [], serverMs: vt.now, mediaKey: 'yt:abc',
+    });
+    await vt.advance(400);
+    throttled = true;
+    await vt.advance(10 * 60_000);
+    assert.equal(engine.state, 'joined');
+    assert.equal(tr.connects, 1);
+  });
+});
+
 describe('a command of ours still on its way is where the room is going', () => {
   // `this.anchor` only becomes our command at its `when`. Judged against the
   // anchor it replaces, a member undoing their own change inside that window

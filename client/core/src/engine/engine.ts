@@ -393,6 +393,13 @@ const OWN_ACK_WAIT_MS = 5000;
 const PLAY_WAIT_MS = 1000;
 
 /**
+ * Periodic clock probes left unanswered, over at least as many
+ * `timeSyncIntervalMs`, before a socket counts as dead (see `timeLoop`):
+ * 15-20 s at the default interval, against the server's own 90 s.
+ */
+const SILENT_PROBES = 3;
+
+/**
  * How long after its own end a member's site may move on and still carry the
  * room with it. Measured: Laftel routes ~5.5 s after `ended`, YouTube's
  * autonav ~7.6 s (BROWSER-FINDINGS §20). A navigation later than this was
@@ -546,6 +553,9 @@ export class SyncEngine {
    * change from.
    */
   private intended: { reqId: string; seq: number; at: number; anchor: Anchor } | null = null;
+  /** Periodic probes sent since anything was last received, and when the first went. See `timeLoop`. */
+  private silentProbes = 0;
+  private silentSince = 0;
   /** The ticket for the `hello` about to be sent, spent by sending it. */
   private ticket = '';
   /**
@@ -977,6 +987,7 @@ export class SyncEngine {
       this.d.setTimer(() => this.probeTime(), i * this.cfg.connectProbeSpacingMs);
     }
     this.d.clearTimer(this.timeTimer);
+    this.silentProbes = 0;
     this.timeTimer = this.d.setTimer(() => this.timeLoop(), this.cfg.timeSyncIntervalMs);
   }
 
@@ -1045,7 +1056,33 @@ export class SyncEngine {
     this.tx({ t: 'time', t0: Math.round(this.d.now()) });
   }
 
+  /**
+   * The periodic clock probe, which is also the session's liveness check.
+   *
+   * Only the transport can end a session, and a path that went dark without a
+   * FIN or RST -- a Wi-Fi or VPN switch -- delivers no close until the kernel
+   * stops retransmitting, some fifteen minutes later on Linux. Page code never
+   * sees the server's pings. Until then the member looked joined while their
+   * commands and chat went nowhere and the room's moves never came. The server
+   * answers every probe, so a socket that has let `SILENT_PROBES` of them go
+   * unanswered, over at least that many intervals, is dead: it is closed and
+   * handed to the ordinary reconnect path.
+   *
+   * Counted in probes as well as time: a throttled tab runs this once a
+   * minute, and a laptop coming back from suspend runs it before the socket
+   * has had a chance to deliver anything. Neither is a silence.
+   */
   private timeLoop(): void {
+    const now = this.d.now();
+    if (this.silentProbes >= SILENT_PROBES &&
+      now - this.silentSince >= SILENT_PROBES * this.cfg.timeSyncIntervalMs) {
+      const silentMs = Math.round(now - this.silentSince);
+      this.silentProbes = 0;
+      this.d.transport.close();
+      this.onClose(false, `no answer from the server in ${silentMs} ms`);
+      return;
+    }
+    if (this.silentProbes++ === 0) this.silentSince = now;
     this.probeTime();
     this.timeTimer = this.d.setTimer(() => this.timeLoop(), this.cfg.timeSyncIntervalMs);
   }
@@ -1056,6 +1093,7 @@ export class SyncEngine {
 
   private onFrame(f: ServerFrame): void {
     this.record('rx', f.t, f as unknown as Record<string, unknown>);
+    this.silentProbes = 0; // anything at all says the socket is alive; see `timeLoop`
     switch (f.t) {
       case 'welcome': {
         // A welcome replaces the anchor without passing through
