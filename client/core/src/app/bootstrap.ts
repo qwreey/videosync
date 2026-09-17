@@ -261,6 +261,8 @@ export function start(p: Platform): App {
   let wasJoined = false;
   /** The rejoin record this page last wrote, exactly as written. */
   let ownRejoin = '';
+  /** How many `followRoom` passes are writing their rejoin record. */
+  let writingRejoin = 0;
   let lastStatus: EngineStatus = 'idle';
   let session: { server: string; roomId: string; secret: string; name: string } | null = null;
   /** Whether `session` was started by its room's creator (`adoptLocalStateOnJoin`). */
@@ -473,6 +475,25 @@ export function start(p: Platform): App {
     ownRejoin = '';
   }
 
+  /**
+   * The secret rotated after a follow wrote its record: the next page would
+   * join with the old one and be refused, which is final. Rewritten only
+   * while it is still this page's record -- consumed, or replaced by another
+   * tab, it is not ours to write -- and not while `followRoom` is writing,
+   * which rebuilds it from `session` itself.
+   */
+  function refreshRejoin(): void {
+    if (writingRejoin || !ownRejoin || !session) return;
+    if (p.store.load('rejoin', '') !== ownRejoin) return;
+    let r: Rejoin;
+    try { r = JSON.parse(ownRejoin) as Rejoin; } catch { return; }
+    if (r.server !== session.server || r.roomId !== session.roomId || r.secret === session.secret) return;
+    const record = JSON.stringify({ ...r, secret: session.secret });
+    p.store.save('rejoin', record);
+    ownRejoin = record;
+    void p.store.flush?.();
+  }
+
   function cancelFollow(): void {
     if (followTimer) clearTimeout(followTimer);
     followTimer = 0;
@@ -527,24 +548,31 @@ export function start(p: Platform): App {
       // scheduled: a secret rotated meanwhile -- during the write, too -- is
       // the only one the server still accepts, so a record that changed while
       // it was being written is written again.
-      for (;;) {
-        const record = JSON.stringify({
-          ...session, key: roomMediaKey, until, tab: tabId, origin: location.origin,
-        } satisfies Rejoin);
-        if (record === ownRejoin) break;
-        p.store.save('rejoin', record);
-        ownRejoin = record;
-        // The write is what carries the session to the next page; an async
-        // store that is still writing when the document unloads would drop it.
-        await p.store.flush?.();
-        if (gen !== followGen || engine !== e || e.state !== 'joined' || !session) {
-          // Cancelled while writing. Whatever cancelled it decides what
-          // happens next; a record left behind would pull a later page into
-          // this room.
-          forgetRejoin();
-          return;
+      writingRejoin++;
+      try {
+        for (;;) {
+          const record = JSON.stringify({
+            ...session, key: roomMediaKey, until, tab: tabId, origin: location.origin,
+          } satisfies Rejoin);
+          if (record === ownRejoin) break;
+          p.store.save('rejoin', record);
+          ownRejoin = record;
+          // The write is what carries the session to the next page; an async
+          // store that is still writing when the document unloads would drop it.
+          await p.store.flush?.();
+          if (gen !== followGen || engine !== e || e.state !== 'joined' || !session) {
+            // Cancelled while writing. Whatever cancelled it decides what
+            // happens next; a record left behind would pull a later page into
+            // this room.
+            forgetRejoin();
+            return;
+          }
         }
+      } finally {
+        writingRejoin--;
       }
+      // From here the old document stays live, and joined, until the next one
+      // commits; a rotation meanwhile is carried by `refreshRejoin`.
       location.assign(target);
     };
     mediaUi = 'follow';
@@ -831,6 +859,7 @@ export function start(p: Platform): App {
         panel.setFields({ secret: sec });
         p.store.save('secret', sec);
         if (session) session = { ...session, secret: sec };
+        refreshRejoin();
         panel.addChat('', by === engine?.id
           ? '비밀키를 교체했어요. 예전 링크로는 아무도 들어올 수 없어요.'
           : '누군가 비밀키를 교체했어요. 새 초대 링크를 공유해주세요.', true);

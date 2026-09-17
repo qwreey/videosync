@@ -234,6 +234,40 @@ describe('following the room to its video', () => {
     assert.equal(savedRejoin(h)?.secret, 'S2', 'the next page would be refused');
   });
 
+  it('carries a secret rotated after the navigation began, before the page unloaded', async () => {
+    for (const async of [false, true]) {
+      const store = makeStore(async);
+      const tab: TabStorage = new Map();
+      const h = harness(HOME, store, tab);
+      h.join();
+      h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+      await h.tick(2000);
+      store.release();
+      await h.tick(50);
+      assert.equal(h.dom.loc.assigned.length, 1, 'control: the navigation began');
+      // The old document is still live and joined until the next one commits.
+      h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+      assert.equal(savedRejoin(h)?.secret, 'S2', `async=${async}: the next page would be refused`);
+      unload(h);
+
+      // The next page joins with it.
+      const next = harness(ROOM_URL, store, tab);
+      assert.equal(next.app.api.engine() !== null, true, 'control: the next page rejoined');
+      next.tr().open();
+      assert.equal(next.tr().sentOf('hello')[0]!.secret, 'S2');
+      unload(next);
+    }
+  });
+
+  it('does not write a rejoin record for a follow that is not under way', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await h.tick(2000);
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.equal(savedRejoin(h), null);
+  });
+
   it('survives a reconnect inside the grace period', async () => {
     const h = harness(HOME);
     h.join();
