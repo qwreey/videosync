@@ -6,6 +6,7 @@ import type { EngineConfig, EngineEvents } from '../src/engine/engine.ts';
 import { ServerClock } from '../src/engine/clock.ts';
 import type { Anchor } from '../src/engine/clock.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
+import { AutoplayBlockedError } from '../src/adapter/types.ts';
 import { FakePlayer, FakeTransport, VirtualTime, flush } from './fakes.ts';
 import type { FakePlayerOptions } from './fakes.ts';
 
@@ -1889,6 +1890,89 @@ describe('the clock estimate follows a clock that steps', () => {
       assert.ok(Math.abs(c.serverNow(now) - (now + offset)) <= c.uncertaintyMs + 0.5);
       assert.ok(c.rttMs <= 30, `seed ${seed}: never tightened past ${c.rttMs} ms`);
     }
+  });
+});
+
+/**
+ * A `<video>` below HAVE_FUTURE_DATA: `play()` flips `paused` at once and its
+ * promise waits for data -- here, for ever -- unless `pause()` rejects it with
+ * an AbortError, as the HTML spec says.
+ */
+class StarvedPlayer extends FakePlayer {
+  private pendingPlays: Array<(e: Error) => void> = [];
+  constructor(vt: VirtualTime, o: FakePlayerOptions) { super(vt, o); this.readyState = 2; this.bufferedAheadS = 0; }
+  override play(): Promise<void> {
+    this.readState();
+    this.plays++;
+    this.paused = false;
+    return new Promise<void>((_, reject) => { this.pendingPlays.push(reject); });
+  }
+  override async pause(): Promise<void> {
+    await super.pause();
+    const rejects = this.pendingPlays;
+    this.pendingPlays = [];
+    for (const r of rejects) r(Object.assign(new Error('The play() request was interrupted by a call to pause()'), { name: 'AbortError' }));
+  }
+}
+
+describe('a play() that waits for data does not hold up the room', () => {
+  // `applyTransition` awaited play() inside the apply chain. An element stuck
+  // below HAVE_FUTURE_DATA never settles it, and everything the room did after
+  // -- the seek that would have moved it off the stuck spot, the pause --
+  // queued behind it for good, while `lastAppliedSeq` said it was applied.
+
+  async function starvedMember() {
+    const vt = new VirtualTime();
+    const player = new StarvedPlayer(vt, { paused: true, positionS: 600 });
+    const tr = new FakeTransport();
+    const errors: string[] = [];
+    const engine = new SyncEngine(
+      { adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false },
+      CFG, { onError: (c) => { errors.push(c); } },
+    );
+    tr.autoAnswerTime(OFFSET);
+    engine.start();
+    tr.open();
+    tr.deliver({
+      t: 'welcome', you: 'me-1', seq: 0,
+      anchor: { positionMs: 600_000, atServerMs: OFFSET, paused: true, mediaKey: 'yt:abc' },
+      members: [], serverMs: vt.now, mediaKey: 'yt:abc',
+    });
+    await vt.advance(400);
+    let seq = 0;
+    const state = async (kind: string, positionMs: number, paused: boolean) => {
+      const t = vt.now + OFFSET;
+      tr.deliver({
+        t: 'state', seq: ++seq, when: t, emittedAt: t, by: 'other-1', kind,
+        anchor: { positionMs, atServerMs: t, paused, mediaKey: 'yt:abc' },
+      });
+      await vt.advance(100);
+    };
+    return { vt, player, tr, engine, errors, state };
+  }
+
+  it('applies the room\'s later seek and pause', async () => {
+    const m = await starvedMember();
+    await m.state('play', 600_000, false);
+    assert.equal(m.player.paused, false, 'the room\'s play was not pressed');
+    await m.vt.advance(5000);
+    await m.state('seek', 700_000, false);
+    await m.vt.advance(5000);
+    assert.ok(Math.abs(m.player.positionS - 700) < 1, `still at ${m.player.positionS}: the seek never ran`);
+    await m.state('pause', 700_000, true);
+    await m.vt.advance(1000);
+    assert.equal(m.player.paused, true, 'the room\'s pause never ran');
+    // The pause interrupting a play nobody waits for any more is routine.
+    assert.deepEqual(m.errors, []);
+  });
+
+  it('control: a play() that settles at once is still waited for', async () => {
+    // An autoplay refusal arrives as a rejection straight away, and must
+    // still be seen by the transition that pressed play.
+    const m = await starvedMember();
+    m.player.play = () => Promise.reject(new AutoplayBlockedError());
+    await m.state('play', 600_000, false);
+    assert.equal(m.engine.blocked, true);
   });
 });
 

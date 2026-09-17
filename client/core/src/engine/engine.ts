@@ -386,6 +386,13 @@ const TRANSIENT_UNREADY_MIN_AHEAD_S = 1;
 const OWN_ACK_WAIT_MS = 5000;
 
 /**
+ * How long the apply chain waits for `play()` to settle (see `tryPlay`).
+ * A refusal settles it at once; one still pending after this is waiting for
+ * data, and the transition has already done what it can.
+ */
+const PLAY_WAIT_MS = 1000;
+
+/**
  * How long after its own end a member's site may move on and still carry the
  * room with it. Measured: Laftel routes ~5.5 s after `ended`, YouTube's
  * autonav ~7.6 s (BROWSER-FINDINGS §20). A navigation later than this was
@@ -1373,28 +1380,56 @@ export class SyncEngine {
     return s.ended === true || (s.durationS > 0 && landsAt(targetMs, s.durationS) >= s.durationS * 1000);
   }
 
+  /**
+   * Press play, and wait for the answer at most `PLAY_WAIT_MS`.
+   *
+   * Every later player mutation queues behind this. `play()` on an element
+   * below HAVE_FUTURE_DATA settles only once data arrives, and an element
+   * stuck on a spot that never loads never settles it -- the room's seek that
+   * would move it off that spot, and the room's pause that would reject the
+   * promise, then waited behind it for good. By the bound the element's
+   * `paused` has long been false, which is all the transition asked for; a
+   * refusal comes at once. What settles later is handled the same way, bar
+   * the AbortError of a later pause: that is the room moving on.
+   */
   private async tryPlay(): Promise<void> {
+    let late = false;
+    let played: Promise<void>;
     try {
-      await this.d.adapter.play();
-      this.autoplayBlocked = false;
+      played = this.d.adapter.play();
     } catch (e) {
-      if (e instanceof AutoplayBlockedError) {
-        // Swallowing this leaves us paused while the room plays, reporting a
-        // residual that grows forever, and the server seeking us over and over
-        // -- every seek "working" and the residual never closing.
-        this.autoplayBlocked = true;
-        this.ev.onAutoplayBlocked?.();
-        return;
-      }
-      // Everything else -- most commonly AbortError, "the play() request was
-      // interrupted", which is routine when a site's own logic reacts to our
-      // seek. Rethrowing propagated out of the queued closure into
-      // `serialise`'s catch and vanished, leaving the member paused against a
-      // playing room with no counter and nothing that would ever press play
-      // again. Counted, and left for the reconciler below to fix.
-      this.stats.playFailures++;
-      this.ev.onError?.('play_failed', (e as Error).message);
+      played = Promise.reject(e);
     }
+    const settled = played.then(
+      () => { this.autoplayBlocked = false; },
+      (e: unknown) => {
+        if (late && (e as Error | null)?.name === 'AbortError') return;
+        this.playRefused(e);
+      });
+    let timer = 0;
+    const bound = new Promise<void>((r) => { timer = this.d.setTimer(r, PLAY_WAIT_MS); });
+    await Promise.race([settled, bound]);
+    this.d.clearTimer(timer);
+    late = true;
+  }
+
+  private playRefused(e: unknown): void {
+    if (e instanceof AutoplayBlockedError) {
+      // Swallowing this leaves us paused while the room plays, reporting a
+      // residual that grows forever, and the server seeking us over and over
+      // -- every seek "working" and the residual never closing.
+      this.autoplayBlocked = true;
+      this.ev.onAutoplayBlocked?.();
+      return;
+    }
+    // Everything else -- most commonly AbortError, "the play() request was
+    // interrupted", which is routine when a site's own logic reacts to our
+    // seek. Rethrowing propagated out of the queued closure into
+    // `serialise`'s catch and vanished, leaving the member paused against a
+    // playing room with no counter and nothing that would ever press play
+    // again. Counted, and left for the reconciler to fix.
+    this.stats.playFailures++;
+    this.ev.onError?.('play_failed', (e as Error | null)?.message ?? String(e));
   }
 
   /**
