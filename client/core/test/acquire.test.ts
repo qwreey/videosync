@@ -1943,6 +1943,37 @@ describe('a site that pauses the element right after our own seek', () => {
     assert.deepEqual(h.kinds(), [], 'the site\'s pause was sent to the room');
   });
 
+  it('a media key\'s pause while our seek is landing is sent', async () => {
+    // No input event, only the activation rising: the member's all the same.
+    const { h, p } = await roomSeekParked();
+    await h.vt.advance(200);
+    h.g.active = true;                            // MPRIS pause
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('an unready pause under an apply that never seeked is sent, with no input', async () => {
+    // A room play needing no seek, whose play() waits on an element below
+    // HAVE_FUTURE_DATA: nothing of ours made it unready.
+    const h = harness({ player: { paused: true, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.equal(h.engine.acquisition, 'steady');
+    const p = h.player;
+    p.readyState = 2;
+    p.play = () => { p.paused = false; p.plays++; return new Promise<void>(() => {}); };
+    await h.state({ positionMs: 100_000, paused: false }, 'play');
+    await h.vt.advance(200);
+    assert.equal(p.paused, false);
+    assert.equal(p.seeks, 0);
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
   const seeks: Array<[string, (h: H) => Promise<void>]> = [
     ['a correction seek', async (h) => {
       h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });

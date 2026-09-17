@@ -793,6 +793,48 @@ describe('reconnect', () => {
       assert.deepEqual(h.kinds(), ['pause', 'pause'], 'the lost pause was not resent');
     });
 
+    it('adds a seek lost at the second drop to the snapshot it keeps', async () => {
+      const h = await parkedSession();
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.player.positionS = 300;                   // a seek with no input behind it
+      h.player.emit('seeked');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['seek']);
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked[0]!.release(false);
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['seek', 'seek'], 'the lost seek was not resent');
+    });
+
+    it('adds a play lost at the second drop, and held for, to the snapshot it keeps', async () => {
+      // The play is held (the player re-paused at the room) before the link
+      // goes, so only the lost command says the member is playing.
+      const h = await parkedSession({ paused: true, park: [1, 3] });
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      await h.player.play();                      // a media key
+      h.player.emit('play');
+      await h.vt.advance(100);
+      assert.deepEqual(h.kinds(), ['play']);
+      h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+      await h.vt.advance(100);
+      h.parked.shift()!.release(false);           // the hold runs, then the new correction parks
+      await h.vt.advance(100);
+      assert.equal(h.parked.length, 1, 'the second correction did not park');
+      assert.equal(h.player.paused, true, 'the play was not held');
+      h.tr.drop('dead again');
+      await h.vt.advance(1000);
+      h.tr.open(); h.welcome();
+      await h.vt.advance(600);
+      h.parked.shift()!.release(false);
+      await h.vt.advance(300);
+      assert.deepEqual(h.kinds(), ['play', 'play'], 'the lost play was not resent');
+    });
+
     it('takes a fresh snapshot when the kept one is already stale', async () => {
       // The room moved while the member was away: the first snapshot will
       // never be sent. A pause pressed in the new session and lost at the
