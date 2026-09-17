@@ -87,6 +87,11 @@ never holds it.
   and every `OPTIONS` unauthenticated** (a gated preflight fails as a bare `Failed to fetch`); run
   `-auth proxy -trusted-proxies <proxy address>`. *(As built: the design first gated `/api/ticket`
   and `/api/auth/*` too; see below.)*
+- Behind any reverse proxy, whatever the method: `-public-url`. *(Review 4:)* without it the
+  login link is built from the `Host` the proxy sends, and nginx's `proxy_pass` sends the
+  upstream's (`127.0.0.1:8080`) by default, so the tab opens on the visitor's own machine.
+  `videosyncd` warns when `-trusted-proxies` is set without it; `X-Forwarded-Host` is not read
+  (nginx does not send it by default either).
 - An IdP: `-auth oidc` with the flags above; register `<public-url>/auth/oidc/callback`.
 
 ## As built (2026-09-17)

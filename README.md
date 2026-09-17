@@ -143,7 +143,12 @@ device signs in once.
   append to `X-Forwarded-For` (Caddy, Traefik, nginx's
   `$proxy_add_x_forwarded_for`) or set `X-Real-IP`, or both. It passes the
   header it does not write through as the visitor sent it, so when both arrive
-  and disagree the request is charged to the proxy itself. With `-auth proxy`, require sign-in at
+  and disagree the request is charged to the proxy itself. Pass **`-public-url
+  https://sync.example.com`** too: without it the login link is built from the
+  `Host` header the proxy sends, and nginx's `proxy_pass` sends the upstream's
+  (`127.0.0.1:8080`) unless you add `proxy_set_header Host $host` — the login
+  tab then opens on the visitor's own machine. The server warns at startup when
+  `-trusted-proxies` is set without it. With `-auth proxy`, require sign-in at
   the proxy for **`/api/session` and `/auth/`** only, and leave everything else
   open — `/ws`, `/healthz`, `/api/rooms`, `/api/ticket`, `/api/auth/`, `/api/providers`, and every
   `OPTIONS` request. The server checks those itself; a proxy that gates a
