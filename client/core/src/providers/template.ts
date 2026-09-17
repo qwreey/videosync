@@ -263,9 +263,22 @@ export function substitute(t: TextTemplate, caps: Captures, encode: boolean): st
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
 /**
+ * An IDNA `xn--` label. Node's URL and Go's net/url take any such label as
+ * text; a browser runs UTS46 and refuses one that is not valid punycode of a
+ * valid name (`xn--a`, `xn--`), so a descriptor the tests and the server
+ * accept would fail in every real client. Telling the valid ones apart needs
+ * the IDNA tables, so a descriptor may not name an IDN host at all. The Go
+ * port's aceLabel is the same rule.
+ */
+export function aceLabel(l: string): boolean {
+  return l.toLowerCase().startsWith('xn--');
+}
+
+/**
  * A descriptor host: lowercase ASCII, exact or with a leading `*.`, at least
  * two labels. ASCII only is what keeps a homograph from ever equalling one: a
- * look-alike reaches us as `xn--...`.
+ * look-alike reaches us as `xn--...`, and no `xn--` label is taken at all
+ * (see aceLabel).
  */
 export function validHostPattern(p: string): boolean {
   if (typeof p !== 'string') return false;
@@ -274,7 +287,7 @@ export function validHostPattern(p: string): boolean {
   if (base.length === 0 || base.length > 253) return false;
   const labels = base.split('.');
   if (labels.length < 2) return false;
-  if (!labels.every((l) => LABEL.test(l))) return false;
+  if (!labels.every((l) => LABEL.test(l) && !aceLabel(l))) return false;
   // `*.1.2.3` is a wildcard over an address, which is no host at all.
   if (wild && /^[0-9]+$/.test(labels[labels.length - 1]!)) return false;
   return true;

@@ -44,6 +44,13 @@ type templateVectors struct {
 		URL      string `json:"url"`
 		Pathname string `json:"pathname"`
 	} `json:"pathnames"`
+	URLs []struct {
+		URL      string `json:"url"`
+		Plain    bool   `json:"plain"`
+		Hostname string `json:"hostname"`
+		Pathname string `json:"pathname"`
+		Search   string `json:"search"`
+	} `json:"urls"`
 	InvalidQuery []map[string]any `json:"invalidQuery"`
 	Substitute   []struct {
 		Template string            `json:"template"`
@@ -104,6 +111,28 @@ func TestTemplateVectors(t *testing.T) {
 	for _, c := range v.Pathnames {
 		if u, ok := parseURL(c.URL); !ok || u.pathname != c.Pathname {
 			t.Errorf("%s: pathname %q (ok %v), want %q", c.URL, u.pathname, ok, c.Pathname)
+		}
+	}
+	if len(v.URLs) == 0 {
+		t.Fatal("url vectors did not load")
+	}
+	for _, c := range v.URLs {
+		if got := plainURL(c.URL); got != c.Plain {
+			t.Errorf("%q: plain %v, want %v", c.URL, got, c.Plain)
+			continue
+		}
+		if !c.Plain {
+			continue
+		}
+		u, ok := parseURL(c.URL)
+		if !ok || u.hostname != c.Hostname || u.pathname != c.Pathname || u.search != c.Search {
+			t.Errorf("%q: parsed (%v) as %q %q %q, want %q %q %q", c.URL, ok, u.hostname, u.pathname, u.search,
+				c.Hostname, c.Pathname, c.Search)
+		}
+	}
+	for _, c := range v.Pathnames {
+		if !plainURL(c.URL) {
+			t.Errorf("%s: a pathname vector is not a plain URL", c.URL)
 		}
 	}
 	for _, q := range v.InvalidQuery {

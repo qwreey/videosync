@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -44,6 +45,15 @@ var (
 	reKeyPref = regexp.MustCompile(`^[a-z0-9.-]{2,64}$`)
 	reVersion = regexp.MustCompile(`^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$`)
 	reWatch   = regexp.MustCompile(`^https://([^/?#{}]+)(/[^#]*)?$`)
+	// The same pattern as the client's PLAIN_URL; see plainURL.
+	rePlainURL = regexp.MustCompile(`^https?://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?` +
+		`(?:/(?:[A-Za-z0-9._~!$&()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?` +
+		`(?:\?(?:[A-Za-z0-9._~!$&()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?` +
+		`(?:#(?:[A-Za-z0-9._~!$&()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?$`)
+	rePlaceholder = regexp.MustCompile(`\{[^{}]*\}`)
+	reDigits      = regexp.MustCompile(`^[0-9]+$`)
+	reHexNumber   = regexp.MustCompile(`^0[xX][0-9A-Fa-f]*$`)
+	reOctet       = regexp.MustCompile(`^(0|[1-9][0-9]{0,2})$`)
 )
 
 // IdentityRule, Descriptor and friends are the typed form, decoded only after
@@ -309,7 +319,8 @@ func checkStructure(v any, p *problems) {
 		}
 	}
 	if c, ok := getStr(o, "canonicalHost", w, p, strOpt{}); ok {
-		if strings.HasPrefix(c, "*.") || !validHostPattern(c) {
+		// The generic rule's watch URL is built on it, so it must read alike in both ports.
+		if strings.HasPrefix(c, "*.") || !validHostPattern(c) || !plainHost(c) {
 			p.add("%s: bad canonicalHost %q", w, c)
 		} else if hostsOK && !coveredBy(c, hosts) {
 			p.add("%s: canonicalHost %q is not in \"hosts\"", w, c)
@@ -519,6 +530,11 @@ func checkWatchTemplate(src string, hosts []string) error {
 	if !coveredBy(host, hosts) {
 		return fmt.Errorf("host %q is not in \"hosts\"", host)
 	}
+	// Substituted values are encoded into plain characters; the literal text
+	// must be plain too, or the ports read the produced URL differently.
+	if !plainURL(rePlaceholder.ReplaceAllString(src, "x")) {
+		return errors.New("not a plain URL (printable ASCII, nothing a URL parser rewrites)")
+	}
 	rest := m[2]
 	if _, q, ok := strings.Cut(rest, "?"); ok {
 		for _, pair := range strings.Split(q, "&") {
@@ -536,6 +552,53 @@ func (pr *Provider) Claims(hostname string) int { return bestHostScore(pr.D.Host
 
 // ID is the descriptor's id.
 func (pr *Provider) ID() string { return pr.D.ID }
+
+// plainURL reports whether href is written the way net/url and a browser's
+// URL read alike: http(s)://host[:port], then a path, query and fragment of
+// printable ASCII neither rewrites, on a host that is a name with no "xn--"
+// label or a dotted-quad address. Outside it they disagree (URL strips tabs, reads a
+// backslash as "/", takes "https:host", rewrites a numeric host and refuses
+// a port over 65535; net/url re-escapes "|"), so this port would list a
+// descriptor every client refuses (N11). Only an author's examples and
+// watch templates are held to it. The client's plainUrl is the same rule.
+func plainURL(href string) bool {
+	m := rePlainURL.FindStringSubmatch(href)
+	if m == nil {
+		return false
+	}
+	if m[2] != "" {
+		if port, err := strconv.Atoi(m[2]); err != nil || port > 65535 {
+			return false
+		}
+	}
+	return plainHost(m[1])
+}
+
+func plainHost(host string) bool {
+	name := strings.TrimSuffix(host, ".")
+	labels := strings.Split(name, ".")
+	for _, l := range labels {
+		if l == "" || aceLabel(l) {
+			return false
+		}
+	}
+	// URL reads a host whose last label is a number as an IPv4 address and
+	// rewrites it ("1.2.3" is 1.2.0.3); net/url keeps the text.
+	last := labels[len(labels)-1]
+	if !reDigits.MatchString(last) && !reHexNumber.MatchString(last) {
+		return true
+	}
+	if name != host || len(labels) != 4 {
+		return false
+	}
+	for _, l := range labels {
+		n, err := strconv.Atoi(l)
+		if !reOctet.MatchString(l) || err != nil || n > 255 {
+			return false
+		}
+	}
+	return true
+}
 
 // parsedURL is the part of a WHATWG URL the evaluator reads.
 type parsedURL struct {
@@ -728,6 +791,10 @@ func (pr *Provider) runExamples() []string {
 		if e.URL != nil {
 			if e.Key != nil {
 				positive = true
+			}
+			if !plainURL(*e.URL) {
+				out = append(out, fmt.Sprintf("%s: %q is not a plain URL (printable ASCII, nothing a URL parser rewrites)", w, *e.URL))
+				continue
 			}
 			// `"watch": null` asserts "no watch URL", which a *string cannot
 			// tell apart from an absent field. The client compares it, so

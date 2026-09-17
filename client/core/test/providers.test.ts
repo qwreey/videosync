@@ -20,7 +20,7 @@ import {
   serverOrigin, sha256Hex, widens, writeState,
 } from '../src/providers/adoption.ts';
 import type { ProviderState } from '../src/providers/adoption.ts';
-import { compileDescriptor, parseDescriptor } from '../src/providers/descriptor.ts';
+import { compileDescriptor, parseDescriptor, plainUrl } from '../src/providers/descriptor.ts';
 import {
   adopt, autoUpdate, autoUpdateStored, decline, dynamicPagePatterns, grantedBy, missingMatches, originsFor, removeUser, saveUser,
   setAutoAdopt, unadopt,
@@ -70,6 +70,19 @@ describe('the template grammar (shared vectors)', () => {
     // itself; these pin what URL.pathname gives, which the client matches on.
     assert.ok(v.pathnames.length > 0);
     for (const c of v.pathnames) assert.equal(new URL(c.url).pathname, c.pathname, c.url);
+  });
+
+  it('reads a plain URL the way the Go port does, and nothing else counts as plain', () => {
+    // N11: net/url and URL disagree outside this grammar, so examples and
+    // watch templates must stay inside it; inside it the parts must agree.
+    assert.ok(v.urls.length > 0);
+    for (const c of v.urls) {
+      assert.equal(plainUrl(c.url), c.plain, JSON.stringify(c.url));
+      if (!c.plain) continue;
+      const u = new URL(c.url);
+      assert.deepEqual([u.hostname, u.pathname, u.search], [c.hostname, c.pathname, c.search], c.url);
+    }
+    for (const c of v.pathnames) assert.ok(plainUrl(c.url), c.url);
   });
 
   it('rejects malformed query templates', () => {
@@ -163,6 +176,30 @@ describe('descriptor validation (shared vectors)', () => {
     assert.equal(r.ok, false);
     // Control: the same descriptor, small, is fine.
     assert.equal(parseDescriptor(JSON.stringify(d)).ok, true);
+  });
+
+  it('reads a lone surrogate as U+FFFD everywhere, as the Go port and the wire do', () => {
+    // N21: Go's JSON decoder turns every lone-surrogate escape into U+FFFD,
+    // and so does the hub when a key crosses it. A key minted from a raw
+    // surrogate never came back equal to the member's own.
+    const text = JSON.stringify(build({ set: {
+      identity: [{ path: '/watch/{id}', key: '/watch/\ud800{id}', watch: 'https://video.example/watch/{id}' }],
+      examples: [{ url: 'https://video.example/watch/abc', key: 'example:/watch/\ud800abc' }],
+    } }));
+    const r = parseDescriptor(text);
+    assert.ok(r.ok, r.ok ? '' : r.errors.join('; '));
+    const key = r.provider.keyFor(new URL('https://video.example/watch/abc'))!;
+    assert.equal(key, 'example:/watch/\uFFFDabc');
+    assert.equal(key.isWellFormed(), true);
+    assert.equal(r.provider.d.examples.every((e) => !('key' in e) || e.key === null || e.key.isWellFormed()), true);
+    // Keys handed in at run time are read the same way.
+    const c = compileDescriptor(build({ set: { continues: [{ from: '/watch/{id:any}', to: '/watch/{other:any}' }] } }));
+    assert.ok(c.ok);
+    assert.equal(c.provider.continues('example:/watch/a\ud800', 'example:/watch/a\udc00'), false, 'the same key');
+    assert.equal(c.provider.continues('example:/watch/a\ud800', 'example:/watch/b'), true, 'control');
+    // Rebuilding the value must not turn a `__proto__` field into a prototype.
+    const proto = JSON.parse(text.replace(/^\{/, '{"__proto__":{"x":1},'));
+    assert.equal(compileDescriptor(proto).ok, false, 'an unknown field hidden');
   });
 
   it('refuses a descriptor that is not JSON', () => {
@@ -571,7 +608,8 @@ describe('what a change widens', () => {
   it('flags every field that lets a descriptor claim or reach more', () => {
     const cases: Array<[string, Partial<Descriptor>, boolean]> = [
       ['version only', { version: '1.0.1' }, false],
-      ['a narrower host list', { hosts: ['video.example'] }, false],
+      // A dropped host goes to whoever else claims it, or the generic rule (N10).
+      ['a narrower host list', { hosts: ['video.example'] }, true],
       ['a new host', { hosts: [...BASE.hosts, 'other.example'] }, true],
       // An exact host under an old wildcard claims that host more strongly
       // (hostScore 4 -> 7) and can tie or beat another descriptor there.
@@ -655,6 +693,46 @@ describe('what a change widens', () => {
       [{ id: 'example', name: 'X', version: '1.0.1', sha256: await sha256Hex(v2), hosts: [] }], async () => v2);
     assert.deepEqual(r.applied, [], 'the update waits for the user');
     assert.equal(normalizeMediaKey(logout, buildRegistry(r.state, () => true)), null);
+  });
+
+  it('does not silently hand a dropped host to the generic path rule', async () => {
+    // N10: an update that stops claiming a host was "narrower", but nothing
+    // claims that host afterwards, so it fell to the generic path rule:
+    // F20 back on a replaced built-in's host, and every key there renamed.
+    const server = 'https://s.example/';
+    const lf = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'laftel.json')!.source) as Descriptor;
+    const v1 = JSON.stringify(lf);
+    const v2 = JSON.stringify({ ...lf, version: '1.0.1', hosts: ['laftel.net'],
+      examples: lf.examples!.filter((e) => !('url' in e) || !e.url.includes('www.')) });
+    assert.ok(parseDescriptor(v2).ok, 'control: the narrower copy is valid');
+    const entry = { id: 'laftel', name: 'Laftel', version: '1.0.0', sha256: await sha256Hex(v1), hosts: [] };
+    const pinned = await adopt(EMPTY, server, entry, v1, true);
+    assert.ok(pinned.ok);
+    const on = setAutoAdopt(pinned.state, server, true);
+    const www = 'https://www.laftel.net';
+    const before = buildRegistry(on, () => true);
+    assert.equal(before.byId('laftel')?.tier, 'server', 'control: the server copy replaced the built-in');
+    assert.equal(normalizeMediaKey(`${www}/logout`, before), null);
+    assert.equal(normalizeMediaKey(`${www}/player/1/2`, before), 'laftel:/player/1/2');
+
+    assert.equal(widens(lf, JSON.parse(v2)), true, 'a host removed');
+    assert.equal(widens(lf, { ...lf, hosts: [...lf.hosts].reverse() }), false, 'control: hosts reordered');
+    const r = await autoUpdate(on, server,
+      [{ ...entry, version: '1.0.1', sha256: await sha256Hex(v2) }], async () => v2);
+    assert.deepEqual(r.applied, [], 'the update waits for the user');
+
+    // And once the user does take it, the dropped host of a built-in names no
+    // media rather than every path on it.
+    const taken = await adopt(on, server, { ...entry, version: '1.0.1', sha256: await sha256Hex(v2) }, v2, true);
+    assert.ok(taken.ok);
+    const after = buildRegistry(taken.state, () => true);
+    assert.equal(after.lookup('www.laftel.net').blocked, true);
+    assert.equal(normalizeMediaKey(`${www}/logout`, after), null, 'F20 reopened on www.laftel.net');
+    assert.equal(watchUrl(`${www}/logout`, after), null);
+    assert.equal(followableUrl(`${www}/logout`, 'laftel.net:/logout', `${www}/player/1/2`, after), null);
+    assert.equal(normalizeMediaKey('https://laftel.net/player/1/2', after), 'laftel:/player/1/2', 'control: still Laftel');
+    // Control: a host no built-in describes still gets the generic rule.
+    assert.equal(normalizeMediaKey('https://video.example/logout', after), 'video.example:/logout');
   });
 
   it('treats identity rules as the ordered list they are', () => {

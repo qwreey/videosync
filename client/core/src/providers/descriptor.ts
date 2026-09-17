@@ -13,7 +13,7 @@
  */
 import {
   bestHostScore, LIMITS, matchPath, matchQuery, normHost, parsePathTemplate, parseQueryTemplate,
-  parseTextTemplate, substitute, validHostPattern,
+  parseTextTemplate, substitute, validHostPattern, aceLabel,
 } from './template.ts';
 import type { Captures, PathTemplate, QueryTemplate, TextTemplate } from './template.ts';
 
@@ -220,7 +220,8 @@ function checkStructure(v: unknown, p: Problems): void {
   }
   const canon = str(v, 'canonicalHost', w, p);
   if (canon !== undefined) {
-    if (canon.startsWith('*.') || !validHostPattern(canon)) p.add(`${w}: bad canonicalHost "${canon}"`);
+    // The generic rule's watch URL is built on it, so it must read alike in both ports.
+    if (canon.startsWith('*.') || !validHostPattern(canon) || !plainHost(canon)) p.add(`${w}: bad canonicalHost "${canon}"`);
     else if (hosts && !coveredBy(canon, hosts)) p.add(`${w}: canonicalHost "${canon}" is not in "hosts"`);
   }
   bool(v, 'pathFallback', w, p, false);
@@ -435,9 +436,13 @@ export class Provider {
    */
   continues(prev: string, next: string): boolean {
     const pre = `${this.keyPrefix}:`;
-    if (!prev.startsWith(pre) || !next.startsWith(pre) || prev === next) return false;
-    const a = prev.slice(pre.length);
-    const b = next.slice(pre.length);
+    // Judged as Go and the wire read them: a lone surrogate is U+FFFD (N21),
+    // so keys that differ only there are the same key.
+    const p = wellFormed(prev) as string;
+    const n = wellFormed(next) as string;
+    if (!p.startsWith(pre) || !n.startsWith(pre) || p === n) return false;
+    const a = p.slice(pre.length);
+    const b = n.slice(pre.length);
     for (const c of this.cont) {
       const ca = matchBody(c.from, a);
       const cb = ca && matchBody(c.to, b);
@@ -455,15 +460,31 @@ export class Provider {
  * segment, but without percent-decoding (the body is already decoded text).
  */
 function matchBody(t: PathTemplate, body: string): Captures | null {
-  // A lone surrogate cannot be encoded (encodeURIComponent throws, and
-  // parseDescriptor would throw rather than refuse). Go's JSON decoder reads
-  // the same escape as U+FFFD, so read it that way too: both ports then
-  // judge the same text.
-  const wellFormed = body.replace(LONE_SURROGATE, '\uFFFD');
-  return matchPath(t, wellFormed.split('/').map((s) => encodeURIComponent(s)).join('/'));
+  // The body is well-formed (`continues` saw to it): encodeURIComponent
+  // throws on a lone surrogate, and parseDescriptor would throw rather than
+  // refuse.
+  return matchPath(t, body.split('/').map((s) => encodeURIComponent(s)).join('/'));
 }
 
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * `v` with every lone surrogate, in values and names alike, read as U+FFFD
+ * (N21). That is what Go's JSON decoder does to the whole file, and what a
+ * key becomes once it crosses the hub: compared raw, a template and an
+ * example differing only there passed on one port and not the other, and a
+ * key minted from one never came back equal to the member's own.
+ */
+function wellFormed(v: unknown): unknown {
+  if (typeof v === 'string') return v.replace(LONE_SURROGATE, '\uFFFD');
+  if (Array.isArray(v)) return v.map(wellFormed);
+  if (typeof v === 'object' && v !== null) {
+    // fromEntries defines a `__proto__` name as data, as JSON.parse does;
+    // assigning it would set the prototype and hide an unknown field.
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [wellFormed(k), wellFormed(x)]));
+  }
+  return v;
+}
 
 function wrap<T>(where: string, fn: () => T): T {
   try {
@@ -490,6 +511,11 @@ function checkWatchTemplate(src: string, d: Descriptor, where: string): void {
   const host = m[1]!;
   if (!validHostPattern(host) || host.startsWith('*.')) throw new Error(`${where}.watch: bad host "${host}"`);
   if (!coveredBy(host, d.hosts)) throw new Error(`${where}.watch: host "${host}" is not in "hosts"`);
+  // Substituted values are encoded into plain characters; the literal text
+  // must be plain too, or the ports read the produced URL differently.
+  if (!plainUrl(src.replace(/\{[^{}]*\}/g, 'x'))) {
+    throw new Error(`${where}.watch: not a plain URL (printable ASCII, nothing a URL parser rewrites)`);
+  }
   const rest = m[2] ?? '/';
   const q = rest.indexOf('?');
   if (q >= 0) {
@@ -509,7 +535,8 @@ export type CompileResult =
  * Validate a parsed descriptor, compile it, and run its examples. Everything
  * that fails is reported, not just the first thing.
  */
-export function compileDescriptor(v: unknown): CompileResult {
+export function compileDescriptor(raw: unknown): CompileResult {
+  const v = wellFormed(raw);
   const p = new Problems();
   checkStructure(v, p);
   if (p.list.length) return { ok: false, errors: p.list };
@@ -536,6 +563,44 @@ export function parseDescriptor(text: string): CompileResult {
     return { ok: false, errors: [`descriptor: not JSON (${(e as Error).message})`] };
   }
   return compileDescriptor(v);
+}
+
+/**
+ * A URL written the way both ports read alike: `http(s)://host[:port]`, a
+ * path, query and fragment of printable ASCII that neither parser rewrites,
+ * and a host that is a name (no `xn--` label) or a dotted-quad address. Outside it net/url and
+ * URL disagree -- URL strips tabs and newlines, reads a backslash as `/`, takes
+ * `https:host`, re-reads a numeric host as an address and refuses a port over
+ * 65535; net/url re-escapes `|` and `^` -- so the server would list a
+ * descriptor every client refuses (N11). Examples and watch templates are
+ * the author's own text; only they are held to it. The Go port has the same
+ * pattern and the same host rule; providers/testdata/templates.json "urls"
+ * holds both to it.
+ */
+export function plainUrl(s: string): boolean {
+  const m = PLAIN_URL.exec(s);
+  if (!m) return false;
+  if (m[2] !== undefined && Number(m[2]) > 65535) return false;
+  return plainHost(m[1]!);
+}
+
+const PLAIN_URL = new RegExp(
+  '^https?://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?' +
+  "(?:/(?:[A-Za-z0-9._~!$&()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?" +
+  "(?:\\?(?:[A-Za-z0-9._~!$&()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?" +
+  "(?:#(?:[A-Za-z0-9._~!$&()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?$");
+
+function plainHost(host: string): boolean {
+  const name = host.endsWith('.') ? host.slice(0, -1) : host;
+  const labels = name.split('.');
+  if (labels.some((l) => l === '' || aceLabel(l))) return false;
+  // URL reads a host whose last label is a number as an IPv4 address and
+  // rewrites it (`1.2.3` is 1.2.0.3); net/url keeps the text. Only the form
+  // both leave alone is taken.
+  const last = labels[labels.length - 1]!;
+  if (!/^[0-9]+$/.test(last) && !/^0x[0-9a-f]*$/i.test(last)) return true;
+  return name === host && labels.length === 4 &&
+    labels.every((l) => /^(0|[1-9][0-9]{0,2})$/.test(l) && Number(l) <= 255);
 }
 
 /**
@@ -576,6 +641,10 @@ function runExamples(provider: Provider): string[] {
   d.examples.forEach((e, i) => {
     const w = `examples[${i}]`;
     if ('url' in e) {
+      if (!plainUrl(e.url)) {
+        out.push(`${w}: ${JSON.stringify(e.url)} is not a plain URL (printable ASCII, nothing a URL parser rewrites)`);
+        return;
+      }
       const got = evaluate(provider, e.url);
       if (got.key !== e.key) out.push(`${w}: ${e.url} gives key ${JSON.stringify(got.key)}, expected ${JSON.stringify(e.key)}`);
       else if (e.key !== null && got.watch === null) out.push(`${w}: ${e.url} has no watch URL that names the same media`);
