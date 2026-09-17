@@ -760,16 +760,18 @@ export function start(p: Platform): App {
   /** The server refused `hello` for want of a ticket. */
   function onAuthRefused(server: string): void {
     if (signInFor) return; // already asking
+    // Both answers below come later; by then the member may be in another
+    // session, on this very server, which nothing here is about.
+    const e = engine;
     if (!authRetried) {
       authRetried = true;
-      const e = engine;
       void auth.learnRefusal(server, 'join').then(() => {
         if (engine === e && session?.server === server) joinAgain();
       });
       return;
     }
     void auth.info(server).then((i) => i.methods, () => [] as readonly string[]).then((methods) => {
-      if (session?.server === server && !signInFor) askSignIn(server, methods, joinAgain);
+      if (engine === e && session?.server === server && !signInFor) askSignIn(server, methods, joinAgain);
     });
   }
 

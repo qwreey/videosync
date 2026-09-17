@@ -1053,6 +1053,37 @@ describe('signing in to a server', () => {
     assert.equal(h.transports.length, 1, 'the login finished and nothing was retried');
   });
 
+  it('ignores a second refusal answered after the member joined another room on the same server', async () => {
+    // Refused twice in a row, so the page reads /healthz for the methods to
+    // offer. Before that answer lands the member leaves and joins another room
+    // on the same server, which works: the late answer is not about it.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    const h = harness(ROOM_URL, store, new Map(), {}, server);
+    h.join();
+    for (let i = 0; i < 2; i++) {
+      await h.tick(50);
+      h.tr().open();
+      h.tr().deliver({ t: 'error', code: 'auth_required' });
+      h.tr().drop('1008 auth required');
+    }
+    // Same turn as the second refusal: its /healthz answer is still to come.
+    h.app.api.leave();
+    h.app.api.join(SERVER, 'R2', 'S2', 'me');
+    await h.tick(50);
+    assert.equal(h.transports.length, 3, 'control: refused twice, then joined the other room');
+    h.tr().open();
+    assert.ok(server.spend(h.tr().sentOf('hello')[0]!.ticket), 'control: the new join carried a live ticket');
+    h.welcome({ mediaKey: ROOM_KEY });
+    assert.equal(signInShown(h), false, 'asked to sign in for a session the member already left');
+    assert.equal(h.app.api.engine()?.state, 'joined');
+    assert.equal(h.transports.length, 3, 'the new session was torn down and rebuilt');
+  });
+
   it('ignores a join ticket refused after the member left, or moved to another server', async () => {
     const OTHER = 'https://other.example';
     for (const then of ['leave', 'join elsewhere'] as const) {
