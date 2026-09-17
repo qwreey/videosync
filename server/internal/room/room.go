@@ -589,6 +589,15 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	m.Suspended = rep.Suspended
 	m.Finished = rep.Finished
 	m.Acquiring = rep.Acquiring && !rep.Suspended
+	if rep.Suspended {
+		// An absent member's engine hands back the rate it was running
+		// (engine.ts releaseRate), and the servo already counts on that. The
+		// "already told them" record has to as well: left at the old nudge,
+		// it swallowed the same nudge on return for up to rateRefreshMs as
+		// already held, while the member ran 1.0 behind the room and the servo
+		// wound the missing rate into its bias.
+		m.lastRate, m.lastRateAt = 1.0, now
+	}
 	m.ReadyState = rep.ReadyState
 	m.BufferedAheadS = rep.BufferedAheadS
 	// Use the client's own measured round trip, not (now - its estimated server

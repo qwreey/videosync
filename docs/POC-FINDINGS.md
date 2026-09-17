@@ -1511,3 +1511,87 @@ pre-gate in this scenario; each covers the other.
 
 Every row of the table that existed before is unchanged: the new behaviour
 only engages for a profile with an episode or a throttle.
+
+## 45. Round 16 — review 3: the rate the room thought it had sent, and a buffer test that was right
+
+Two review findings touched the control law. The rule for a control-law change
+is to measure it seed-averaged, before and after (§39), so both were measured
+with `mise run sim -- -seeds 8`. Neither shows up much in the table, and the
+reasons are different.
+
+**The room forgot that an absent member drops its rate (review N43).** The
+engine hands back any rate the servo left on a member while that member is
+absent (`engine.ts` `releaseRate`), and the servo already assumes this: a
+suspended report resets its phase term (§42). The room's record of the rate it
+last sent (`Member.lastRate`, which exists to stop a nudge at every report)
+did not assume it. A member that came back within `rateRefreshMs` (5 s) of its
+last nudge and needed the same rate again had that nudge swallowed as
+"already held". The member then ran at 1.0 while behind, and the servo, which
+thought its nudge was in effect, integrated the missing rate into its bias.
+`TestAMemberBackFromAShortAbsenceIsNudgedAgainAtOnce` reproduces this: 2.8 s
+behind and out of buffer, the member is nudged to 1.10, is absent for 3 s, and
+comes back. Before the fix it ran 1.0 at 5 s and 6 s. The fix: a suspended
+report records rate 1.0 as the rate sent, at that instant.
+
+The sim client did not release its rate either, so the harness was measuring
+a client that does not ship. It now releases the rate on every evaluation
+while absent, exactly as the engine does. Servo rows that changed, seeds 1..8
+(all other servo rows are identical in all three columns):
+
+| servo | anchorErr | p95 | rateTime | skipped |
+|---|---|---|---|---|
+| tab-suspension, before | 29 | 41 | 37 | 30050 |
+| tab-suspension, sim releases the rate | 29 | 41 | 36 | 30050 |
+| tab-suspension, + room fix | 29 | 40 | 42 | 30051 |
+| next-episode, before | 12 | 23 | 49 | 0 |
+| next-episode, sim releases the rate | 12 | 23 | 49 | 0 |
+| next-episode, + room fix | 13 | 23 | 45 | 0 |
+
+The same comparison to two decimals, sim releasing the rate, without and with
+the room fix:
+
+| servo | seeds | anchorErr without / with | skipped without / with |
+|---|---|---|---|
+| tab-suspension | 1..8 | 28.74 / 29.01 | 30050.0 / 30051.0 |
+| next-episode | 1..8 | 12.39 / 12.77 | 0 / 0 |
+| tab-suspension | 1..32 | 28.92 / 28.96 | 30049.9 / 30049.9 |
+| next-episode | 1..32 | 10.96 / 10.91 | 0 / 0 |
+
+This is neutral, and the reason is not that the defect is harmless. **No
+scenario reaches the defect.** In the sim, a suspended tab's position freezes.
+Any absence long enough to matter comes back more than the band behind, and
+with a full buffer that means a free seek, which drops the bias and makes the
+next nudge a different rate. The variants tried here (a slow decoder switching
+tabs every 15 s, stalls followed by short absences, small buffers) either
+free-seek on return or are gated by a small buffer. None of them produced a
+single suppression that the fix changed. The differences above come from frame
+counts: the fix suppresses a now-redundant `rate 1.0` after an absence, and
+every frame not sent shifts every later jitter draw. At 32 seeds the
+difference is gone. The unit test is the evidence for the defect. The table is
+only evidence that the fix costs nothing.
+
+**The free-seek test judges the report at arrival (review N42, not changed).**
+The review said `targetBuffered` should compute the seek distance at the
+report's sample time (`AtServerMs`), not at the time the server judges it. A
+verifier disagreed, and the disagreement holds. The buffered range is media
+time, fixed when the report was sampled. The client computes its seek target
+when it applies the seek, which is later still. Judging at arrival is
+therefore off by only the downlink, and judging at the sample time is off by
+the uplink as well. The suggested version, measured with the servo over seeds
+1..8, changed exactly one row, for the worse:
+
+| servo, long-stalls | anchorErr | seek/OUT | rateTime | skipped |
+|---|---|---|---|---|
+| judged at arrival (shipping) | 62 | 3.25 | 222 | 16551 |
+| judged at `AtServerMs` | 62 | 3.25 | 241 | 16571 |
+
+The comment on `targetBuffered` now explains why arrival time is used.
+
+Two other fixes in this round are server-side but do not change the control
+law, and the table confirms it. With the fix that stops a command from being
+due before one still in its lead (review N15), and the fix that resends the
+roster when a member's away or ready flag changes (review N44), every row of
+the 8-seed table is byte-identical. The roster frames are dropped by the
+simulated sink, because no simulated client reads them and queuing them would
+reshuffle every jitter draw. The rate-limit coalescing fix (review N14) lives
+in the hub, which the sim does not exercise.
