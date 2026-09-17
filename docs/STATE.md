@@ -310,7 +310,7 @@ Still open from the review, each needing a decision or a measurement rather than
 The user set the direction (D6–D8 in DECISIONS.md); research in `research/design-*.md`, designs and
 "As built" notes in `docs/design/`. Built in three parallel tracks, integrated, reviewed twice by
 independent reviewers (with mutation checks), and verified live (BROWSER-FINDINGS §20–22).
-`mise run test` (Go 10 packages; core 359; harness and manifest/meta tests; both shims' typecheck)
+`mise run test` (Go 10 packages; core 359 at the time; harness and manifest/meta tests; both shims' typecheck)
 and `mise run test-e2e` (21) pass; `go test -race` passes.
 
 - **D6 access control.** `server/internal/auth`: `token`, `password` (PBKDF2), `proxy` (trusted
@@ -353,6 +353,72 @@ Open after D6–D8, needing a browser, a person or a decision:
 - A newer client against an older server loses the CAS and the acquiring gate (README notes it).
 - User decisions: should `T_settle` be longer than 1 s; how should ads be handled; should new server
   descriptor offers surface beyond the options page; JWKS verification for OIDC.
+
+## Review round 3: the convergence probe (2026-09-17)
+
+One more many-eyes pass over `main` at 5ec092e (32 finders over 16 areas, 3 verifiers each, told
+what was already fixed or deliberately open) to see whether review had run dry. It had not: 71 raw,
+49 distinct, **47 confirmed** (1 high), against 69 in round 1 — about half in the D6/D7 code, which
+had been reviewed least. All 47 were fixed on nine branches (each fix test-first, each branch
+checked by two reviewers who reverted fixes to see tests fail, then a follow-up pass on what they
+found) and merged. `mise run test` (Go 10 packages incl. `-race`; core 426; harness, manifest,
+meta and smoke-driver tests; both shims' typecheck) and `mise run test-e2e` (21) pass. Nothing of
+this round has run in a browser yet.
+
+What changed in behaviour (details in the commit bodies):
+
+- **Engine.** A tab that is hidden while it would be acquiring reports itself absent
+  (`suspended`), and no correction moves an unacquired member, visible or not (N1). A seeder's
+  press is sent as a joiner's once someone else moved the room (N3). `applyTransition` never plays
+  an element at its end (N4). A stream with no finite duration is acquired at HAVE_METADATA (N5).
+  A change made while reconnecting is sent after the `welcome` **only if the room did not move
+  meanwhile** (same `seq` and anchor) and never if it is the browser's pause of a never-audible
+  hidden tab (`SeekDetector.browserPaused`); otherwise the room wins, silently — there is no panel
+  notice yet (N20, the user's choice).
+- **Detector/adapter.** A forward seek right after a stall is reported; the frozen-read allowance
+  is capped at 1.5 s (N6). A superseded seek of ours is rejected at once instead of after the seek
+  timeout (N21). Continuation is decided by the descriptor of the *page*, not by the key prefix: a
+  single-label host (`nas`) mints keys that look like a descriptor id (N17). The server keeps a
+  generic `mediaUrl` as sent, so `followableUrl` accepts the room's own URL (N24); a generic site is
+  followed only on the same origin (N26).
+- **App.** An outage (gateway 5xx, a server restarted without `-auth`) is no longer read as
+  "sign in" — see the review-3 notes in `docs/design/auth.md` (N10); the userscript treats a GM
+  `onload` with status 0 as a redirect until Tampermonkey is measured. 나가기 works while
+  reconnecting (N11) and leaves the panel idle (N25). Late sign-in results are checked against the
+  session they belong to (N22, N35, N39). **A rotated secret is written into a `#videosync=`
+  fragment for that room with `history.replaceState`** (N37, the user's choice), and saved with its
+  room (N23, N38).
+- **Extension.** The worker no longer opens whatever socket URL a content script names: it is
+  given a server URL and builds `ws(s)://<origin>/ws` itself, refusing anything not http(s) (N13). The options page checks page hosts and wildcard grants correctly (N12). A token whose
+  IndexedDB write failed is kept in memory and wins over the database read (N36) — until the worker
+  restarts.
+- **Providers.** Selectors containing a backslash, a comment or a control character are refused in
+  both ports (N30 — escaped class names like `.md\:hidden` must use an attribute selector). Go and
+  TS agree on trailing data, lone surrogates, UTF-8 and dot segments (shared vectors; N18, N29, N31,
+  N32); `continues` capture names are own properties only (N28). Auto-adopt treats a
+  wildcard-to-exact change and a rule reorder as widening (N16, N27), and the offer diff shows
+  `keyPrefix`/`continues`. `-providers-poll` follows symlinks (ConfigMap swaps); a FIFO no longer
+  hangs startup (N33, N34).
+- **Server.** OIDC start refuses cross-site requests (N2, the one high). Rate limits and the login
+  share key on an IPv6 `/64`; the login table holds 100 000, 16 per client (N7). The login form
+  reads a few kilobytes of urlencoded body only (N8). `http.Server` has read-header, read and idle
+  timeouts (N9). `-allowed-origins` entries are trimmed and empty ones ignored (N40). Deferred
+  commands fold by kind (a seek replaces a seek; play/pause replace each other; `media` is never
+  dropped by a later command) and go out **in send order**, because the client's `ownAck` assumes
+  it (N14). A `play` inside an earlier lead never projects backwards (N15). A suspended report
+  resets the member's recorded rate to 1.0, as the client's `releaseRate` does (N43); roster `suspended`/`ready` changes are broadcast
+  (N44). N42 (servo judged at arrival time) was closed as not a defect: measured, the proposal was
+  slightly worse (POC-FINDINGS §45).
+- **Docs/harness.** §23's run 1 evidence had been overwritten; the table now says so (N19).
+  `probe-firefox.mjs` takes `RESULT=`; smoke drivers exit non-zero on failure and write the cited
+  file only on a complete run (N46, N47). The transient-unready test now fails without the deferral
+  (N48). A `hello` never names a room, in every doc (N41).
+
+Still open from this round: a failed sign-out delete survives only until the MV3 worker restarts
+(then the old token is read back); `continuesMedia` without a page host falls back to the prefix
+check; the N37 `replaceState` and the GM status-0 rule are unrun in a browser (Firefox's isolated
+world passing `history.state` back in particular). **Convergence:** round 3 was not dry; the next
+probe decides whether 47 was the tail of the new D6–D8 code or a steady rate.
 
 ## Open questions that block things
 

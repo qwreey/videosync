@@ -113,6 +113,10 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   paused with **no `pause` event** and its `playbackRate` reset, and YouTube plays 1 ms after
   `emptied`. Laftel rewrites its resume position until ~0.5 s before `canplaythrough`, so conform
   at HAVE_FUTURE_DATA.
+- **`acquiring` is false in a hidden tab, so a hidden member must be reported absent.** Judged as
+  present, an unloaded hidden tab (readyState 0 — media never loads there) gates every `play` for
+  30 s, and a hidden seeder is corrected to the placeholder anchor and seeds the room from 0. And
+  no correction may move a member that has not acquired, visible or not.
 - **The end of media is a `pause` with `ended` set.** Never send it, and never re-apply play to an
   ended element (it restarts from 0).
 - **Never collect a secret in the panel.** It lives in the site's DOM and key events are composed:
@@ -122,8 +126,9 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   gateway must leave it open; `/api/session` trusts a trusted proxy only with
   `X-VideoSync-Device`, which the preflight admits only for extension origins — otherwise any page
   on a network the gateway admits could mint a device token. And **a gateway's answer is not the
-  server's**: only videosyncd's own JSON 401 may drop a device token; a redirect or an HTML page
-  means "log in in a tab". Device tokens never go in `chrome.storage.local`, which content scripts
+  server's**: only videosyncd's own JSON 401 may drop a device token. A redirect, a page served
+  as the answer or a 401/403/407 means "log in in a tab"; a gateway's 5xx or a bare 404 is an
+  outage, retried — read as a sign-in it strands every member (`gatewayWantsLogin`). Device tokens never go in `chrome.storage.local`, which content scripts
   read.
 - **A provider descriptor is data, and its tier limits what it can do** (D7). Server- and
   user-supplied descriptors restrict only, make a host followable only if the user granted it, and
@@ -183,6 +188,14 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **The panel's shadow root is closed.** A room creator's secret sits in its input and is never in
   the URL. Reach it with `VideoSync.panelRoot()` from the isolated world; the Firefox probe uses the
   `local-ext.mjs` build, the only one that opens it.
+- **The client assumes acks come back in the order it sent the commands** (`ownAck` drops every
+  older unacked command). Whatever the hub does to deferred commands — folding, batching — it must
+  apply the survivors in send order.
+- **A change made while disconnected is only good against the room it was made in.** Send it after
+  the `welcome` only if `seq` and the anchor are what they were at the drop; otherwise the room
+  moved and wins.
+- **Continuation belongs to the page's descriptor, not to the key's prefix.** A single-label host
+  (`http://nas`) mints generic keys under a bare name that looks exactly like a descriptor id.
 - **`ws.Conn.ReadTimeout` is per frame.** Use `ReadBefore` for an absolute bound — every ping used to
   restart the wait for `hello`.
 - **A fresh room's anchor is `paused@0`, and an already-playing creator never announces itself.**
