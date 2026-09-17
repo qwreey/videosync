@@ -898,6 +898,25 @@ describe('the next episode', () => {
     assert.deepEqual(h.kinds(), ['media', 'play']);
   });
 
+  it('a site autoplay while our own play is still on its way is put back, not taken for its echo', async () => {
+    // The continuation play is sent and not yet acked (the gate holds it while
+    // the other member loads), so where the room is GOING is playing. The
+    // room is still paused at 0: a site's play now only matches our intent,
+    // and left alone the member watches the new episode ahead of everybody.
+    const h = await finishThenNavigate();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    const absorbed = h.engine.stats.siteMovesAbsorbed;
+    await h.siteAutoplay();
+    await h.vt.advance(300);
+    assert.equal(h.engine.stats.siteMovesAbsorbed, absorbed + 1, 'the site\'s play was not judged as the site\'s');
+    assert.equal(h.player.paused, true, 'the new episode ran ahead of a paused room');
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
   it('a member that loses the race does not start the room', async () => {
     const h = await finishThenNavigate();
     h.tr.deliver({ t: 'error', code: 'media_stale' });

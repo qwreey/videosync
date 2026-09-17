@@ -1957,7 +1957,10 @@ export class SyncEngine {
       if (!adopting) this.act(o, state);
       return;
     }
-    if (this.isEcho(o, state)) {
+    // Without a gesture it is not the member's, so our own pending command
+    // says nothing about it: a site's move that only matches where we asked
+    // the room to go is still the site's, and is put back like any.
+    if (this.isEcho(o, state, this.intent(now) ? this.roomAnchor() : this.anchor)) {
       this.stats.echoesSuppressed++;
       return;
     }
@@ -2090,15 +2093,19 @@ export class SyncEngine {
     return posMs >= lo - this.seekThresholdMs && posMs <= hi + this.seekThresholdMs;
   }
 
-  /** The effect of our own in-flight transition, or agreement with the room. */
-  private isEcho(o: Observation, state: PlayerState): boolean {
+  /**
+   * The effect of our own in-flight transition, or agreement with `room`:
+   * where the room is going for a press of the member's (`roomAnchor`), where
+   * it is for anything else.
+   */
+  private isEcho(o: Observation, state: PlayerState, room: Anchor): boolean {
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       return !!applying &&
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === this.roomAnchor().paused ||
+      return o.paused === room.paused ||
         (!!applying && (o.paused === applying.paused || this.underOwnSeek(o, applying)));
     }
     return true;
