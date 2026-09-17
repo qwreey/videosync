@@ -435,7 +435,9 @@ export class Provider {
       const ca = matchBody(c.from, a);
       const cb = ca && matchBody(c.to, b);
       if (!ca || !cb) continue;
-      if (Object.keys(ca).every((k) => !(k in cb) || cb[k] === ca[k])) return true;
+      // Own keys only: a capture may be named `constructor` or `toString`, and
+      // `in` would find those on Object.prototype where Go's map finds nothing.
+      if (Object.keys(ca).every((k) => !Object.hasOwn(cb, k) || cb[k] === ca[k])) return true;
     }
     return false;
   }
@@ -446,8 +448,15 @@ export class Provider {
  * segment, but without percent-decoding (the body is already decoded text).
  */
 function matchBody(t: PathTemplate, body: string): Captures | null {
-  return matchPath(t, body.split('/').map((s) => encodeURIComponent(s)).join('/'));
+  // A lone surrogate cannot be encoded (encodeURIComponent throws, and
+  // parseDescriptor would throw rather than refuse). Go's JSON decoder reads
+  // the same escape as U+FFFD, so read it that way too: both ports then
+  // judge the same text.
+  const wellFormed = body.replace(LONE_SURROGATE, '\uFFFD');
+  return matchPath(t, wellFormed.split('/').map((s) => encodeURIComponent(s)).join('/'));
 }
+
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 function wrap<T>(where: string, fn: () => T): T {
   try {
