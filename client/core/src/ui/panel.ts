@@ -122,6 +122,16 @@ export class Panel {
     const style = doc.createElement('style');
     style.textContent = CSS;
     this.root.append(style, this.build(doc, fields));
+    // A site listening on document for single-key shortcuts (YouTube's k/j/l,
+    // digits, Space) would otherwise act on every key pressed in the panel:
+    // key events are composed and reach the page retargeted to the host, a
+    // plain div that no "is the target editable?" check skips. Stopped at the
+    // root, so every field and button is covered -- the name field stays
+    // editable while joined, and a seek it caused would go to the whole room.
+    // A capture listener on the page still sees them (see `buildSignIn`).
+    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+      this.root.addEventListener(t, (e) => { e.stopPropagation(); });
+    }
     doc.documentElement.append(this.host);
   }
 
@@ -217,11 +227,6 @@ export class Panel {
       this.h.onChat(chatInput.value);
       chatInput.value = '';
     });
-    // A site listening on document for single-key shortcuts (YouTube's k/j/l)
-    // would otherwise act on every keystroke typed into this box.
-    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
-      chatInput.addEventListener(t, (e) => { e.stopPropagation(); });
-    }
 
     const field = (labelText: string, input: HTMLElement) => {
       const wrap = mk('div');

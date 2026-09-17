@@ -692,6 +692,32 @@ describe('the panel', () => {
     } finally { dom.uninstall(); }
   });
 
+  it('keeps every keystroke typed into it from the site\'s hotkeys (N7)', () => {
+    const dom = installDom(ROOM_URL);
+    try {
+      panel(dom);
+      const host = dom.doc.getElementById('videosync-root')!;
+      // Key events are composed: past the shadow root they reach the page,
+      // retargeted to the host, which no "is it editable?" check skips.
+      host.shadow!.parentNode = host;
+      const reached: string[] = [];
+      for (const t of ['keydown', 'keyup', 'keypress']) {
+        dom.doc.documentElement.addEventListener(t, (e) => {
+          reached.push(`${t}:${e.target?.placeholder || e.target?.textContent || e.target?.tagName}`);
+        });
+      }
+      const targets = all(dom).filter((e) => e.tagName === 'INPUT' || e.tagName === 'BUTTON');
+      assert.ok(targets.some((e) => e.placeholder === '이름'), 'control: the name field is there');
+      assert.ok(targets.some((e) => e.textContent === '나가기'), 'control: so is 나가기');
+      for (const e of targets) {
+        for (const type of ['keydown', 'keyup', 'keypress']) e.dispatchEvent({ type, key: type === 'keydown' ? 'l' : ' ' });
+      }
+      // Control: the page does hear a key pressed outside the panel.
+      host.dispatchEvent({ type: 'keydown', key: 'k' });
+      assert.deepEqual(reached, ['keydown:DIV'], 'YouTube would seek on the l typed into the server field');
+    } finally { dom.uninstall(); }
+  });
+
   it('keeps its root closed to the page', () => {
     const h = harness(ROOM_URL);
     assert.equal(h.root().shadowMode, 'closed', 'page scripts could read the secret and press the buttons');
