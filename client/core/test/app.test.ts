@@ -960,6 +960,49 @@ describe('signing in to a server', () => {
     assert.equal(h.transports.length, 0);
   });
 
+  it('keeps the code of a login that replaced a cancelled one still on its way', async () => {
+    const server = new FakeServer();
+    server.methods = ['oidc'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    // Login A: its begin hangs (a request holds the gate it was sent under).
+    let release: () => void = () => {};
+    server.gate = new Promise((res) => { release = res; });
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    h.visibleButton('취소')!.click();
+    // Login B goes through.
+    server.gate = Promise.resolve();
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    assert.equal(code(h).textContent, CODE, 'control: B shows its code');
+    release(); // A's begin finally answers, and A finds itself cancelled
+    await h.tick(50);
+    assert.equal(server.to('/api/auth/begin').length, 2, 'control: both logins began');
+    assert.equal(code(h).textContent, CODE, 'a cancelled login blanked the code of the one that replaced it');
+    assert.ok(code(h).shown);
+    server.browserDone = true;
+    await h.tick(2100);
+    assert.equal(signInShown(h), false);
+    assert.equal(h.transports.length, 1, 'control: B still finishes what it was for');
+  });
+
+  it('finishes a pending login when the same server asks again meanwhile', async () => {
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    await create(h);
+    h.visibleButton('브라우저에서 로그인')!.click();
+    await h.tick(50);
+    assert.equal(code(h).textContent, CODE);
+    await create(h); // 방 만들기 again, while the tab is still open
+    assert.equal(code(h).textContent, CODE, 'the code of the login in progress was taken off screen');
+    server.browserDone = true;
+    await h.tick(2100);
+    assert.equal(signInShown(h), false, 'signed in, and still asked to');
+    assert.equal(h.transports.length, 1, 'the login finished and nothing was retried');
+  });
+
   it('ignores a join ticket refused after the member left, or moved to another server', async () => {
     const OTHER = 'https://other.example';
     for (const then of ['leave', 'join elsewhere'] as const) {

@@ -267,6 +267,10 @@ export function start(p: Platform): App {
   let sessionAdopts = false;
   /** What a successful sign-in should do next, and for which server. */
   let signInFor: { server: string; retry: () => void } | null = null;
+  /** Bumped by every browser login and by whatever abandons one. */
+  let loginAttempt = 0;
+  /** A browser login is waiting on its tab. */
+  let loginPending = false;
   /** The server this page knows the device to be signed in to. */
   let signedInTo = '';
   /**
@@ -299,7 +303,7 @@ export function start(p: Platform): App {
     onGesture: () => { void engine?.resumeAfterGesture(); },
     onBrowserSignIn: () => { void browserSignIn(); },
     onCancelSignIn: () => {
-      auth.cancelBrowser();
+      abandonLogin();
       panel.showSignInCode(null);
       panel.setSignInNotice('취소했어요. 다시 로그인할 수 있어요.', '');
     },
@@ -630,18 +634,40 @@ export function start(p: Platform): App {
 
   /** Stop and ask. `retry` is what the sign-in was for. */
   function askSignIn(server: string, methods: readonly string[], retry: () => void): void {
-    signInFor = { server, retry };
     if (signedInTo === server) {
       // Whatever this page believed, the server just said otherwise.
       signedInTo = '';
       panel.setSignedIn(null);
     }
-    panel.showSignIn({ methods, notice: '이 서버는 로그인이 필요해요.' });
     panel.setStatus('로그인이 필요해요 — 아래에서 로그인해주세요.', 'warn');
+    if (signInFor && signInFor.server === server) {
+      // Asked again (방 만들기 pressed twice) while already asking: the same
+      // sign-in, now for the newest request. A login in its tab is left
+      // alone -- replacing the target used to drop its success on the floor,
+      // and redrawing the section took its code off screen.
+      signInFor.retry = retry;
+      if (loginPending) return;
+    } else {
+      abandonLogin();
+      signInFor = { server, retry };
+    }
+    panel.showSignIn({ methods, notice: '이 서버는 로그인이 필요해요.' });
   }
 
-  function finishSignIn(target: { server: string; retry: () => void }, r: SignInResult): void {
+  /** Stop the browser login in progress, if any; its late result is dropped. */
+  function abandonLogin(): void {
+    auth.cancelBrowser();
+    loginAttempt++;
+    loginPending = false;
+  }
+
+  function finishSignIn(target: { server: string; retry: () => void }, r: SignInResult, attempt: number): void {
     if (signInFor !== target) return; // superseded, or the member left
+    // Cancelled or replaced. A cancelled login can settle long after the
+    // member started the next one for the same target (its request is not
+    // aborted), and must not take that one's code off screen.
+    if (attempt !== loginAttempt) return;
+    loginPending = false;
     panel.showSignInCode(null);
     if (!r.ok) {
       if (r.why !== 'cancelled') panel.setSignInNotice(r.text, 'err');
@@ -658,9 +684,14 @@ export function start(p: Platform): App {
   async function browserSignIn(): Promise<void> {
     const target = signInFor;
     if (!target) return;
+    const attempt = ++loginAttempt;
+    loginPending = true;
     panel.setSignInNotice('새 탭에서 로그인하세요. 탭에 아래와 같은 코드가 보일 때만 계속하세요.', '');
     panel.showSignInCode('…');
-    finishSignIn(target, await auth.browserSignIn(target.server, (code) => { panel.showSignInCode(code); }));
+    const r = await auth.browserSignIn(target.server, (code) => {
+      if (attempt === loginAttempt) panel.showSignInCode(code);
+    });
+    finishSignIn(target, r, attempt);
   }
 
   async function signOut(): Promise<void> {
@@ -858,7 +889,7 @@ export function start(p: Platform): App {
   function leave(): void {
     cancelFollow();
     // A sign-in asked for by what is being left would, on success, bring it back.
-    auth.cancelBrowser();
+    abandonLogin();
     signInFor = null;
     panel.hideSignIn();
     // A follow may already be on its way to the next page. The navigation
