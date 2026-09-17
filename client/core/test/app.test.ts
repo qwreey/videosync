@@ -391,6 +391,40 @@ describe('a room creation that settles late (N9)', () => {
     assert.equal(await c.out, 'created');
     assert.equal(h.transports.length, 1);
   });
+
+  it('still joins the created room when the app rejoined the same session meanwhile', async () => {
+    // A gated room whose hello is refused once is joined again by the app
+    // itself (learnRefusal, then joinAgain). The member did nothing: the room
+    // they asked for must still arrive.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    const h = harness(ROOM_URL, store, new Map(), {
+      authFetch: async (s, path, init) => {
+        if (path === '/api/rooms') await hold;
+        return server.fetch(s, path, init);
+      },
+    }, server);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    await h.tick(50);
+    h.tr().open();
+    const out = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    await h.tick(50);
+    h.tr().deliver({ t: 'error', code: 'auth_required' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.equal(h.transports.length, 2, 'control: the app rejoined on its own');
+    release();
+    await h.tick(100);
+    assert.equal(await out, 'created', 'the room the member asked for was dropped');
+    assert.equal(h.transports.length, 3);
+    assert.equal(h.store.data.get('room'), 'R');
+  });
 });
 
 describe('a page that names no media', () => {

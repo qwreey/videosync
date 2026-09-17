@@ -311,8 +311,10 @@ export function start(p: Platform): App {
   /** Bumped per join, so a late answer about a previous server is dropped. */
   let updatesGen = 0;
   /**
-   * Bumped whenever the session changes hands -- every `leave`, which every
-   * `join` starts with -- so a room creation that settles afterwards is dropped.
+   * Bumped whenever the session changes hands -- every `leave`, and every
+   * `join` the member asked for -- so a room creation that settles afterwards
+   * is dropped. The app's own rejoin of the same session (`joinAgain`) is not
+   * the member changing their mind, and leaves it alone.
    */
   let sessionGen = 0;
 
@@ -830,7 +832,7 @@ export function start(p: Platform): App {
     }
     const why = p.unreachable(serverUrl);
     if (why) { panel.setStatus(why, 'err'); return; }
-    leave();
+    leave(internal);
 
     let transport;
     try {
@@ -977,8 +979,9 @@ export function start(p: Platform): App {
     engine.start();
   }
 
-  function leave(): void {
-    sessionGen++;
+  /** `sameSession`: the app is about to join this very session again. */
+  function leave(sameSession = false): void {
+    if (!sameSession) sessionGen++;
     cancelFollow();
     // A sign-in asked for by what is being left would, on success, bring it back.
     abandonLogin();
