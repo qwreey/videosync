@@ -1396,8 +1396,9 @@ export class SyncEngine {
     if (!this.onRoomMedia()) return;
     if (mode === 'seek' && !this.clock.ready) return;
     // Judged on a report sent before we started acquiring: stale, and the
-    // conform step is about to do better.
-    if (this.acquiring()) return;
+    // conform step is about to do better. Hidden or not: a hidden seeder moved
+    // to the room's placeholder would seed the room from there.
+    if (this.unacquired()) return;
     if (mode === 'nudge') {
       if (!a.capabilities.supportsPlaybackRateNudge) {
         // A provider that fights playbackRate gets seek-only correction. Count
@@ -1528,10 +1529,11 @@ export class SyncEngine {
     // Watching something else is the same fact to the server as a suspended tab
     // or a refused autoplay: this member cannot follow the room and no
     // correction can change that. Absent, not behind. So is a member whose
-    // video has ended, and one whose site took the player over.
+    // video has ended, one whose site took the player over, and one that would
+    // be acquiring but for a hidden tab (see `unacquired`).
     const absent = !acquiring && (
       report.suspended || this.autoplayBlocked || !onRoomMedia || finished || this.acq.state === 'fought' ||
-      (this.acq.state === 'detached' && this.acq.pastEnd));
+      (this.acq.state === 'detached' && this.acq.pastEnd) || this.unacquired());
 
     // An absent member is no longer judged, so any rate the servo left behind
     // would stick forever -- including onto whatever they navigate to next,
@@ -1584,7 +1586,19 @@ export class SyncEngine {
    * was seeded, and judging it would seek it to the room's placeholder.
    */
   private acquiring(): boolean {
-    if (!this.gating() || this.autoplayBlocked || this.d.isHidden()) return false;
+    return this.unacquired() && !this.d.isHidden();
+  }
+
+  /**
+   * `acquiring()`, whether or not the tab is visible. A hidden tab in this
+   * state is not on its way -- its media does not load until it is shown
+   * (BROWSER-FINDINGS §5b) -- so it is reported absent rather than gated on.
+   * It is still not on the room's timeline, though: judged, a hidden member at
+   * readyState 0 gates every play, and a hidden seeder is corrected to the
+   * room's placeholder and then seeds the room from there.
+   */
+  private unacquired(): boolean {
+    if (!this.gating() || this.autoplayBlocked) return false;
     const a = this.acq;
     if (this.onRoomMedia()) {
       return (a.state === 'detached' && !a.pastEnd) || a.state === 'conforming' ||

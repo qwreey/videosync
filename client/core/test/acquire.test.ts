@@ -53,9 +53,10 @@ function harness(o: Opts = {}) {
   const g = new FakeGestures(vt);
   const acq: string[] = [];
   const errors: string[] = [];
+  const tab = { hidden: false };
   const engine = new SyncEngine({
     adapter: o.adapter ? o.adapter(player) : player,
-    transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false,
+    transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => tab.hidden,
     ...(o.gestures === false ? {} : { gestures: g }),
     ...(o.continues ? { continues: o.continues } : {}),
   }, {
@@ -66,7 +67,7 @@ function harness(o: Opts = {}) {
   });
   let seq = 0;
   const h = {
-    vt, player, tr, engine, g, acq, errors,
+    vt, player, tr, engine, g, acq, errors, tab,
     cmds: () => tr.sentOf('cmd'),
     kinds: () => tr.sentOf('cmd').map((c) => c.kind),
     lastHb: () => tr.sentOf('hb').at(-1)!,
@@ -1104,5 +1105,71 @@ describe('a namer that lost the race', () => {
     await h.vt.advance(100);
     assert.deepEqual(h.kinds(), ['media', 'play']);
     assert.equal(h.player.paused, true, 'the play ran ahead of the room: a refused naming still counted as ours');
+  });
+});
+
+describe('a hidden tab on the room\'s media', () => {
+  it('whose media has not loaded is absent, so the room does not wait for it', async () => {
+    // Media does not load in a hidden tab at all (BROWSER-FINDINGS §5b): an
+    // invite opened in a background tab sits at readyState 0 until shown.
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.tab.hidden = true;
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.lastHb().acquiring, undefined);
+    assert.equal(h.lastHb().suspended, true, 'judged present at readyState 0: the room gates every play on it');
+    // Shown, it is on its way again.
+    h.tab.hidden = false;
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, true);
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  it('control: the same member in a visible tab is acquiring, not absent', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    assert.equal(h.lastHb().acquiring, true);
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  async function hiddenSeeder() {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 1);
+    h.player.positionS = 813; // the site's resume, then its autoplay
+    h.player.emit('seeked');
+    await h.siteAutoplay();
+    assert.equal(h.engine.acquisition, 'guarded');
+    assert.equal(h.lastHb().acquiring, true);
+    await h.vt.advance(100);
+    h.tab.hidden = true; // the creator switches tabs to paste the invite
+    await h.vt.advance(150);
+    return h;
+  }
+
+  it('that is still to seed the room is absent, and not corrected to the placeholder', async () => {
+    const h = await hiddenSeeder();
+    assert.equal(h.lastHb().acquiring, undefined);
+    assert.equal(h.lastHb().suspended, true, 'judged against paused@0');
+    // A judgement the server made on an earlier report, arriving now.
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+    await h.vt.advance(50);
+    assert.ok(h.player.positionS > 800, `the seeder was moved to ${h.player.positionS}`);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.deepEqual(h.kinds(), ['seek', 'play']);
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 813_000) < 2000, `seeded at ${h.cmds()[0]!.positionMs}`);
+  });
+
+  it('control: a correction reaches a seeder that has seeded', async () => {
+    const h = await hiddenSeeder();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'steady');
+    const seeks = h.player.seeks;
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+    await h.vt.advance(50);
+    assert.equal(h.player.seeks, seeks + 1);
   });
 });
