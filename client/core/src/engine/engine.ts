@@ -1106,19 +1106,35 @@ export class SyncEngine {
     // waited for: an older one has been reconciled already. That leaves a gap
     // for a path that goes dark with no reset: `timeLoop` notices it 15-20 s
     // in, so a command pressed in about the first 10 s is not resent.
+    //
+    // A snapshot not read yet -- the reconnect is joined at its `welcome`, but
+    // reads it only once its clock settles and no old apply is running -- is
+    // kept: a player read now already shows the change it recorded, with
+    // nothing lost to resend. Commands lost since are added to it, the newest
+    // winning.
     if (this.status === 'joined') {
       const s = this.d.adapter.readState();
       const room = lost.length > 0 && roomMs !== null;
       const lastPress = lost.filter((c) => c.kind !== 'seek').at(-1);
-      this.offline = this.onRoomMedia() ? {
-        at, rate: s.rate,
-        positionS: room ? roomMs / 1000 : s.positionS,
-        paused: room ? this.anchor.paused : s.paused,
-        lostSeek: room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null,
-        lostPaused: room && lastPress ? lastPress.kind === 'pause' : null,
-        playLost: room && lastPress?.kind === 'play' && this.anchor.paused && s.paused,
-        media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
-      } : null;
+      const lostSeek = room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null;
+      const lostPaused = room && lastPress ? lastPress.kind === 'pause' : null;
+      const playLost = room && lastPress?.kind === 'play' && this.anchor.paused && s.paused;
+      const kept = this.offline;
+      if (kept) {
+        if (lostSeek) kept.lostSeek = lostSeek;
+        if (lostPaused !== null) {
+          kept.lostPaused = lostPaused;
+          kept.playLost = playLost;
+        }
+      } else {
+        this.offline = this.onRoomMedia() ? {
+          at, rate: s.rate,
+          positionS: room ? roomMs / 1000 : s.positionS,
+          paused: room ? this.anchor.paused : s.paused,
+          lostSeek, lostPaused, playLost,
+          media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
+        } : null;
+      }
     }
     // A nudge is a correction against a room this member can no longer hear.
     // Left on, it runs the player away for the whole outage -- 660 ms in an
