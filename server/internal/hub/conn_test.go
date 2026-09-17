@@ -110,6 +110,68 @@ func TestHandshakeTimeoutBoundsAPeerThatPingsInsteadOfSayingHello(t *testing.T) 
 	}
 }
 
+// The other half of the same bound: once the hello is accepted the deadline
+// must go. ReadBefore is absolute, so a joined socket that kept it would be
+// dropped HandshakeTimeout after joining -- every member, 10 s in, with a
+// default that no other test keeps a socket open long enough to reach.
+func TestAJoinedSocketOutlivesTheHandshakeTimeout(t *testing.T) {
+	const handshake = 300 * time.Millisecond
+	h := New(DefaultConfig(), NewClock())
+	hcfg := DefaultHTTPConfig()
+	hcfg.HandshakeTimeout = handshake
+	hcfg.PingInterval = time.Hour
+	srv := httptest.NewServer(h.Handler(hcfg))
+	t.Cleanup(func() { srv.Close(); h.Close() })
+	f := &fixture{t: t, hub: h, srv: srv}
+
+	id, secret := f.createRoom("yt:abc")
+	a, _, err := f.dial(id, secret, "a", "yt:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := int64(1); i <= 4; i++ {
+		time.Sleep(handshake)
+		a.send(room.TimeReq{T0: i})
+		if got := a.await("time.reply"); got["t0"] != float64(i) {
+			t.Fatalf("time.reply %v, want t0 %d", got, i)
+		}
+	}
+}
+
+// The sweeper marks a room dead under its lock before removing it, because
+// Lookup has already let go of both locks when join runs. A join that passed
+// Lookup just before the sweep otherwise lands in a room nobody can reach and
+// that is never Ticked again. TestJoinRefusalsNameTheRightReason sets the flag
+// by hand; this is the sweeper setting it.
+func TestAJoinThatLostTheRaceWithTheSweeperIsRefused(t *testing.T) {
+	f := start(t, func(c *Config) {
+		c.IdleTTL = 30 * time.Millisecond
+		c.TickInterval = 10 * time.Millisecond
+	})
+	id, secret := f.createRoom("yt:abc")
+	live, err := f.hub.Lookup(id, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for f.hub.Rooms() > 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.hub.Rooms() != 0 {
+		t.Fatal("setup: the idle room was never swept")
+	}
+	_, _, err = live.join(newConn("late", live, nil), room.Hello{Room: id, Secret: secret, Name: "x"})
+	if err == nil {
+		t.Fatal("a join that passed Lookup before the sweep landed in the swept room")
+	}
+	if got, _ := refusal(err); got.Code != "join_refused" {
+		t.Fatalf("refused as %q (%v), want join_refused", got.Code, err)
+	}
+	if live.room.Size() != 0 {
+		t.Fatalf("the late joiner is in the swept room: %d members", live.room.Size())
+	}
+}
+
 // A peer that resets its TCP connection mid-broadcast fails the reader and the
 // writer at the same moment, and both call kill. kill runs on goroutines no
 // lock serialises, and a panic there is not recovered by net/http: it takes

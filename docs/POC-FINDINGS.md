@@ -1595,3 +1595,85 @@ the 8-seed table is byte-identical. The roster frames are dropped by the
 simulated sink, because no simulated client reads them and queuing them would
 reshuffle every jitter draw. The rate-limit coalescing fix (review N14) lives
 in the hub, which the sim does not exercise.
+
+## 46. Round 17 — review 4: two servo inputs that carry no rate, and a hand-over that forgot the bias
+
+Two review findings changed the servo's control law. Under the §39 rule they
+were measured with `mise run sim -- -seeds 8`, and the servo rows again with
+`-seeds 32 -strategy servo`, before and after each fix.
+
+**A paused report was read as a frequency error (review N27).** A paused
+element's residual does not move, whatever rate the element holds, so its
+slope is 0 and says nothing about frequency. The frequency term integrated it
+anyway, as `0 - phaseRate`. That read the last phase nudge as a frequency
+error of the opposite sign. Take a member nudged to 1.0875 (1200 ms behind, out
+of buffer) that then pauses exactly on the anchor: the bias went 0 → 0.0306 on
+the first paused report and stayed there. After a 5 s gap before the first
+paused report, which is what an acquisition after a `media` command produces
+(the room skips the member's reports while it lags or acquires, so `lastAt`
+goes stale), the bias went straight to its 0.06 clamp. The member was then told
+`nudge 1.06` while paused and in sync, and on `play` it ran ahead of the room
+by what the loop took to unwind (a verifier measured it settling 25–110 ms
+ahead). The frequency term now skips paused reports
+(`TestServoAPausedReportIsNotAFrequencyError`).
+
+The same review pointed at the acquisition itself. A member acquiring media
+has been through the element's load algorithm, which resets `playbackRate`.
+That is the same fact as an absence (§42c, §45), but only the suspended path
+knew it. The room now resets its "already told them" record for an acquiring
+member, and tells the corrector through `RateReleaser`, which the servo
+implements with the reset its suspended branch already did
+(`TestAMemberBackFromAcquiringIsNudgedAsBefore`: nudged to 1.0875, acquiring
+for 1.5 s, then back and still behind. Without the servo half it is nudged to
+1.10. Without the room half the same 1.0875 is swallowed as already held).
+
+**The free-seek hand-over zeroed the learned bias (review N28).** §42b's
+`dropBias` moved the whole running rate into `phaseRate` and set `rateBias` to
+0. But the next command is `1 + rateBias + phase`, and `phase` is 0 inside the
+band, so the handed-over rate was never commanded again. The loop relearned it
+at 0.35·dt per report, and a report off the whole-second grid (an anomaly
+report can come 150 ms later) left the bias under the 5e-4 "settled" threshold
+and reset the rate to exactly 1.0. `TestServoKeepsTheLearnedRateAcrossAFreeSeek`
+reports only on whole seconds and counts only exact 1.0s, so it saw none of
+this. The seek now restores the loop as the last command left it: the bias
+stays bias and the phase nudge stays phase. Neither includes the step's slope,
+which only this report integrated, so §42b still holds. The largest distance
+between the rate the plant ran after the seek and `1/intrinsic`
+(`TestServoCommandsTheLearnedRateRightAfterAFreeSeek`, kick 1500 ms at 120 s,
+one extra report `gap` after it):
+
+| decoder | gap 1000 ms, before / after | gap 250 ms | gap 150 ms |
+|---|---|---|---|
+| 0.99x | 0.0066 / 0.0000 | 0.0092 / 0.0000 | 0.0096 / 0.0000 |
+| 0.995x | 0.0033 / 0.0000 | 0.0050 (told 1.0) / 0.0000 | 0.0050 (told 1.0) / 0.0000 |
+| 1.008x | 0.0052 / 0.0000 | 0.0072 / 0.0000 | 0.0079 / 0.0000 |
+
+**The table.** Every row not listed is byte-identical at each step. Servo,
+anchorErr/p95 · rateTime · skipped:
+
+| seeds 1..8 | before | N27 | N27 + N28 |
+|---|---|---|---|
+| long-stalls | 62/58 · 222 · 16551 | same | 62/58 · 221 · 16550 |
+| one-slow-client | 105/356 · 1209 · 4035 | same | **100/330** · 1236 · 4035 |
+| tab-suspension | 29/40 · 42 · 30051 | same | 29/40 · 42 · 30050 |
+| site-autoplay-join | 6/17 · 26 · 0 | 6/15 · 19 · 0 | 6/15 · 19 · 0 |
+| next-episode | 13/23 · 45 · 0 | 13/23 · 46 · 0 | 13/23 · 46 · 0 |
+
+| seeds 1..32 | before | N27 | N27 + N28 |
+|---|---|---|---|
+| one-slow-client | 102/341 · 1214 · 4026 | same | **95/311** · 1242 · 4026 |
+| tab-suspension | 29/40 · 29 · 30050 | same | 29/40 · 30 · 30050 |
+| site-autoplay-join | 7/16 · 18 · 0 | 7/14 · 13 · 0 | 7/14 · 13 · 0 |
+| next-episode | 11/23 · 56 · 0 | 11/23 · 57 · 0 | 11/23 · 57 · 0 |
+
+Among the other laws only pll's next-episode row moved (8 seeds, 6/13 · 386 →
+6/12 · 381), and only through the room half of N27, which changes which frames
+go out.
+
+N27 is neutral: the sim's paused members are mostly already on the anchor with
+no phase nudge in effect, and its finished members are absent (and so
+released) before they navigate. The unit tests are the evidence for it.
+N28 is the first servo fix in a while that the table rewards. The slow client
+free-seeks after its stalls with a learned mismatch in effect, and no longer
+spends the seconds after each seek relearning it. SkippedMs is unchanged
+everywhere. Both fixes are neutral or better on both metrics, so both ship.

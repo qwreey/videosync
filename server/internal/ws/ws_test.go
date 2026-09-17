@@ -272,6 +272,31 @@ func TestOversizeMessageIsRefusedNotAllocated(t *testing.T) {
 	}
 }
 
+// The test above cannot tell the per-frame check from the one after
+// reassembly: both answer 1009, and 200 bytes cost nothing to allocate. This
+// one declares a length and sends no payload, so only a refusal taken from the
+// header answers at all. Without it the server allocates whatever an
+// unauthenticated peer declares -- up to 1<<62, a fatal out-of-memory -- and
+// then waits for bytes that never come. The length here is kept small enough
+// that such a regression fails this test instead of killing the test binary.
+func TestOversizeFrameIsRefusedFromItsHeader(t *testing.T) {
+	srv, errc := echoServer(t, func(c *Conn) { c.MaxMessageSize = 64 })
+	tc := dial(t, srv)
+	hdr := []byte{0x80 | OpText, 0x80 | 127, 0, 0, 0, 0, 0, 0, 0, 0, 0xA1, 0xB2, 0xC3, 0xD4}
+	binary.BigEndian.PutUint64(hdr[2:10], 16<<20)
+	tc.c.SetWriteDeadline(time.Now().Add(2 * time.Second))
+	if _, err := tc.c.Write(hdr); err != nil {
+		t.Fatal(err)
+	}
+	op, body := tc.read(t)
+	if op != OpClose || binary.BigEndian.Uint16(body) != CloseMessageTooBig {
+		t.Fatalf("op=%d body=%v, want close 1009", op, body)
+	}
+	if err := <-errc; !errors.Is(err, ErrMessageSize) {
+		t.Fatalf("server error %v, want ErrMessageSize", err)
+	}
+}
+
 func TestFragmentsCannotExceedTheSizeCapEither(t *testing.T) {
 	// The per-frame check alone is not enough: a peer can stay under it and
 	// still exhaust memory by sending many fragments.

@@ -38,7 +38,8 @@ type servoState struct {
 	// every nudge, and there the phase nudge winds rateBias to its clamp --
 	// harmless, since the only thing rateBias gates besides the rate is the
 	// "settled" reset, and that member is corrected by seeks alone; and a
-	// member gone absent, whose engine resets the rate, which Decide handles.
+	// member whose element's rate was reset -- absent, or acquiring media --
+	// which RateReleased handles.
 	phaseRate float64
 	lastAt    int64
 }
@@ -88,10 +89,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 		// the settled branch records. Left as it was, the first report after
 		// the absence read the missing nudge as a frequency error and wound
 		// the bias to the clamp -- integrated over the whole absence, too.
-		if s, ok := c.st[r.ClientID]; ok {
-			s.phaseRate = -s.rateBias
-			s.lastAt = 0
-		}
+		c.RateReleased(r.ClientID)
 		return Decision{Action: ActionNone, Why: "suspended"}
 	}
 	if r.ReadyState < t.MinReadyState || r.BufferedAheadS < t.MinBufferedS {
@@ -126,12 +124,17 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	if gain == 0 {
 		gain = 0.35
 	}
-	// What the client is running now, less 1: the last command. Taken before
-	// this report touches the bias, because a seek below hands exactly this
-	// over, and the report that triggers a seek usually carries the step in
-	// its slope.
-	running := s.phaseRate + s.rateBias
-	if absF(r.SlopeMsPerS) <= t.RampMaxSlope {
+	// The loop as the last command left it. Taken before this report touches
+	// the bias, because a seek below goes back to exactly this, and the report
+	// that triggers a seek usually carries the step in its slope.
+	prev := *s
+	// A paused element's residual does not move whatever rate it holds, so
+	// its slope of 0 says nothing about frequency. Read as one, it took the
+	// last phase nudge for a frequency error of the opposite sign and wound
+	// the bias of a paused member sitting exactly on the anchor -- to the
+	// clamp over the acquisition that follows a media command -- which then
+	// played ahead of the room by what the loop took to unwind.
+	if !r.Paused && absF(r.SlopeMsPerS) <= t.RampMaxSlope {
 		freqErr := r.SlopeMsPerS/1000 - s.phaseRate
 		s.rateBias += -freqErr * gain * dt
 		s.rateBias = clampF(s.rateBias, -0.06, 0.06)
@@ -160,7 +163,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// fetch and rebuffers for that whole time, leaving the client further out
 	// of position than it started.
 	if abs64(r.ResidualMs) > band && targetBuffered(r, a, serverMs) {
-		s.dropBias(running) // step is gone; do not keep a frequency correction for it
+		s.dropStep(prev) // step is gone; do not keep a frequency correction for it
 		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "free seek"}
 	}
 	// An out-of-buffer seek is expensive, but not seeking is not free either:
@@ -170,7 +173,7 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	// (The first version of this rule refused out-of-buffer seeks outright and
 	// left a member returning from a 15 s tab suspension nudging for 150 s.)
 	if abs64(r.ResidualMs) >= t.NudgeMaxResidual {
-		s.dropBias(running)
+		s.dropStep(prev)
 		return Decision{Action: ActionSeek, TargetMs: a.Expected(serverMs), Why: "gap beyond what rate can close"}
 	}
 
@@ -185,19 +188,39 @@ func (c *ServoCorrector) Decide(r Report, a Anchor, serverMs int64, t Tunables) 
 	return Decision{Action: ActionNudge, Rate: rate, Why: "servo"}
 }
 
-// dropBias forgets the learned frequency correction when a seek removes the
-// step it was learned against. A seek does not touch the client's rate, so
-// whatever it is still running at (running, less 1) stops being bias and
-// counts as commanded offset until the next nudge replaces it.
+// dropStep undoes what the report carrying a step did to the loop, when a seek
+// removes that step. A seek does not touch the client's rate, so the client
+// keeps running what the last command told it, split as that command split
+// it: the learned bias, which is a fact about its decoder and outlives any
+// step, and the phase nudge, which the slope still carries until the next
+// command replaces it.
 //
-// It must be the rate last commanded, not the bias as this report left it:
-// the step's own slope, integrated on the way here, is in the latter. Handing
-// that over told a 0.99x decoder, which had learned its 1.0101, to run 0.998.
-func (s *servoState) dropBias(running float64) {
-	s.phaseRate = running
-	s.rateBias = 0
+// It must be the loop as the last command left it, not as this report left
+// it: the step's own slope, integrated on the way here, is in the latter.
+// Handing that over told a 0.99x decoder, which had learned its 1.0101, to
+// run 0.998 (POC-FINDINGS 42b). And the bias must stay bias: handed to the
+// phase term instead, it was never commanded again -- the next command is
+// 1+bias+phase, with both near 0 inside the band -- so the same decoder was
+// told 1.0035, or exactly 1.0 on a report off the whole-second grid, and
+// learned its mismatch again from the drift (POC-FINDINGS 46).
+func (s *servoState) dropStep(prev servoState) {
+	s.rateBias, s.phaseRate = prev.rateBias, prev.phaseRate
 }
 
 // Forget drops per-client state when a member leaves. A simulation exits after
 // two minutes; a real room lives for weeks and this map would only ever grow.
 func (c *ServoCorrector) Forget(clientID string) { delete(c.st, clientID) }
+
+// RateReleased records that the member's element is back at rate 1.0 without
+// this loop having said so: an absent member's engine hands the rate back
+// (engine.ts releaseRate), and a member acquiring media has been through the
+// element's load algorithm, which resets playbackRate. What was last
+// commanded is no longer in effect, so the client is where the settled branch
+// leaves it, and dt restarts. Left as it was, the first report after read the
+// missing nudge as a frequency error, integrated over the whole gap.
+func (c *ServoCorrector) RateReleased(clientID string) {
+	if s, ok := c.st[clientID]; ok {
+		s.phaseRate = -s.rateBias
+		s.lastAt = 0
+	}
+}

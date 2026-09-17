@@ -66,3 +66,32 @@ func TestEveryStatefulCorrectorForgetsALeaver(t *testing.T) {
 		}
 	}
 }
+
+// The room reaches RateReleased, like Forget, only by asserting on the
+// corrector it holds. A "+conf" wrapper that does not pass it on leaves a
+// wrapped servo still counting its last nudge as in effect after the element's
+// load algorithm reset the rate, while the room's own model says 1.0.
+func TestConfidenceGatedPassesARateReleaseThrough(t *testing.T) {
+	tun := DefaultTunables()
+	a := Anchor{PositionMs: 100000}
+	servo := &ServoCorrector{}
+	var c Corrector = ConfidenceGated{Inner: servo}
+	d := c.Decide(Report{ClientID: "m", ResidualMs: -1500, PositionMs: a.Expected(1000) - 1500,
+		ReadyState: 4, BufferedAheadS: 1.2, BufferedBehindS: 10, ClockSamples: 10}, a, 1000, tun)
+	if d.Action != ActionNudge {
+		t.Fatalf("setup: %v, want a nudge", d.Why)
+	}
+	rr, ok := c.(interface{ RateReleased(clientID string) })
+	if !ok {
+		t.Fatal("ConfidenceGated has no RateReleased, so the room's release never reaches the wrapped law")
+	}
+	rr.RateReleased("m")
+	s := servo.st["m"]
+	if s.lastAt != 0 || s.phaseRate != -s.rateBias {
+		t.Errorf("wrapped servo after a release: lastAt=%d phaseRate=%.5f rateBias=%.5f, want lastAt 0 and phaseRate = -rateBias",
+			s.lastAt, s.phaseRate, s.rateBias)
+	}
+	rr.RateReleased("unknown") // a stranger, or a law without the hook, is fine
+	var pi Corrector = ConfidenceGated{Inner: &PICorrector{}}
+	pi.(interface{ RateReleased(clientID string) }).RateReleased("m")
+}

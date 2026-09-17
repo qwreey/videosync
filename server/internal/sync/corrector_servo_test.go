@@ -28,6 +28,15 @@ type servoPlant struct {
 	// rateDrops counts decisions after the kick that put the player back to
 	// exactly 1.0, by a reset or a nudge.
 	rateDrops int
+
+	// extraAfterKickMs, if set, adds one report that long after the kick,
+	// off the whole-second grid, as an anomaly report would be.
+	extraAfterKickMs int64
+	// trackAfterKick records worstRateAfterKick: the largest distance between
+	// the rate the player runs and 1/intrinsic after any decision past the
+	// kick's seek.
+	trackAfterKick     bool
+	worstRateAfterKick float64
 }
 
 const plantStepMs = 50
@@ -72,7 +81,8 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 		if now >= durMs-tailMs && math.Abs(p.res) > worst {
 			worst = math.Abs(p.res)
 		}
-		if now%1000 != 0 {
+		extra := p.extraAfterKickMs > 0 && p.kickAtMs > 0 && now == p.kickAtMs+p.extraAfterKickMs
+		if now%1000 != 0 && !extra {
 			continue
 		}
 		d := c.Decide(Report{
@@ -93,6 +103,9 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 		}
 		if p.kickAtMs > 0 && now > p.kickAtMs && p.rate == 1 && d.Action != ActionSeek {
 			p.rateDrops++
+		}
+		if p.trackAfterKick && p.kickAtMs > 0 && now > p.kickAtMs {
+			p.worstRateAfterKick = math.Max(p.worstRateAfterKick, math.Abs(p.rate-1/p.intrinsic))
 		}
 	}
 	return worst
@@ -155,7 +168,7 @@ func TestServoLearnsARateMismatch(t *testing.T) {
 }
 
 // A seek removes a step, not a rate mismatch, and it does not touch the rate
-// the client is running. dropBias hands that rate over to the commanded offset
+// the client is running. dropStep keeps the loop as the last command left it,
 // so the frequency term sees the client still compensating. Zeroing the bias
 // alone made the report right after the seek look settled -- residual 0, slope
 // 0 -- and the servo told a 0.99x decoder to run at exactly 1.0 again, then
@@ -211,5 +224,94 @@ func TestServoAbsenceDoesNotWindUpTheBias(t *testing.T) {
 	want := -slope / 1000 * 0.35 * 1
 	if math.Abs(got-want) > 1e-9 {
 		t.Errorf("first report after the absence moved the bias by %.5f, want %.5f", got, want)
+	}
+}
+
+// A paused element's residual does not move, so its slope is 0 whatever rate
+// the element holds: it says nothing about frequency. Integrated anyway, it
+// read the last phase nudge as a frequency error of the opposite sign. A
+// paused member sitting exactly on the anchor was wound to a bias of
+// phaseRate*0.35 per second -- to the clamp after a few seconds' gap, such as
+// the acquisition that follows a media command -- kept being nudged while
+// paused, and then played ahead of the room by what the loop took to unwind.
+func TestServoAPausedReportIsNotAFrequencyError(t *testing.T) {
+	tun := DefaultTunables()
+	for _, gapMs := range []int64{1000, 5000} {
+		c := &ServoCorrector{}
+		playing := Anchor{PositionMs: 100000}
+		// 1200 ms behind, out of buffer: no free seek, so the servo nudges.
+		d := c.Decide(Report{ClientID: "m", ResidualMs: -1200, PositionMs: playing.Expected(1000) - 1200,
+			ReadyState: 4, BufferedAheadS: 1.0, UncertaintyMs: 20, ClockSamples: 10}, playing, 1000, tun)
+		if d.Action != ActionNudge || d.Rate <= 1.05 {
+			t.Fatalf("setup: %v rate %.4f, want a strong nudge", d.Action, d.Rate)
+		}
+		before := c.st["m"].rateBias
+		paused := Anchor{PositionMs: 101000, AtServerMs: 1000 + gapMs, Paused: true}
+		for now := 1000 + gapMs; now <= 5000+gapMs; now += 1000 {
+			d = c.Decide(Report{ClientID: "m", ResidualMs: 0, SlopeMsPerS: 0, PositionMs: 101000, Paused: true,
+				ReadyState: 4, BufferedAheadS: 5, BufferedBehindS: 5, UncertaintyMs: 20, ClockSamples: 10}, paused, now, tun)
+			if got := c.st["m"].rateBias; math.Abs(got-before) > 1e-9 {
+				t.Fatalf("gap %d ms, paused on the anchor at %d: the bias moved %.4f -> %.4f (%v %.4f)",
+					gapMs, now, before, got, d.Action, d.Rate)
+			}
+		}
+		if d.Action == ActionNudge {
+			t.Fatalf("gap %d ms: a paused member on the anchor with nothing learned is still nudged to %.4f", gapMs, d.Rate)
+		}
+	}
+}
+
+// RateReleased is the room saying the member's element is back at 1.0 without
+// an absence: a member acquiring media has been through the load algorithm,
+// which resets playbackRate. The loop must take its last nudge back out, as
+// the suspended branch does, and restart dt.
+func TestServoARateReleaseIsNotAFrequencyError(t *testing.T) {
+	tun := DefaultTunables()
+	a := Anchor{PositionMs: 100000}
+	c := &ServoCorrector{}
+	rep := func(now int64, slope float64) Report {
+		return Report{ClientID: "m", ResidualMs: -1500, SlopeMsPerS: slope,
+			PositionMs: a.Expected(now) - 1500, ReadyState: 4,
+			BufferedAheadS: 1.2, BufferedBehindS: 10, ClockSamples: 10}
+	}
+	if d := c.Decide(rep(1000, 0), a, 1000, tun); d.Action != ActionNudge || d.Rate <= 1.05 {
+		t.Fatalf("setup: %v rate %.3f, want a strong nudge", d.Why, d.Rate)
+	}
+	before := c.st["m"].rateBias
+	c.RateReleased("m")
+	c.RateReleased("unknown")
+	if _, ok := c.st["unknown"]; ok {
+		t.Fatal("releasing a member the loop never saw created state for it")
+	}
+	const slope = 5.0 // a decoder 0.5% fast, running at 1.0
+	c.Decide(rep(6000, slope), a, 6000, tun)
+	got := c.st["m"].rateBias - before
+	if want := -slope / 1000 * 0.35 * 1; math.Abs(got-want) > 1e-9 {
+		t.Errorf("first report after the release moved the bias by %.5f, want %.5f", got, want)
+	}
+}
+
+// The free-seek hand-over, off the whole-second grid. A seek removes a step,
+// not a rate mismatch, so the rate a decoder was learned to need must still be
+// what it is told right after the seek. Handing the whole running rate to the
+// phase term and zeroing the bias commanded 1+bias+phase with both near 0: a
+// 0.99x decoder that had learned 1.0101 was told 1.0035 on the next heartbeat,
+// and a 0.995x one reporting 150 ms after the seek was told exactly 1.0.
+// TestServoKeepsTheLearnedRateAcrossAFreeSeek reports only on whole seconds
+// and counts only exact 1.0s, so it saw neither.
+func TestServoCommandsTheLearnedRateRightAfterAFreeSeek(t *testing.T) {
+	for _, gap := range []int64{1000, 250, 150} {
+		for _, intrinsic := range []float64{0.99, 0.995, 1.008} {
+			p := servoPlant{intrinsic: intrinsic, aheadS: 11, behindS: 10,
+				kickAtMs: 120000, kickMs: 1500, extraAfterKickMs: gap, trackAfterKick: true}
+			p.run(&ServoCorrector{}, 180000, 0)
+			if p.seeks != 1 {
+				t.Fatalf("gap %d ms, %.3fx: %d seeks, want the one free seek", gap, intrinsic, p.seeks)
+			}
+			if p.worstRateAfterKick > 0.002 {
+				t.Errorf("gap %d ms, %.3fx decoder: ran up to %.4f off the ~%.4f it needs after the seek",
+					gap, intrinsic, p.worstRateAfterKick, 1/intrinsic)
+			}
+		}
 	}
 }

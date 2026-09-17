@@ -51,13 +51,28 @@ func (l *Live) Send(clientID string, m room.Msg) {
 		return
 	}
 	if l.hub.cfg.Verbose {
-		log.Printf("[%s] -> %s %s", l.id, clientID, b)
+		log.Printf("[%s] -> %s %s", l.id, clientID, traced(m, b))
 	}
 	select {
 	case c.out <- b:
 	default:
 		c.kill(ws.ClosePolicyViolation, "outbox overflow")
 	}
+}
+
+// traced is frame b as the verbose trace may show it. A room id and its secret
+// are the whole join credential, and the trace puts the id on every line, so a
+// rotated secret -- the only one that ever reaches this path, a hello is
+// consumed before a Live exists -- would hand whoever reads the logs the link
+// the rotation was meant to cut off.
+func traced(m room.Msg, b []byte) []byte {
+	if s, ok := m.(room.Secret); ok {
+		s.Secret = "<redacted>"
+		if r, err := wire.Encode(s); err == nil {
+			return r
+		}
+	}
+	return b
 }
 
 // join attaches a connection. Returns the Welcome to send, or an error.
