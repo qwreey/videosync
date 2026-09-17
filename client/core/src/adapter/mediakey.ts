@@ -76,8 +76,25 @@ export function continuesMedia(prevKey: string, nextKey: string, reg: ProviderRe
   // The descriptor that owns this key namespace decides. Two in force that
   // mint the same prefix cannot both be believed, and a continuation moves
   // the whole room, so an ambiguous namespace continues nothing.
+  //
+  // The generic path rule mints keys too, under the host's own name, and a
+  // key prefix may contain dots: a descriptor for one site can name another
+  // site's generic namespace. A key does not say which of the two minted it,
+  // so there as well nothing continues -- otherwise that descriptor would
+  // move rooms on a host it does not describe and nobody granted.
   const owners = reg.entries.filter((e) => e.provider.keyPrefix === prefix);
-  return owners.length === 1 && owners[0]!.provider.continues(prevKey, nextKey);
+  return owners.length === 1 && !genericMints(prefix, reg) &&
+    owners[0]!.provider.continues(prevKey, nextKey);
+}
+
+/** Whether the generic path rule gives some host the key prefix `prefix`. */
+function genericMints(prefix: string, reg: ProviderRegistry): boolean {
+  // Only a host can be named that way; ids and built-in prefixes have no dot.
+  if (!prefix.includes('.') && prefix !== 'localhost') return false;
+  return [prefix, `www.${prefix}`].some((h) => {
+    const l = reg.lookup(h);
+    return l.entry === null && !l.blocked && providerId(h, reg) === prefix;
+  });
 }
 
 /**

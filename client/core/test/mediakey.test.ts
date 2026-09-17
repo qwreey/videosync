@@ -7,6 +7,8 @@ import { pickVideo } from '../src/adapter/resolve.ts';
 import { SwappableAdapter } from '../src/adapter/swappable.ts';
 import { FakePlayer, VirtualTime } from './fakes.ts';
 import type { VideoLike } from '../src/adapter/resolve.ts';
+import { compileDescriptor } from '../src/providers/descriptor.ts';
+import { builtinEntries, ProviderRegistry } from '../src/providers/registry.ts';
 
 describe('mediaKey normalization', () => {
   it('identifies a YouTube video by its id, whatever the route in', () => {
@@ -460,6 +462,48 @@ describe('which media continues which (the next episode)', () => {
 
   it('is never anything on a site no rule knows', () => {
     assert.equal(continuesMedia(key('http://127.0.0.1:8898/watch/1'), key('http://127.0.0.1:8898/watch/2')), false);
+  });
+
+  it('is decided by a descriptor only in a key namespace nothing else mints', () => {
+    // A key prefix may contain dots, so a server descriptor can name another
+    // site's generic namespace as its own. Choosing the deciding descriptor by
+    // prefix alone then let it continue -- move the whole room -- on a host it
+    // does not describe and the user never granted.
+    const withServer = (keyPrefix: string, hosts = ['shows.example']) => {
+      const r = compileDescriptor({
+        schema: 1, id: 'shows', keyPrefix, name: 'Shows', version: '1.0.0', adapter: 'html5',
+        hosts, canonicalHost: 'shows.example', identity: [], pathFallback: true,
+        continues: [{ from: '/**', to: '/**' }],
+        examples: [{ url: 'https://shows.example/watch/81', key: `${keyPrefix}:/watch/81` }],
+      });
+      if (!r.ok) throw new Error(`setup: ${r.errors.join("; ")}`);
+      return new ProviderRegistry([
+        ...builtinEntries(),
+        { provider: r.provider, tier: 'server', sha256: 'x', granted: () => false },
+      ]);
+    };
+    for (const host of ['example.org', 'www.example.org']) {
+      const reg = withServer('example.org');
+      const k = (path: string) => normalizeMediaKey(`https://${host}${path}`, reg)!;
+      assert.equal(k('/browse'), 'example.org:/browse', 'setup: an undescribed host keeps the generic rule');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg), false,
+        `${host}: a descriptor for shows.example continued media on ${host}`);
+    }
+    // ...and so is a host's own name, if the generic rule still has a route
+    // to it: www.shows.example is keyed "shows.example" too.
+    {
+      const reg = withServer('shows.example');
+      const k = (path: string) => normalizeMediaKey(`https://www.shows.example${path}`, reg)!;
+      assert.equal(k('/watch/81'), 'shows.example:/watch/81', 'setup: the generic rule on www');
+      assert.equal(continuesMedia(k('/watch/81'), k('/browse'), reg), false, 'www.shows.example');
+    }
+    // Control: the same rules continue in a namespace only that descriptor
+    // mints -- its own id, or a host it describes, all routes to it included.
+    for (const [prefix, hosts] of [['shows', ['shows.example']], ['shows.example', ['shows.example', 'www.shows.example']]] as const) {
+      const reg = withServer(prefix, [...hosts]);
+      const k = (path: string) => normalizeMediaKey(`https://shows.example${path}`, reg)!;
+      assert.equal(continuesMedia(k('/watch/81'), k('/watch/82'), reg), true, `control: prefix ${prefix}`);
+    }
   });
 });
 
