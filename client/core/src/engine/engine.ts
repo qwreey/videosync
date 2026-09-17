@@ -479,6 +479,10 @@ interface Applying {
   targetMs: number;
   /** The pause state it leaves behind. */
   paused: boolean;
+  /** When it began, for gesture evidence: see `underOwnSeek`. */
+  at: number;
+  /** A seek of its own has started: in flight, or done. */
+  seeking?: boolean;
   /**
    * It seeked, and its play() is now outstanding: the one window in which a
    * site reacting to our seek pauses the element under that play().
@@ -1491,12 +1495,13 @@ export class SyncEngine {
     targetMs: number, paused: boolean, toleranceMs: number, current: () => boolean,
   ): Promise<void> {
     const a = this.d.adapter;
-    const applying: Applying = { targetMs, paused };
+    const applying: Applying = { targetMs, paused, at: this.d.now() };
     this.applyingRemote = applying;
     try {
       const cur = a.readState().positionS * 1000;
       let seeked = false;
       if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
+        applying.seeking = true;
         await a.seekTo(targetMs / 1000).catch(() => { /* a stalled seek is reported, not thrown */ });
         seeked = true;
       }
@@ -1687,7 +1692,7 @@ export class SyncEngine {
       const targetMs = expectedAt(this.anchor, this.serverNow());
       // A correction leaves the pause state alone, so the one it "makes" is
       // the room's.
-      this.applyingRemote = { targetMs, paused: this.anchor.paused };
+      this.applyingRemote = { targetMs, paused: this.anchor.paused, at: this.d.now(), seeking: true };
       try {
         await a.seekTo(targetMs / 1000).catch(() => {});
       } finally {
@@ -2119,16 +2124,25 @@ export class SyncEngine {
   }
 
   /**
-   * A pause seen unready while our own post-seek play() is outstanding: a
-   * site reacting to that seek pauses the element under the play() (the
-   * AbortError in `tryPlay`), and it is the transition's, left to its
-   * rebaseline and the reconciler. Nothing else an apply spans is -- not a
-   * correction's seek, a hold, or a play() waiting on an element we never
-   * seeked: a real element is unready through all of those, and a press made
-   * then is the member's.
+   * A play state seen unready under a seek of ours, which a site reacting to
+   * that seek changed -- most often a pause under the play() that follows it
+   * (the AbortError in `tryPlay`). It is the apply's, left to its rebaseline
+   * and the reconciler. Nothing else an apply spans is: not a hold, or a
+   * play() waiting on an element we never seeked. A real element is unready
+   * through all of those, and a change made then is the member's.
+   *
+   * With gesture evidence, input decides: none since the apply began is the
+   * site's, anywhere in the seek or its play(); any is the member's. Without
+   * it only the play() window after the seek is excused, as the one place a
+   * member is least likely to be pressing. (`seeked` is set on the playing
+   * path only, and a play there is the transition's own state, so this is
+   * always a pause under a transition that plays.)
    */
   private underOwnSeek(o: Observation, applying: Applying): boolean {
-    return o.kind === 'playstate' && o.paused && !!o.unready && !!applying.seeked && !applying.paused;
+    if (o.kind !== 'playstate' || !o.unready) return false;
+    const g = this.d.gestures;
+    if (!g) return !!applying.seeked;
+    return !!applying.seeking && Math.max(g.lastInputAt(), this.activationEdgeAt) <= applying.at;
   }
 
   /** The member's own change: tell the room. */

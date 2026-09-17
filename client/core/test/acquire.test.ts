@@ -1902,4 +1902,44 @@ describe('a site that pauses the element right after our own seek', () => {
     await h.vt.advance(50);
     assert.deepEqual(h.kinds(), ['pause']);
   });
+
+  // With gesture evidence, a play state that changes unready under any seek of
+  // ours -- a correction's, or a transition's before its play() -- is judged
+  // by input: none since the apply began is the site reacting to our seek, a
+  // press is the member's.
+  const seeks: Array<[string, (h: H) => Promise<void>]> = [
+    ['a correction seek', async (h) => {
+      h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+      await h.vt.advance(10);
+    }],
+    ['a room seek, before its play()', (h) => h.state({ positionMs: 400_000, paused: false }, 'seek')],
+  ];
+  for (const [what, seek] of seeks) {
+    for (const press of [false, true]) {
+      it(`${press ? 'a member\'s pause is sent' : 'a site\'s pause is not sent'} while ${what} is landing`, async () => {
+        const h = harness({ player: { paused: false, positionS: 100 } });
+        await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+        await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+        assert.equal(h.engine.acquisition, 'steady');
+        const p = h.player;
+        const parked: Array<() => void> = [];
+        const seekTo = p.seekTo.bind(p);
+        p.seekTo = (s: number) => new Promise<void>((res) => { parked.push(() => { void seekTo(s).then(res); }); });
+        await h.vt.advance(10);
+        await seek(h);
+        assert.equal(parked.length, 1, 'the seek was not parked');
+        p.readyState = 1;                           // a real element, seeking
+        await h.vt.advance(200);
+        if (press) h.g.press();
+        await p.pause();
+        p.emit('pause');
+        await h.vt.advance(100);
+        assert.deepEqual(h.kinds(), press ? ['pause'] : [], `sent ${h.kinds()}`);
+        parked.shift()!();
+        p.readyState = 4;
+        await h.vt.advance(100);
+        assert.deepEqual(h.kinds(), press ? ['pause'] : []);
+      });
+    }
+  }
 });
