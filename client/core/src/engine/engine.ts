@@ -2164,6 +2164,13 @@ export class SyncEngine {
    * place a member is least likely to be pressing. (`seeked` is set on the
    * playing path only, and a play there is the transition's own state, so
    * this is always a pause under a transition that plays.)
+   *
+   * Known, and left: an input is stamped at pointerdown, and a site's pause
+   * button acts on click some 50-150 ms later. An apply that begins in that
+   * gap, on an element it leaves unready, takes the member's pause for the
+   * site's. Looking back past `applying.at` would fix that, but would also
+   * count the press that started the transition -- the site reacting to it is
+   * exactly what this excuses.
    */
   private underOwnSeek(o: Observation, applying: Applying): boolean {
     if (o.kind !== 'playstate' || !o.unready) return false;
