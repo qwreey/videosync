@@ -20,7 +20,7 @@ import {
   serverOrigin, sha256Hex, widens, writeState,
 } from '../src/providers/adoption.ts';
 import type { ProviderState } from '../src/providers/adoption.ts';
-import { compileDescriptor, parseDescriptor } from '../src/providers/descriptor.ts';
+import { compileDescriptor, parseDescriptor, plainUrl } from '../src/providers/descriptor.ts';
 import {
   adopt, autoUpdate, autoUpdateStored, decline, dynamicPagePatterns, grantedBy, missingMatches, originsFor, removeUser, saveUser,
   setAutoAdopt, unadopt,
@@ -70,6 +70,19 @@ describe('the template grammar (shared vectors)', () => {
     // itself; these pin what URL.pathname gives, which the client matches on.
     assert.ok(v.pathnames.length > 0);
     for (const c of v.pathnames) assert.equal(new URL(c.url).pathname, c.pathname, c.url);
+  });
+
+  it('reads a plain URL the way the Go port does, and nothing else counts as plain', () => {
+    // N11: net/url and URL disagree outside this grammar, so examples and
+    // watch templates must stay inside it; inside it the parts must agree.
+    assert.ok(v.urls.length > 0);
+    for (const c of v.urls) {
+      assert.equal(plainUrl(c.url), c.plain, JSON.stringify(c.url));
+      if (!c.plain) continue;
+      const u = new URL(c.url);
+      assert.deepEqual([u.hostname, u.pathname, u.search], [c.hostname, c.pathname, c.search], c.url);
+    }
+    for (const c of v.pathnames) assert.ok(plainUrl(c.url), c.url);
   });
 
   it('rejects malformed query templates', () => {
