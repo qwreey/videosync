@@ -342,8 +342,10 @@ Open after D6–D8, needing a browser, a person or a decision:
 
 - Live: password/proxy/OIDC sign-in with a real IdP or gateway (tinyauth, Authelia); scope `all`;
   Firefox MV2 sign-in and site registration (API choice unverified); descriptor update notice,
-  auto-adopt, replace-built-in; YouTube ads (Y3) and fullscreen consuming activation (Y4); Laftel in
-  Firefox; real Tampermonkey for all of the above.
+  auto-adopt, replace-built-in; YouTube ads (Y3) and fullscreen consuming activation (Y4); real
+  Tampermonkey for all of the above. (Laftel in Firefox: done, BROWSER-FINDINGS §23 — 9/10 in
+  three runs; one earlier run misbehaved and did not recur; a Widevine seek in Firefox reads
+  frozen for ~1 s, which can earn a member extra correction seeks.)
 - A descriptor's `watch` must be https, so an http-only site cannot be followed by descriptor.
 - An invite link only fills in the room and secret; the member still presses 참가.
 - A member who follows by full-page navigation during a continuation is not waited for (its unload
