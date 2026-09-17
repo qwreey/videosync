@@ -133,18 +133,17 @@ describe('descriptor validation (shared vectors)', () => {
 
   it('refuses :has( however the selector spells it', () => {
     // CSS decodes escapes and drops comments before it sees a function
-    // token, so each of these is :has( to the engine. Not a shared vector:
-    // the Go port still checks the literal text.
+    // token, so none of these may pass: a backslash, a comment opener or a
+    // control character is refused outright, and :has( in any case. The
+    // shared vectors hold the same rule for the Go port.
     const withSel = (sel: string) => compileDescriptor(build({ set: { video: { include: [sel] } } }));
     for (const sel of ['*:\\has(* *) video', 'div:h\\61s(video)', 'div:\\68 as(video)', 'div:\\000068as(video)',
-      'div:H\\41S(video)', 'div:/**/has(video)']) {
+      'div:H\\41S(video)', 'div:/**/has(video)', '[data-x="/*"]:has(video)', '.x\\/*:has(', 'div:HaS(video)',
+      '.md\\:hidden video', 'div:h\\61\r\ns(video)', 'div\fvideo', 'div\u0000video', 'div\u007fvideo']) {
       const r = withSel(sel);
-      assert.equal(r.ok, false, `${sel} accepted`);
-      assert.match(r.ok ? '' : r.errors.join('; '), /:has\(/, sel);
+      assert.equal(r.ok, false, `${JSON.stringify(sel)} accepted`);
     }
-    // Controls: escapes are ordinary (Tailwind class names need them), and
-    // an escaped colon or parenthesis is not a pseudo-class.
-    for (const sel of ['.md\\:hidden video', '#player video', 'div.has\\(x\\) video', 'div:is(.has) video']) {
+    for (const sel of ['#player video', 'div:is(.has) video', 'div[data-x="has("] video']) {
       const r = withSel(sel);
       assert.ok(r.ok, `${sel}: ${r.ok ? '' : r.errors.join('; ')}`);
     }

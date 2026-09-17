@@ -167,25 +167,17 @@ function selectors(o: Obj, k: string, where: string, p: Problems): void {
   const list = strList(o, k, where, p, MAX_SELECTORS);
   for (const s of list ?? []) {
     if (s === '' || cpLen(s) > MAX_SELECTOR_LEN) p.add(`${where}.${k}: a selector must be 1..${MAX_SELECTOR_LEN} characters`);
+    // CSS decodes escapes and drops comments before it forms a function
+    // token, so `:\has(` and `:/**/has(` are :has( to the engine. Refusing
+    // what could spell it differently is the only check that needs no
+    // tokenizer; control characters go with them (a newline ends an escape).
+    else if (/[\\\u0000-\u001f\u007f-\u009f]|\/\*/.test(s)) {
+      p.add(`${where}.${k}: a selector must not contain a backslash, "/*" or a control character`);
+    }
     // The one selector feature whose cost grows with the whole document, run
     // on every mutation of a page that may be a feed of thousands of nodes.
-    else if (cssText(s).toLowerCase().includes(':has(')) p.add(`${where}.${k}: ":has(" is not allowed`);
+    else if (s.toLowerCase().includes(':has(')) p.add(`${where}.${k}: ":has(" is not allowed`);
   }
-}
-
-/**
- * The selector as CSS tokenizes it: comments dropped and escapes decoded
- * (CSS Syntax 3 §4.3.7). `:\has(`, `:h\61s(` and `:/**\/has(` are all `:has(`
- * to the engine, so a check on the literal text alone is a check on nothing.
- * Decoding an escaped `(` or `:` too can only refuse more, never less.
- */
-function cssText(s: string): string {
-  return s.replace(/\/\*[\s\S]*?(\*\/|$)/g, '')
-    .replace(/\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?|\\([\s\S])/g, (_, hex: string | undefined, ch: string | undefined) => {
-      if (hex === undefined) return ch!;
-      const cp = parseInt(hex, 16);
-      return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) ? '�' : String.fromCodePoint(cp);
-    });
 }
 
 const ID = /^[a-z0-9-]{2,32}$/;

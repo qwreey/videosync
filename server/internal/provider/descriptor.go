@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -228,6 +229,12 @@ func checkSelectors(o map[string]any, k, where string, p *problems) {
 		switch {
 		case s == "" || utf8.RuneCountInString(s) > maxSelectorLen:
 			p.add("%s.%s: a selector must be 1..%d characters", where, k, maxSelectorLen)
+		// CSS decodes escapes and drops comments before it forms a function
+		// token, so `:\has(` and `:/**/has(` are :has( to the engine. Refusing
+		// what could spell it differently is the only check that needs no
+		// tokenizer; control characters go with them (a newline ends an escape).
+		case strings.Contains(s, `\`) || strings.Contains(s, "/*") || strings.IndexFunc(s, unicode.IsControl) >= 0:
+			p.add("%s.%s: a selector must not contain a backslash, \"/*\" or a control character", where, k)
 		case strings.Contains(strings.ToLower(s), ":has("):
 			p.add("%s.%s: \":has(\" is not allowed", where, k)
 		}

@@ -70,7 +70,8 @@ implementations cannot drift.
   `hostname`, never on the URL string.
 - `watch` templates must produce an `https` URL on a declared host, and re-normalise to the same key.
 - Limits: 16 KiB per descriptor, 32 identity rules, 16 segments, 256-character selectors, no
-  `:has(`.
+  `:has(`. A selector may not contain a backslash, `/*` or a control character either: CSS
+  decodes escapes and drops comments before it sees `:has(`, and refusing them needs no tokenizer.
 - `dump()` reports which descriptor (id, version, hash, tier) was in force.
 
 ## As built (2026-09-17)
