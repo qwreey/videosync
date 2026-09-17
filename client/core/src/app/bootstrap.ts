@@ -310,6 +310,13 @@ export function start(p: Platform): App {
   const toldUpdates = new Set<string>();
   /** Bumped per join, so a late answer about a previous server is dropped. */
   let updatesGen = 0;
+  /**
+   * Bumped whenever the session changes hands -- every `leave`, and every
+   * `join` the member asked for -- so a room creation that settles afterwards
+   * is dropped. The app's own rejoin of the same session (`joinAgain`) is not
+   * the member changing their mind, and leaves it alone.
+   */
+  let sessionGen = 0;
 
   const tabId = readTabId();
   const invite = readInviteHash(location.hash);
@@ -342,6 +349,9 @@ export function start(p: Platform): App {
     clearTimer: (h) => { clearTimeout(h); },
   }, openTab);
 
+  /** The element the watcher last handed over, and the adapter made for it. */
+  let wrapped: HTMLVideoElement | null = null;
+  let wrapper: Html5Adapter | null = null;
   const watcher = new PageWatcher({
     doc: document,
     win: window,
@@ -360,11 +370,21 @@ export function start(p: Platform): App {
         // media puts the new video at the old one's timestamp.
         engine?.setLocalMediaKey(key, mediaUrl);
       }
-      const d = providerAt(reg, href).entry?.provider.d;
-      adapter.setTarget(el ? new Html5Adapter(el, 'html5', {
-        ...(d?.capabilities ? { capabilities: d.capabilities } : {}),
-        ...(d?.seek ? { seek: d.seek } : {}),
-      }) : null);
+      // The same element on the same media is not new ground: an address that
+      // changed only in its query or fragment -- our own invite rewrite after a
+      // rotation, a site's `&t=` -- must not restart acquisition, which a
+      // hidden tab never finishes, so the member would ignore the room until
+      // the tab is shown (N5). The descriptor cannot differ either: a
+      // same-document URL change keeps the host.
+      if (el !== wrapped || mediaChanged || adapter.current !== wrapper) {
+        wrapped = el;
+        const d = providerAt(reg, href).entry?.provider.d;
+        wrapper = el ? new Html5Adapter(el, 'html5', {
+          ...(d?.capabilities ? { capabilities: d.capabilities } : {}),
+          ...(d?.seek ? { seek: d.seek } : {}),
+        }) : null;
+        adapter.setTarget(wrapper);
+      }
       if (mediaChanged) onMediaChanged();
       refreshStatus();
     },
@@ -627,14 +647,20 @@ export function start(p: Platform): App {
     // until the first member on media names it (D8). Only a creator who is on
     // media seeds the room from their own player at once.
     panel.setStatus('방을 만드는 중…');
+    const gen = sessionGen;
     try {
       const out = await requestRoom(serverUrl);
+      // The member joined, left or created another room while this one was on
+      // its way (the buttons stay live meanwhile). What they did since is
+      // what they want; the room made here is simply never used (N9).
+      if (gen !== sessionGen) throw new Error('superseded');
       panel.setFields(out);
       // The creator seeds the room from their own player. Only here: a joiner
       // conforms to the anchor, a creator IS the anchor.
       join(serverUrl, out.roomId, out.secret, name, true);
       return out;
     } catch (e) {
+      if (gen !== sessionGen) throw e; // not about the session there is now
       if (e instanceof AuthRequiredError) {
         askSignIn(serverUrl, e.methods, () => { void createRoom(serverUrl, name).catch(() => {}); });
         throw e;
@@ -806,7 +832,7 @@ export function start(p: Platform): App {
     }
     const why = p.unreachable(serverUrl);
     if (why) { panel.setStatus(why, 'err'); return; }
-    leave();
+    leave(internal);
 
     let transport;
     try {
@@ -955,7 +981,9 @@ export function start(p: Platform): App {
     engine.start();
   }
 
-  function leave(): void {
+  /** `sameSession`: the app is about to join this very session again. */
+  function leave(sameSession = false): void {
+    if (!sameSession) sessionGen++;
     cancelFollow();
     // A sign-in asked for by what is being left would, on success, bring it back.
     abandonLogin();
@@ -992,6 +1020,21 @@ export function start(p: Platform): App {
   // room does not hold the readiness gate for them until GATE_TIMEOUT.
   const onPageHide = () => { engine?.stop(); };
   window.addEventListener('pagehide', onPageHide);
+  // A page kept in the back/forward cache comes back with no script re-run and
+  // with the engine `pagehide` stopped for good, which read as a network
+  // failure that never recovers -- and the server dropped the member long ago
+  // (N20). Come back as a reload of this page would: out of the room, with its
+  // fields still filled in. Not rejoined: the member left this page, and one
+  // that is not the room's media would follow the room forward again.
+  const onPageShow = (e: PageTransitionEvent) => {
+    if (!e.persisted || !engine) return;
+    // A follow's record belongs to the page it sent the member to, which may
+    // still be about to consume it; a reload of this page leaves it too.
+    ownRejoin = '';
+    leave();
+    panel.setStatus('페이지를 떠나서 방에서 나왔어요 — 다시 참가하려면 참가를 누르세요.', 'warn');
+  };
+  window.addEventListener('pageshow', onPageShow);
 
   refreshStatus();
 
@@ -1120,6 +1163,7 @@ export function start(p: Platform): App {
       adapter.destroy();
       panel.destroy();
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('pageshow', onPageShow);
     },
   };
 }

@@ -342,6 +342,124 @@ describe('the move-the-room offer', () => {
   });
 });
 
+describe('a room creation that settles late (N9)', () => {
+  /** `createRoom` with its POST held until `release`. */
+  function held(h: H) {
+    let release!: () => void;
+    h.server.gate = new Promise<void>((r) => { release = r; });
+    const out = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    return { out, release: async () => { release(); await flush(); await flush(); } };
+  }
+
+  it('does not pull the member out of a room they joined meanwhile', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const b = h.tr();
+    await c.release();
+    assert.notEqual(await c.out, 'created', 'the caller was told it is in the created room');
+    assert.equal(h.transports.length, 1, 'joined the created room over the one the member chose');
+    assert.equal(b.closed, false);
+    assert.equal(h.store.data.get('room'), 'B');
+    assert.equal(h.server.to('/api/rooms').length, 1, 'control: the room was created');
+  });
+
+  it('does not put a member who left meanwhile into the room', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.leave();
+    await c.release();
+    assert.equal(h.transports.length, 0);
+    assert.equal(h.app.api.engine(), null);
+  });
+
+  it('joins only the first of two rooms created by a double click', async () => {
+    const h = harness(ROOM_URL);
+    const c1 = held(h);
+    const c2 = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    await c1.release();
+    assert.equal(await c1.out, 'created');
+    await c2;
+    assert.equal(h.transports.length, 1, 'the second creation left the first room');
+    assert.equal(h.tr().closed, false);
+  });
+
+  it('control: an undisturbed creation still joins', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    await c.release();
+    assert.equal(await c.out, 'created');
+    assert.equal(h.transports.length, 1);
+  });
+
+  const signInShown = (h: H) =>
+    [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'note')!.shown;
+
+  it('leaves the status of the room joined meanwhile alone', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const before = h.status().text;
+    await c.release();
+    await h.tick(50);
+    assert.notEqual(await c.out, 'created');
+    assert.doesNotMatch(h.status().text, /만들지 못했어요/, 'a dropped creation was reported as a failure');
+    assert.equal(h.status().text, before);
+  });
+
+  it('asks nobody to sign in for a creation abandoned before it was refused', async () => {
+    // A server that gates creation, not yet known to: the POST is refused and
+    // no device token can answer it.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    const h = harness(ROOM_URL, makeStore(), new Map(), {}, server);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const before = h.status().text;
+    await c.release();
+    await h.tick(200);
+    assert.equal(await c.out, '로그인이 필요해요', 'control: the creation ended in a sign-in refusal');
+    assert.equal(signInShown(h), false, 'asked to sign in for a room the member no longer wants');
+    assert.equal(h.status().text, before);
+    assert.equal(h.transports.length, 1);
+    assert.equal(h.tr().closed, false);
+  });
+
+  it('still joins the created room when the app rejoined the same session meanwhile', async () => {
+    // A gated room whose hello is refused once is joined again by the app
+    // itself (learnRefusal, then joinAgain). The member did nothing: the room
+    // they asked for must still arrive.
+    const server = new FakeServer();
+    server.methods = ['token'];
+    server.scope = 'all';
+    const store = makeStore();
+    await server.fetch(SERVER, '/api/session', { method: 'POST', credentials: { key: KEY } });
+    store.save('authScope', JSON.stringify({ [new URL(SERVER).origin]: 'all' }));
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    const h = harness(ROOM_URL, store, new Map(), {
+      authFetch: async (s, path, init) => {
+        if (path === '/api/rooms') await hold;
+        return server.fetch(s, path, init);
+      },
+    }, server);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    await h.tick(50);
+    h.tr().open();
+    const out = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    await h.tick(50);
+    h.tr().deliver({ t: 'error', code: 'auth_required' });
+    h.tr().drop('1008 auth required');
+    await h.tick(50);
+    assert.equal(h.transports.length, 2, 'control: the app rejoined on its own');
+    release();
+    await h.tick(100);
+    assert.equal(await out, 'created', 'the room the member asked for was dropped');
+    assert.equal(h.transports.length, 3);
+    assert.equal(h.store.data.get('room'), 'R');
+  });
+});
+
 describe('a page that names no media', () => {
   const NOWHERE = 'https://www.youtube.com/results?search_query=x';
 
@@ -491,6 +609,41 @@ describe('leaving', () => {
     h.button('나가기')!.click();
     assert.doesNotMatch(h.status().text, /끊겼/, 'a member who left on purpose is told the network failed');
     assert.doesNotMatch(dot(h).className, /\bclosed\b/, 'a red dot for a deliberate leave');
+  });
+});
+
+describe('a page restored from the back/forward cache (N20)', () => {
+  /** What the browser fires on the page's window; the fake only records listeners. */
+  function fire(h: H, type: string, persisted: boolean): void {
+    const ls = (h.dom.win as unknown as { listeners: Map<string, Set<(e: unknown) => void>> }).listeners;
+    for (const fn of [...(ls.get(type) ?? [])]) fn({ type, persisted });
+  }
+
+  it('comes back out of the room, the way a reload of it would, not "connection lost"', async () => {
+    const h = harness(HOME);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY, mediaUrl: ROOM_URL });
+    await h.tick(2000);
+    assert.deepEqual(h.dom.loc.assigned, [ROOM_URL], 'control: the member followed the room away');
+    const record = h.store.data.get('rejoin');
+    fire(h, 'pagehide', true);
+    assert.equal(h.tr().closed, true, 'control: leaving the page leaves the room');
+    fire(h, 'pageshow', true);
+    assert.equal(h.app.api.engine(), null, 'a stopped engine that never reconnects');
+    assert.doesNotMatch(h.status().text, /끊겼/);
+    assert.equal(h.button('참가')!.disabled, false, 'the member can join again');
+    assert.equal(h.button('나가기')!.disabled, true);
+    assert.equal(h.store.data.get('rejoin'), record, 'the page the member was sent to may still be loading it');
+    await h.tick(60_000);
+    assert.equal(h.transports.length, 1, 'nothing reconnected behind the member\'s back');
+  });
+
+  it('control: the pageshow of an ordinary load leaves the session alone', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    fire(h, 'pageshow', false);
+    assert.equal(h.app.api.engine()?.state, 'joined');
   });
 });
 
@@ -689,6 +842,32 @@ describe('the panel', () => {
       input.dispatchEvent({ type: 'keydown', key: 'Enter', isComposing: false, keyCode: 13 });
       assert.deepEqual(chats, ['안녕']);
       assert.equal(input.value, '');
+    } finally { dom.uninstall(); }
+  });
+
+  it('keeps every keystroke typed into it from the site\'s hotkeys (N7)', () => {
+    const dom = installDom(ROOM_URL);
+    try {
+      panel(dom);
+      const host = dom.doc.getElementById('videosync-root')!;
+      // Key events are composed: past the shadow root they reach the page,
+      // retargeted to the host, which no "is it editable?" check skips.
+      host.shadow!.parentNode = host;
+      const reached: string[] = [];
+      for (const t of ['keydown', 'keyup', 'keypress']) {
+        dom.doc.documentElement.addEventListener(t, (e) => {
+          reached.push(`${t}:${e.target?.placeholder || e.target?.textContent || e.target?.tagName}`);
+        });
+      }
+      const targets = all(dom).filter((e) => e.tagName === 'INPUT' || e.tagName === 'BUTTON');
+      assert.ok(targets.some((e) => e.placeholder === '이름'), 'control: the name field is there');
+      assert.ok(targets.some((e) => e.textContent === '나가기'), 'control: so is 나가기');
+      for (const e of targets) {
+        for (const type of ['keydown', 'keyup', 'keypress']) e.dispatchEvent({ type, key: type === 'keydown' ? 'l' : ' ' });
+      }
+      // Control: the page does hear a key pressed outside the panel.
+      host.dispatchEvent({ type: 'keydown', key: 'k' });
+      assert.deepEqual(reached, ['keydown:DIV'], 'YouTube would seek on the l typed into the server field');
     } finally { dom.uninstall(); }
   });
 
@@ -1380,5 +1559,64 @@ describe('provider descriptors on the page', () => {
     player.emit('play');
     assert.equal(lines(h).filter((l) => l.includes('새 버전')).length, 0);
     assert.deepEqual(JSON.parse(h.app.api.dump()).providerUpdates, ['laftel']);
+  });
+});
+
+describe('an address change on the same video (N5)', () => {
+  /** One `<video>` on the page, found by the watcher's next check. */
+  async function putVideo(h: H) {
+    const v = h.dom.doc.createElement('video');
+    h.dom.doc.documentElement.append(v);
+    Object.assign(v, { videoWidth: 1920, videoHeight: 1080, duration: 60, paused: false, readyState: 4, muted: false,
+      volume: 1, currentTime: 5, playbackRate: 1, buffered: { length: 0 } });
+    h.dom.doc.querySelectorAll = (sel: string) => (sel === 'video' ? [v] : []);
+    await h.tick(1000);
+    return v;
+  }
+
+  it('keeps the element wrapped when only the invite fragment is rewritten', async () => {
+    const h = harness(`${ROOM_URL}#videosync=R.S`);
+    await putVideo(h);
+    const wrapped = h.app.api.adapter.current;
+    assert.ok(wrapped, 'control: the video was found');
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    let replaced = 0;
+    h.app.api.adapter.on('elementreplaced', () => { replaced++; });
+    // Another member rotates the secret; the app rewrites this tab's fragment.
+    h.tr().deliver({ t: 'secret', secret: 'S2', rotated: 'other' });
+    assert.match(h.dom.loc.href, /#videosync=R\.S2$/, 'control: the address did change');
+    await h.tick(2000);
+    // A retarget restarts acquisition, which a hidden tab never finishes: the
+    // member would ignore every room command until the tab is shown.
+    assert.equal(replaced, 0, 'the same element was announced as a new one');
+    assert.equal(h.app.api.adapter.current, wrapped);
+  });
+
+  it('still retargets when the address names another video on the same element', async () => {
+    const h = harness(ROOM_URL);
+    await putVideo(h);
+    const wrapped = h.app.api.adapter.current;
+    let replaced = 0;
+    h.app.api.adapter.on('elementreplaced', () => { replaced++; });
+    h.dom.loc.href = 'https://www.youtube.com/watch?v=other';
+    await h.tick(1000);
+    assert.equal(h.app.api.mediaKey(), 'yt:other');
+    assert.ok(replaced > 0, 'a single-page navigation reusing the element is a new media');
+    assert.notEqual(h.app.api.adapter.current, wrapped);
+  });
+
+  it('wraps the same element again once its adapter was taken away', async () => {
+    const h = harness(ROOM_URL);
+    const v = await putVideo(h);
+    // Something other than the watcher cleared the target; the element and
+    // the media key are what they were.
+    h.app.api.adapter.setTarget(null);
+    h.dom.loc.href = `${ROOM_URL}#t=5`;
+    await h.tick(1000);
+    assert.equal(h.app.api.mediaKey(), ROOM_KEY, 'control: the same media');
+    assert.ok(h.app.api.adapter.current, 'the video on the page is left unwrapped');
+    v.currentTime = 7;
+    assert.equal(h.app.api.adapter.readState().positionS, 7, 'wrapped something other than the video');
   });
 });

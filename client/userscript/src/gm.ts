@@ -6,9 +6,12 @@
  * Content-Security-Policy applies to everything it does -- including opening a
  * WebSocket. YouTube and most OTT sites ship a `connect-src` that does not
  * include a self-hosted sync server, so the socket would simply be refused.
- * Granting any GM API moves the script into the userscript sandbox, which has
- * its own CSP and can reach the server. This is the single most load-bearing
- * line in the metadata block.
+ * In Tampermonkey, granting any GM API moves the script into the userscript
+ * sandbox, which has its own CSP and can reach the server. This is the single
+ * most load-bearing line in the metadata block. Violentmonkey needs
+ * `@inject-into content` for the same (see meta.txt): by default it runs a
+ * granted script in the page's realm, where the page's `JSON` handles the
+ * device tokens below.
  */
 import type { RawHttp, TokenStore } from '@videosync/core/app/authfetch.ts';
 import { fetchHttp, memoryTokens } from '@videosync/core/app/authfetch.ts';

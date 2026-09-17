@@ -96,9 +96,14 @@ If a site turns out to need special handling, that is a
 Not for storage. With `@grant none` a userscript runs in the **page** context,
 where the site's Content-Security-Policy governs everything it does — including
 opening a WebSocket, and no OTT site's `connect-src` lists your server.
-Granting any GM API moves the script into the userscript sandbox, which has its
-own CSP. Removing those lines will break the script in a way that looks like a
-network problem.
+In Tampermonkey, granting any GM API moves the script into the userscript
+sandbox, which has its own CSP. Removing those lines will break the script in a
+way that looks like a network problem.
+
+Violentmonkey decides by `@inject-into` instead, and by default runs even a
+granted script in the page's own JavaScript context, where the page could reach
+the panel and the sign-in token. The metadata asks for `@inject-into content`;
+do not change it to `page` or `auto`.
 
 `GM_xmlhttpRequest` and `@connect *` carry every HTTP call to your server —
 room creation, and signing in if your server asks for it (see the top-level
