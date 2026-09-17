@@ -1154,17 +1154,17 @@ state can be read — the one thing BiDi could not reach.
 
 | run | result | failing check | 30 s hold, gap every 5 s |
 |---|---|---|---|
-| 1 (`firefox-laftel.json`, earlier build without the dump) | 7/10 | not paused 5 s after arriving; Firefox's pause never reached the server; 933/844 ms during the hold | 121, 156, 933, 844, 18, −62 ms |
-| 2 | 9/10 | play from Chromium, gap 355 ms | 55, 113, 47, 57, 45, 29 ms |
-| 3 | 9/10 | play from Firefox, gap 374 ms | 179, 242, 195, 197, 204, 146 ms |
-| 4 | 9/10 | seek from Chromium, gap 331 ms | 9, −54, 24, −43, −6, −43 ms |
+| 1 (earlier build without the dump; file lost, see below) | 7/10 | not paused 5 s after arriving; Firefox's pause never reached the server; 933/844 ms during the hold | 121, 156, 933, 844, 18, −62 ms |
+| 2 (`firefox-laftel-run2.json`) | 9/10 | play from Chromium, gap 355 ms | 55, 113, 47, 57, 45, 29 ms |
+| 3 (`firefox-laftel-run3.json`) | 9/10 | play from Firefox, gap 374 ms | 179, 242, 195, 197, 204, 146 ms |
+| 4 (not kept) | 9/10 | seek from Chromium, gap 331 ms | 9, −54, 24, −43, −6, −43 ms |
 
 Every run: taken to the room's episode 1.7–1.8 s after joining and rejoined 2.0–2.5 s after
 joining, rate 1 after leaving. In runs 2–4 the Firefox member was `steady` by the conform check and
 every command crossed; the single failure each time is one transition landing 330–374 ms apart
 — over the probe's 300 ms bound, inside the servo's 500 ms band — which the hold then closes or
-leaves at ~200 ms. Run 4's dump: 5 correction seeks and 29 deferred reports in a minute, 2
-un-gestured changes ignored while acquiring, no reconciles.
+leaves at ~200 ms. Run 4's dump (quoted from the run; its file was not kept): 5 correction seeks
+and 29 deferred reports in a minute, 2 un-gestured changes ignored while acquiring, no reconciles.
 
 **Run 1 is not explained.** Its server log shows the Firefox member playing in a paused room right
 after the conform, a `pause` it made never sent, and free seeks every ~2 s for twenty seconds
@@ -1172,6 +1172,13 @@ after the conform, a `pause` it made never sent, and free seeks every ~2 s for t
 had no dump. A deterministic e2e reproduction with a player that freezes `currentTime` for 1 s
 after each seek (scratch only) did not loop either. Kept here as an open observation: if it comes
 back, the dump will say which acquisition state swallowed the pause.
+
+**Run 1's results file does not exist.** `probe-firefox.mjs` writes every `LAFTEL=1` run to the
+same `results/firefox-laftel.json`, and a later run overwrote run 1 before it was copied aside.
+The file this table used to cite as run 1 was byte-identical to `firefox-laftel-run3.json` (run
+3's timestamp, 9/10, with a dump), so it has been removed rather than left under a name that
+contradicts its row. Run 1's row and the paragraph above are all that is left of it; run 4 has
+no file either. A re-run writes `firefox-laftel.json` again: rename it before the next run.
 
 ## Reproducing
 
@@ -1249,6 +1256,11 @@ never loaded before (see §22 for why):
 KEY_FILE=<file with the key> node harness/browser/results/drivers/auth-smoke.mjs  # videosyncd -auth token -auth-tokens-file <same file> -auth-scope create
 EXT_ID=<build id> node harness/browser/results/drivers/providers-smoke.mjs         # videosyncd -providers <dir holding drivers/localmedia.json>
 ```
+
+A driver writes the cited `auth-smoke.json` / `providers-smoke.json` only when
+every check passes; a failed or aborted run goes to `<name>-failed.json`, and
+`RESULT=<name>` names the file outright. `probe-firefox.mjs` takes `RESULT=`
+too, so a new run need not overwrite a cited `firefox-*.json`.
 
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
 The container needs `--shm-size=1g`; Chrome's renderer hangs on the default

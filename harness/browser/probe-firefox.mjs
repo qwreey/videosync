@@ -14,6 +14,10 @@
  *     opens a window in (member B);
  *   - videosyncd at $SERVER.
  *
+ * Writes results/firefox.json (firefox-local / firefox-laftel with LOCAL= /
+ * LAFTEL=) after every check. Those are cited: name a new run with
+ * RESULT=<name>, e.g. `RESULT=firefox-laftel-run5 LAFTEL=1 node probe-firefox.mjs`.
+ *
  * Firefox gives no handle on a content script's realm, so B is driven the way
  * a person would: through the panel. A is driven through its adapter.
  */
@@ -46,10 +50,16 @@ const ELSEWHERE = LOCAL ? 'http://127.0.0.1:8898/watch/2'
 const FF_EXT = process.env.FF_EXT || join(HERE, '..', '..', '.cache', 'firefox-profile', 'ext-local');
 const HOLD_S = LOCAL || LAFTEL ? 30 : 15;
 
+// RESULT=<name> writes results/<name>.json instead of the mode's fixed name, which BROWSER-FINDINGS
+// cites: a later LAFTEL run overwrote §23's run 1 that way.
+const RESULT = process.env.RESULT || (LOCAL ? 'firefox-local' : LAFTEL ? 'firefox-laftel' : 'firefox');
+if (/[/\\]/.test(RESULT) || RESULT.startsWith('.')) throw new Error(`RESULT must be a bare file name, not ${JSON.stringify(RESULT)}`);
+const RESULT_FILE = join(HERE, 'results', RESULT.endsWith('.json') ? RESULT : `${RESULT}.json`);
+
 const results = { when: new Date().toISOString(), checks: [], measurements: {}, notes: [] };
 function flush() {
   mkdirSync(join(HERE, 'results'), { recursive: true });
-  writeFileSync(join(HERE, LOCAL ? 'results/firefox-local.json' : LAFTEL ? 'results/firefox-laftel.json' : 'results/firefox.json'), JSON.stringify(results, null, 2));
+  writeFileSync(RESULT_FILE, JSON.stringify(results, null, 2));
 }
 function check(name, ok, detail) {
   results.checks.push({ name, ok: !!ok, detail });
