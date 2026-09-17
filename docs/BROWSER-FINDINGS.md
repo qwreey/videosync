@@ -1249,6 +1249,9 @@ In N1 both members this time reached the end close enough together that **both**
 continuation: A's `media` won, B's was refused `media_stale` (no `seq` taken) and B followed; both
 ended on episode 11, playing. That is the compare-and-set doing its job, which §21/§22 had not
 happened to exercise live.
+`probe-firefox.mjs LAFTEL=1` on `ext-r3c` (`firefox-laftel-r3c.json`): **10/10**, the first clean
+Laftel run in Firefox — play from Chromium 18 ms, pause from Firefox 50 ms, play from Firefox
+101 ms, seek 243 ms; 30 s at 173–262 ms. One run; the steady ~200 ms lag is still there.
 
 ## Reproducing
 
