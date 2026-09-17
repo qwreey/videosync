@@ -1257,6 +1257,11 @@ KEY_FILE=<file with the key> node harness/browser/results/drivers/auth-smoke.mjs
 EXT_ID=<build id> node harness/browser/results/drivers/providers-smoke.mjs         # videosyncd -providers <dir holding drivers/localmedia.json>
 ```
 
+A driver writes the cited `auth-smoke.json` / `providers-smoke.json` only when
+every check passes; a failed or aborted run goes to `<name>-failed.json`, and
+`RESULT=<name>` names the file outright. `probe-firefox.mjs` takes `RESULT=`
+too, so a new run need not overwrite a cited `firefox-*.json`.
+
 `DOCKER_TTY=-i` runs it without a terminal (for CI or a non-interactive shell).
 The container needs `--shm-size=1g`; Chrome's renderer hangs on the default
 64 MB `/dev/shm`. Test media regenerates itself on first run via `ffmpeg`;
