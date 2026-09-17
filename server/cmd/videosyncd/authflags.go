@@ -204,6 +204,14 @@ func hashPassword(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "a user name cannot be empty or contain ':' (HTTP Basic cannot carry one)")
 		return 2
 	}
+	// The users file trims each line and reads a '#' line as a comment, so
+	// such a name would be printed here and then dropped or renamed there,
+	// leaving a 401 for every sign-in. Trailing space survives the file, but
+	// nobody typing the name at the login tab can see it either.
+	if strings.HasPrefix(user, "#") || strings.TrimSpace(user) != user {
+		fmt.Fprintln(stderr, "a user name cannot start with '#' or start or end with whitespace (the users file reads such a line differently)")
+		return 2
+	}
 	line, err := bufio.NewReader(stdin).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(stderr, err)
