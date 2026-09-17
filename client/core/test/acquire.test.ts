@@ -1038,6 +1038,23 @@ describe('a seeder whose site keeps moving its player', () => {
     assert.ok(Math.abs(h.cmds()[0]!.positionMs - 700_000) < 1000, `seeded at ${h.cmds()[0]!.positionMs}`);
   });
 
+  it('sends the member\'s press when somebody else moved the room meanwhile', async () => {
+    // No seed will be sent over the other member's move, so nothing else
+    // carries the press.
+    for (const adopt of [true, false]) {
+      const h = await restless(adopt ? { adoptLocalStateOnJoin: true } : {});
+      assert.equal(h.engine.acquisition, 'fought');
+      await h.state({ positionMs: 50_000, paused: false }, 'play');
+      h.g.press();
+      h.player.positionS = 300;
+      h.player.emit('seeked');
+      await h.vt.advance(50);
+      assert.equal(h.engine.acquisition, 'steady');
+      assert.deepEqual(h.kinds(), ['seek'], `adopt=${adopt}: the press never reached the room`);
+      assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `sent ${h.cmds()[0]!.positionMs}`);
+    }
+  });
+
   it('control: a joiner under the same site reaches the bound too', async () => {
     const h = await restless({});
     assert.equal(h.engine.acquisition, 'fought');
@@ -1071,6 +1088,47 @@ describe('a creator of a room with no media, who then names it', () => {
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
     assert.deepEqual(h.kinds(), ['media', 'seek', 'play'], 'the namer took an old move for one against its naming');
     assert.equal(h.player.paused, false);
+  });
+});
+
+describe('a creator moved by somebody else, then pressed', () => {
+  it('while still loading: the press is sent', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    assert.equal(h.engine.acquisition, 'detached');
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek'], 'the press was dropped');
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `sent ${h.cmds()[0]!.positionMs}`);
+  });
+
+  it('while guarded: the press is sent, and the player is not put back over it', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    assert.equal(h.engine.acquisition, 'guarded');
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.deepEqual(h.kinds(), ['seek'], 'the press was dropped');
+    assert.ok(Math.abs(h.player.positionS - 300) < 0.3, `put back to ${h.player.positionS}`);
+  });
+
+  it('control: with nobody else moving the room, the press is carried by the seed', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek']);
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `seeded at ${h.cmds()[0]!.positionMs}`);
   });
 });
 

@@ -1649,7 +1649,7 @@ export class SyncEngine {
       // The panel asked for a press, so any press ends it -- including one
       // that agrees with the room, which the echo test below would swallow.
       this.stats.gesturedIntents++;
-      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
+      const adopting = this.pressSeeds();
       this.toSteady(now, state);
       // A seeder the site fought: the adoption carries the press (below).
       if (!adopting) this.act(o, state);
@@ -1667,7 +1667,7 @@ export class SyncEngine {
     }
     if (this.intent(now)) {
       this.stats.gesturedIntents++;
-      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
+      const adopting = this.pressSeeds();
       this.toSteady(now, state);
       // A creator's press is carried by the adoption, which sends the
       // position as well; the press alone (a `play` has none) would not.
@@ -1695,6 +1695,23 @@ export class SyncEngine {
       return;
     }
     this.stats.ungesturedIgnored++;
+  }
+
+  /**
+   * Whether a gestured press ends acquiring by seeding the room (`toSteady`),
+   * which then carries the press.
+   *
+   * Not once somebody else has moved the room: then no seed is sent, and from
+   * `fought` or `detached` nothing else would send the press -- it was
+   * dropped, and the reconciler undid it. Such a seeder is a joiner now, and
+   * its press is sent like one; the seed is given up here so that `toSteady`
+   * does not also put the player back to the room over the press.
+   */
+  private pressSeeds(): boolean {
+    if (this.adoptFor === null || this.adoptFor !== this.anchor.mediaKey) return false;
+    if (!this.foreignMove) return true;
+    this.adoptFor = null;
+    return false;
   }
 
   /** The effect of our own in-flight transition, or agreement with the room. */
