@@ -310,6 +310,11 @@ export function start(p: Platform): App {
   const toldUpdates = new Set<string>();
   /** Bumped per join, so a late answer about a previous server is dropped. */
   let updatesGen = 0;
+  /**
+   * Bumped whenever the session changes hands -- every `leave`, which every
+   * `join` starts with -- so a room creation that settles afterwards is dropped.
+   */
+  let sessionGen = 0;
 
   const tabId = readTabId();
   const invite = readInviteHash(location.hash);
@@ -640,14 +645,20 @@ export function start(p: Platform): App {
     // until the first member on media names it (D8). Only a creator who is on
     // media seeds the room from their own player at once.
     panel.setStatus('방을 만드는 중…');
+    const gen = sessionGen;
     try {
       const out = await requestRoom(serverUrl);
+      // The member joined, left or created another room while this one was on
+      // its way (the buttons stay live meanwhile). What they did since is
+      // what they want; the room made here is simply never used (N9).
+      if (gen !== sessionGen) throw new Error('superseded');
       panel.setFields(out);
       // The creator seeds the room from their own player. Only here: a joiner
       // conforms to the anchor, a creator IS the anchor.
       join(serverUrl, out.roomId, out.secret, name, true);
       return out;
     } catch (e) {
+      if (gen !== sessionGen) throw e; // not about the session there is now
       if (e instanceof AuthRequiredError) {
         askSignIn(serverUrl, e.methods, () => { void createRoom(serverUrl, name).catch(() => {}); });
         throw e;
@@ -967,6 +978,7 @@ export function start(p: Platform): App {
   }
 
   function leave(): void {
+    sessionGen++;
     cancelFollow();
     // A sign-in asked for by what is being left would, on success, bring it back.
     abandonLogin();

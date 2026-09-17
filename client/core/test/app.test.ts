@@ -342,6 +342,57 @@ describe('the move-the-room offer', () => {
   });
 });
 
+describe('a room creation that settles late (N9)', () => {
+  /** `createRoom` with its POST held until `release`. */
+  function held(h: H) {
+    let release!: () => void;
+    h.server.gate = new Promise<void>((r) => { release = r; });
+    const out = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    return { out, release: async () => { release(); await flush(); await flush(); } };
+  }
+
+  it('does not pull the member out of a room they joined meanwhile', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.join(SERVER, 'B', 'SB', 'me');
+    const b = h.tr();
+    await c.release();
+    assert.notEqual(await c.out, 'created', 'the caller was told it is in the created room');
+    assert.equal(h.transports.length, 1, 'joined the created room over the one the member chose');
+    assert.equal(b.closed, false);
+    assert.equal(h.store.data.get('room'), 'B');
+    assert.equal(h.server.to('/api/rooms').length, 1, 'control: the room was created');
+  });
+
+  it('does not put a member who left meanwhile into the room', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    h.app.api.leave();
+    await c.release();
+    assert.equal(h.transports.length, 0);
+    assert.equal(h.app.api.engine(), null);
+  });
+
+  it('joins only the first of two rooms created by a double click', async () => {
+    const h = harness(ROOM_URL);
+    const c1 = held(h);
+    const c2 = h.app.api.createRoom(SERVER, 'me').then(() => 'created', (e: Error) => e.message);
+    await c1.release();
+    assert.equal(await c1.out, 'created');
+    await c2;
+    assert.equal(h.transports.length, 1, 'the second creation left the first room');
+    assert.equal(h.tr().closed, false);
+  });
+
+  it('control: an undisturbed creation still joins', async () => {
+    const h = harness(ROOM_URL);
+    const c = held(h);
+    await c.release();
+    assert.equal(await c.out, 'created');
+    assert.equal(h.transports.length, 1);
+  });
+});
+
 describe('a page that names no media', () => {
   const NOWHERE = 'https://www.youtube.com/results?search_query=x';
 
