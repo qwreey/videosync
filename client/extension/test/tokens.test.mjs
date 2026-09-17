@@ -10,7 +10,8 @@ import { load } from './bundle.mjs';
 
 /**
  * A database whose every transaction lets its request succeed and then ends
- * as `ending` says. A commit-time failure (QuotaExceededError, a disk error,
+ * as `ending` says: `'commit'`, `'abort'`, or `'quota'` -- reads commit and
+ * writes abort, which is what a full disk does. A commit-time failure (QuotaExceededError, a disk error,
  * a forced close) aborts the transaction after the request already
  * succeeded, so only `abort` fires -- no request `error`, nothing to bubble
  * to `tx.onerror`.
@@ -20,7 +21,7 @@ function fakeIndexedDB(ending) {
   let closed = 0;
   const db = {
     close() { closed++; },
-    transaction() {
+    transaction(_name, mode) {
       const tx = { oncomplete: null, onerror: null, onabort: null, error: null };
       const req = { result: undefined, error: null };
       const pending = new Map();
@@ -31,7 +32,7 @@ function fakeIndexedDB(ending) {
       };
       tx.objectStore = () => store;
       setTimeout(() => {
-        if (ending === 'commit') {
+        if (ending === 'commit' || (ending === 'quota' && mode !== 'readwrite')) {
           for (const [k, v] of pending) { if (v === undefined) data.delete(k); else data.set(k, v); }
           tx.oncomplete?.({});
         } else {
@@ -44,6 +45,8 @@ function fakeIndexedDB(ending) {
   };
   return {
     closed: () => closed,
+    data,
+    end(e) { ending = e; },
     open() {
       const req = { result: db, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
       setTimeout(() => req.onsuccess?.({}), 0);
@@ -81,6 +84,43 @@ describe('idbTokens', () => {
     assert.notEqual(r, 'HUNG', 'set() must settle when the transaction aborts');
     assert.equal(await within(t.get('https://s.example')).then((x) => x.v), 'tok',
       'the token is kept in memory for as long as the background lives');
-    assert.ok(idb.closed() >= 2, 'an aborted transaction closes its connection too');
+    assert.equal(idb.closed(), 1, 'an aborted transaction closes its connection too');
+  });
+
+  it('prefers a token whose write aborted over what the database still reads', async () => {
+    // A full disk fails the commit but not the read: the read succeeds and
+    // returns what was there before, so a get() that only falls back when the
+    // read throws loses the token that was just minted.
+    const idb = fakeIndexedDB('quota');
+    idb.data.set('https://s.example', 'old');
+    globalThis.indexedDB = idb;
+    const { idbTokens } = await load('tokens.ts');
+    const t = idbTokens();
+    await t.set('https://s.example', 'new');
+    assert.equal(await t.get('https://s.example'), 'new');
+    assert.equal(await t.get('https://other.example'), '', 'an origin never written reads the database');
+  });
+
+  it('a delete whose write aborted reads as signed out, not as the stored token', async () => {
+    const idb = fakeIndexedDB('quota');
+    idb.data.set('https://s.example', 'old');
+    globalThis.indexedDB = idb;
+    const { idbTokens } = await load('tokens.ts');
+    const t = idbTokens();
+    await t.set('https://s.example', 'new');
+    await t.set('https://s.example', '');
+    assert.equal(await t.get('https://s.example'), '', 'forgetting a session must stick');
+  });
+
+  it('a write that later commits replaces the one held in memory', async () => {
+    const idb = fakeIndexedDB('quota');
+    globalThis.indexedDB = idb;
+    const { idbTokens } = await load('tokens.ts');
+    const t = idbTokens();
+    await t.set('https://s.example', 'mem');
+    idb.end('commit');
+    await t.set('https://s.example', 'disk');
+    idb.data.set('https://s.example', 'disk2');
+    assert.equal(await t.get('https://s.example'), 'disk2', 'the database is read again once it holds the token');
   });
 });
