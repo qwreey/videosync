@@ -1111,7 +1111,9 @@ export class SyncEngine {
     // reads it only once its clock settles and no old apply is running -- is
     // kept: a player read now already shows the change it recorded, with
     // nothing lost to resend. Commands lost since are added to it, the newest
-    // winning.
+    // winning. Only while it still describes this session's room, though: one
+    // the room has moved past will never be sent, and a command lost on top
+    // of it would go with it.
     if (this.status === 'joined') {
       const s = this.d.adapter.readState();
       const room = lost.length > 0 && roomMs !== null;
@@ -1119,7 +1121,8 @@ export class SyncEngine {
       const lostSeek = room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null;
       const lostPaused = room && lastPress ? lastPress.kind === 'pause' : null;
       const playLost = room && lastPress?.kind === 'play' && this.anchor.paused && s.paused;
-      const kept = this.offline;
+      const o = this.offline;
+      const kept = o && o.media === this.acq.id && o.key === this.localMediaKey && this.roomUnmoved(o) ? o : null;
       if (kept) {
         if (lostSeek) kept.lostSeek = lostSeek;
         if (lostPaused !== null) {
@@ -2082,9 +2085,7 @@ export class SyncEngine {
     // one may have been the engine's own adoption, pressed by nobody.
     const input = !this.d.gestures || this.d.gestures.lastInputAt() >= o.at;
     if (!input && !o.lostSeek && o.lostPaused === null) return;
-    const a = this.anchor;
-    if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
-      a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
+    if (!this.roomUnmoved(o)) return;
     const pos = state.positionS * 1000;
     const lo = o.positionS * 1000;
     const ran = !o.paused || !state.paused;
@@ -2102,6 +2103,13 @@ export class SyncEngine {
       (input || paused === o.lostPaused)) {
       this.act({ kind: 'playstate', paused, positionS: state.positionS }, state);
     }
+  }
+
+  /** Whether the room is still where it was when this snapshot was taken. */
+  private roomUnmoved(o: { seq: number; anchor: Anchor }): boolean {
+    const a = this.anchor;
+    return this.lastAppliedSeq === o.seq && a.mediaKey === o.anchor.mediaKey && a.paused === o.anchor.paused &&
+      a.positionMs === o.anchor.positionMs && a.atServerMs === o.anchor.atServerMs;
   }
 
   /**
