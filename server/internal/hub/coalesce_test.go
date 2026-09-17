@@ -253,3 +253,42 @@ func TestACommandTheBucketAdmitsCarriesTheDeferredOnesOutFirst(t *testing.T) {
 		})
 	}
 }
+
+func TestAnUnknownCommandAdmittedWhileOthersAreDeferredIsStillRefused(t *testing.T) {
+	// A kind nothing folds used to go through coalesce, which returned the
+	// deferred batch without it: dropped with no answer, where the same
+	// command with nothing deferred is refused as bad_kind.
+	f := start(t, nil)
+	id, secret := f.createRoom("yt:abc")
+	a, _, _ := f.dial(id, secret, "a", "yt:abc")
+	b, _, _ := f.dial(id, secret, "b", "yt:abc")
+	a.await("members")
+
+	burst(a, 10, func(i int) int64 { return int64(i) * 1000 })
+	a.send(room.Cmd{ReqID: "s", Kind: "seek", PositionMs: 42000})
+	freezeRetry(t, f, id, a.id)
+	time.Sleep(250 * time.Millisecond) // one sustained window
+	a.send(room.Cmd{ReqID: "x", Kind: "rewind", PositionMs: 0})
+
+	a.sock.ReadTimeout = 1500 * time.Millisecond
+	var got []string
+	for {
+		m, err := a.read()
+		if err != nil {
+			break
+		}
+		switch m["t"] {
+		case "ack":
+			got = append(got, "ack "+fmt.Sprint(m["reqId"]))
+		case "error":
+			got = append(got, "error "+fmt.Sprint(m["code"]))
+		}
+	}
+	a.sock.ReadTimeout = 5 * time.Second
+	if s := strings.Join(tail(got, 2), " "); s != "ack s error bad_kind" {
+		t.Fatalf("a's answers end %q, want the deferred seek's ack, then bad_kind", s)
+	}
+	if pos := num(lastAnchor(t, b), "positionMs"); pos != 42000 {
+		t.Fatalf("the deferred seek was lost: room at %v", pos)
+	}
+}

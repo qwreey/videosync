@@ -297,8 +297,12 @@ func coalesce(pending []room.Cmd, v room.Cmd) []room.Cmd {
 		return []room.Cmd{v}
 	case "seek", "play", "pause":
 	default:
-		// Not deferred (see deferCmd); never costs what already is.
-		return pending
+		// Folds nothing and is folded by nothing. deferCmd never defers such a
+		// command, but one the bucket admits still comes through here, and it
+		// must reach OnCmd after the batch to be refused (bad_kind) as it is
+		// when nothing is deferred -- returning pending alone dropped it with
+		// no answer at all.
+		return append(pending[:len(pending):len(pending)], v)
 	}
 	out := make([]room.Cmd, 0, len(pending)+1)
 	for _, c := range pending {
