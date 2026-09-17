@@ -316,10 +316,15 @@ func TestTheLoginFormReadsOnlyAFewKilobytes(t *testing.T) {
 	const most = 64 << 10
 	for name, tc := range map[string]struct {
 		ctype, head string
+		want        int
 	}{
-		"urlencoded": {"application/x-www-form-urlencoded", "method=token&flow=x&key="},
+		// Too long to be one of the page's forms.
+		"urlencoded": {"application/x-www-form-urlencoded", "method=token&flow=x&key=", http.StatusBadRequest},
+		// Not one of the page's forms at all: refused before a byte is read.
 		"multipart": {"multipart/form-data; boundary=B",
-			"--B\r\nContent-Disposition: form-data; name=\"key\"; filename=\"k\"\r\n\r\n"},
+			"--B\r\nContent-Disposition: form-data; name=\"key\"; filename=\"k\"\r\n\r\n", http.StatusUnsupportedMediaType},
+		"json": {"application/json", `{"key":"`, http.StatusUnsupportedMediaType},
+		"none": {"", "method=token&flow=x&key=", http.StatusUnsupportedMediaType},
 	} {
 		body := &endless{}
 		req := httptest.NewRequest("POST", "http://sync.example/auth/login",
@@ -328,14 +333,37 @@ func TestTheLoginFormReadsOnlyAFewKilobytes(t *testing.T) {
 		req.Header.Set("Content-Type", tc.ctype)
 		rec := httptest.NewRecorder()
 		g.mux.ServeHTTP(rec, req)
-		if rec.Code == 200 {
-			t.Errorf("%s: an endless body signed in", name)
+		if rec.Code != tc.want {
+			t.Errorf("%s: an endless body answered %d, want %d", name, rec.Code, tc.want)
 		}
 		if body.n > most {
 			t.Errorf("%s: read %d bytes of an unauthenticated body", name, body.n)
 		}
 		if req.MultipartForm != nil {
 			req.MultipartForm.RemoveAll()
+		}
+	}
+
+	// The cap is 8 KiB: a body just past it is refused as unreadable, and
+	// the control -- a well-formed form of a few hundred bytes, whatever its
+	// charset parameter -- is read and judged on what it says.
+	for _, tc := range []struct {
+		name, ctype string
+		size        int
+		want        int
+	}{
+		{"just over the cap", "application/x-www-form-urlencoded", 8<<10 + 1, http.StatusBadRequest},
+		{"a real form", "application/x-www-form-urlencoded; charset=UTF-8", 300, http.StatusBadRequest},
+	} {
+		body := "method=nonsense&flow=x&pad=" + strings.Repeat("a", tc.size-len("method=nonsense&flow=x&pad="))
+		r := g.do("POST", "/auth/login", client, body, map[string]string{"Content-Type": tc.ctype})
+		if r.code != tc.want {
+			t.Errorf("%s: answered %d, want %d", tc.name, r.code, tc.want)
+		}
+		// Only the oversized one fails before the form is read; the real
+		// form gets as far as naming an unknown method.
+		if read := strings.Contains(r.raw, "알 수 없는 로그인 방법이에요"); read != (tc.size <= 8<<10) {
+			t.Errorf("%s: form read = %v", tc.name, read)
 		}
 	}
 }
