@@ -124,6 +124,45 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
   - OIDC with a real IdP, proxy/tinyauth
   - N2 on a real starved element
 
+## Log of the small passes
+
+### Round 5, pass 1 (2026-09-18): engine command/apply paths, and the `isEcho`/`act` merge
+
+- **Scale.** 8 finders (4 focuses × 2 lenses) on 68dc4c6. Each finding had 2 verifiers, with a
+  third on a split. 8 raw findings, 7 distinct, **7 confirmed**. All seven were caused by rounds
+  3–4, as expected.
+- **Batch 1 (P1, P2, P4; P6 folded in).** One fixer, then four review loops of 1–2 reviewers.
+  The loops found 2 → 3 → 2 → 1 new problems, each introduced by the previous fix, and each was
+  fixed and pinned. Merged as 611bb50; core tests 538.
+  - **P1.** The unready play-state exemption is now narrow (`underOwnSeek`):
+    - With gesture evidence, an unready change under a seek of ours is excused only if there was
+      no press after the apply began and within `gestureWindowMs`.
+    - Without gesture evidence, it is excused only in the post-seek `play()` window.
+  - **P2.** A site's unpressed move is judged against the anchor. A press that matches only the
+    pending command is treated as the member's.
+  - **P4/P6.**
+    - The offline snapshot waits for an old apply.
+    - It survives a second drop while the room is unmoved.
+    - It merges commands lost in between.
+    - A fresh snapshot taken during a *seeking* apply records where that seek lands.
+- **Still open from pass 1.**
+  - **P3** (low): an own-seek prediction survives another member's earlier command, so a pause in
+    the gap is swallowed.
+  - **P5** (low): a command lost after our own ack, before that ack applied, is not resent.
+  - **P7** (low): the delayed welcome conform still runs after a gestured press made acquisition
+    steady.
+- **Known and accepted.**
+  - An offline *seek* can still be undone when a server correction queues behind a parked apply.
+  - A mouse press is stamped at mousedown, so both of these are taken for the site's (as
+    `intent()` already does):
+    - a click held longer than 500 ms during our seek;
+    - a click whose mousedown came just before the apply began.
+- **Flaky test.** `app.test.ts` "takes the click-to-sync prompt down once the member starts
+  playing by key" fails about 2 in 12 runs at 68dc4c6 already. It uses real `performance.now()`.
+  This belongs in B.
+- **Lesson.** Every follow-up review of a fix found something new in that fix, even at one or two
+  reviewers. Keep the loop going until a review comes back empty, and keep each fix small.
+
 ## D. Suggested order for round 5
 
 1. A2 (the merge resolution) and A1, one pass each, 4 finders × 2 lenses, 2 verifiers each.
