@@ -265,13 +265,16 @@ func (r *Room) Leave(now int64, id string) {
 func (r *Room) MemberList() []MemberInfo {
 	out := make([]MemberInfo, 0, len(r.ids))
 	for _, id := range r.ids {
-		m := r.members[id]
-		out = append(out, MemberInfo{
-			ID: m.ID, Name: m.Name, Suspended: m.Suspended,
-			Ready: m.ReadyState >= r.tun.MinReadyState && !m.Acquiring,
-		})
+		out = append(out, r.info(r.members[id]))
 	}
 	return out
+}
+
+func (r *Room) info(m *Member) MemberInfo {
+	return MemberInfo{
+		ID: m.ID, Name: m.Name, Suspended: m.Suspended,
+		Ready: m.ReadyState >= r.tun.MinReadyState && !m.Acquiring,
+	}
 }
 
 func (r *Room) send(id string, m Msg) {
@@ -579,6 +582,7 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 
 	m.LastSeenMs = now
 	m.LastAppliedSeq = rep.LastAppliedSeq
+	was := r.info(m)
 	// Finished is absent to everything below, exactly like suspended: the
 	// corrector sees Suspended and leaves the member alone.
 	rep.Suspended = rep.Suspended || rep.Finished
@@ -592,6 +596,13 @@ func (r *Room) OnReport(now int64, id string, in Report) {
 	// delay for the whole room. RTT is a difference of two same-clock
 	// timestamps, so it carries no offset error.
 	m.RTTMs, m.hasRTT = rep.RTTMs, true
+	// The roster carries these flags and a client tags members from the last
+	// roster it got, so a change is announced -- to everyone, like a leave.
+	// Sent only on join and leave, a member who went away was never shown
+	// away, and one who came back stayed tagged until the next join.
+	if r.info(m) != was {
+		r.Broadcast("", Members{Members: r.MemberList()})
+	}
 
 	// A member that has not applied the newest command is mid-transition, and
 	// there are exactly two things that can be true of it.

@@ -141,6 +141,11 @@ Membership changes are broadcast:
 `{"t":"members","members":[{"id","name","suspended","ready"}],"joined":"<id>"|"left":"<id>"}`.
 The joiner gets the roster in its `welcome` instead, so it is excluded from that broadcast.
 
+*(Amendment, 2026-09-17.)* So is a change in a member's `suspended` or `ready`, as its reports
+reveal it: the same frame with neither `joined` nor `left`, to everyone. The roster used to be sent
+on join and leave only, so a member who went away was never shown away, and one who came back kept
+the tag until somebody else joined or left. A heartbeat that changes neither flag sends nothing.
+
 ## 3. Commands (§2, §5)
 
 Client → `{"t":"cmd","reqId":"<uuid>","kind":"play|pause|seek|media","positionMs":<n>,"mediaKey":"...","mediaUrl":"..."}`
