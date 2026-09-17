@@ -171,8 +171,19 @@ export class Html5Adapter implements ProviderAdapter {
         const lands = Number.isFinite(d) && d > 0
           ? Math.min(Math.max(positionS, 0), d)
           : Math.max(positionS, 0);
-        if (Math.abs(this.el.currentTime - lands) > this.landingToleranceS) return;
-        settle(null);
+        if (Math.abs(this.el.currentTime - lands) <= this.landingToleranceS) {
+          settle(null);
+        } else if (!this.el.seeking) {
+          // Landed elsewhere and nothing is seeking any more. Usually a
+          // currentTime write while ours ran -- the user's scrub, the site's
+          // resume position -- which per spec aborted ours, and only the newer
+          // seek reports; or a player that snapped us past the tolerance.
+          // Either way no `seeked` of ours is coming, and waiting meant
+          // waiting out the timeout with the apply queue parked behind an
+          // element that has long landed. (A stale `seeked` dispatched after
+          // our write finds `seeking` still set and is ignored above.)
+          settle(new Error(`seek to ${positionS}s did not hold: landed at ${this.el.currentTime}s`));
+        }
       };
       // The adapter is being let go of -- the page replaced the element, and
       // the old one may never report this seek. The engine's apply queue is

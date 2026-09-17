@@ -226,8 +226,9 @@ describe('an adapter whose element gets replaced', () => {
 
 /**
  * Just enough of an HTMLVideoElement for Html5Adapter. A seek clamps the way
- * the spec says (past the end lands on the duration); `fireSeeked` false models
- * an element torn down mid-seek, which never reports it.
+ * the spec says (past the end lands on the duration), sets `seeking`, and
+ * aborts a seek still running, whose `seeked` then never fires; `fireSeeked`
+ * false models an element torn down mid-seek, which never reports it.
  */
 class FakeVideoEl extends EventTarget {
   private pos = 0;
@@ -238,12 +239,22 @@ class FakeVideoEl extends EventTarget {
   volume = 1;
   duration: number;
   fireSeeked = true;
+  seeking = false;
+  seekMs = 5;
+  private seekTimer: ReturnType<typeof setTimeout> | undefined;
   buffered = { length: 0, start: () => 0, end: () => 0 };
   constructor(duration = 120) { super(); this.duration = duration; }
   get currentTime(): number { return this.pos; }
   set currentTime(t: number) {
     this.pos = Number.isFinite(this.duration) ? Math.min(Math.max(t, 0), this.duration) : Math.max(t, 0);
-    if (this.fireSeeked) setTimeout(() => this.dispatchEvent(new Event('seeked')), 5);
+    this.seeking = true;
+    clearTimeout(this.seekTimer);
+    if (this.fireSeeked) {
+      this.seekTimer = setTimeout(() => {
+        this.seeking = false;
+        this.dispatchEvent(new Event('seeked'));
+      }, this.seekMs);
+    }
   }
 }
 const asEl = (f: FakeVideoEl) => f as unknown as HTMLVideoElement;
@@ -281,6 +292,30 @@ describe('the HTML5 adapter', () => {
     assert.equal(await settlesWithin(p, 1), 'pending', 'a seeked at another position resolved ours');
     a.destroy();
     b.destroy();
+  });
+
+  it('gives up a seek that a newer one aborted', async () => {
+    // Per spec a currentTime write while seeking aborts the running seek, and
+    // only the newer one reports `seeked`, at its own position. Ours never
+    // matches, so it waited out the whole timeout -- and every pause or play
+    // queued behind it waited with it, while the element had long landed.
+    const el = new FakeVideoEl(600);
+    el.seekMs = 300;
+    const a = new Html5Adapter(asEl(el));
+    const p = a.seekTo(100);
+    p.catch(() => {});
+    setTimeout(() => { el.currentTime = 250; }, 100); // the user drags the scrubber
+    assert.equal(await settlesWithin(p, 1000), 'rejected', 'a superseded seek waited for its timeout');
+
+    // Control: a stale `seeked` that arrives while ours is still running is
+    // neither ours nor a sign that ours was aborted.
+    el.seekMs = 50;
+    const q = a.seekTo(300);
+    (el as unknown as { pos: number }).pos = 10;
+    el.dispatchEvent(new Event('seeked'));
+    (el as unknown as { pos: number }).pos = 300;
+    assert.equal(await settlesWithin(q, 500), 'resolved', 'a stale seeked settled a running seek');
+    a.destroy();
   });
 
   it('settles a pending seek when it is destroyed', async () => {
