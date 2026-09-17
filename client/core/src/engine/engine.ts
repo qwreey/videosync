@@ -2155,18 +2155,23 @@ export class SyncEngine {
    * play() waiting on an element we never seeked. A real element is unready
    * through all of those, and a change made then is the member's.
    *
-   * With gesture evidence, input decides: none since the apply began is the
-   * site's, anywhere in the seek or its play(); any is the member's. Without
-   * it only the play() window after the seek is excused, as the one place a
-   * member is least likely to be pressing. (`seeked` is set on the playing
-   * path only, and a play there is the transition's own state, so this is
-   * always a pause under a transition that plays.)
+   * With gesture evidence, a press decides, anywhere in the seek or its
+   * play(): an input or media key after the apply began and within
+   * `gestureWindowMs` of now is the member's, anything else the site's. An
+   * older input is not: a seek can be parked for ten seconds, and a key typed
+   * on the site early in it is not a press of pause at the end. Without
+   * evidence only the play() window after the seek is excused, as the one
+   * place a member is least likely to be pressing. (`seeked` is set on the
+   * playing path only, and a play there is the transition's own state, so
+   * this is always a pause under a transition that plays.)
    */
   private underOwnSeek(o: Observation, applying: Applying): boolean {
     if (o.kind !== 'playstate' || !o.unready) return false;
     const g = this.d.gestures;
     if (!g) return !!applying.seeked;
-    return !!applying.seeking && Math.max(g.lastInputAt(), this.activationEdgeAt) <= applying.at;
+    const at = Math.max(g.lastInputAt(), this.activationEdgeAt);
+    const pressed = at > applying.at && this.d.now() - at <= this.cfg.gestureWindowMs;
+    return !!applying.seeking && !pressed;
   }
 
   /** The member's own change: tell the room. */

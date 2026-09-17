@@ -1907,6 +1907,42 @@ describe('a site that pauses the element right after our own seek', () => {
   // ours -- a correction's, or a transition's before its play() -- is judged
   // by input: none since the apply began is the site reacting to our seek, a
   // press is the member's.
+  /** A steady member of a playing room, and a room seek of ours parked unready. */
+  async function roomSeekParked() {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 500);
+    assert.equal(h.engine.acquisition, 'steady');
+    const p = h.player;
+    const parked: Array<() => void> = [];
+    const seekTo = p.seekTo.bind(p);
+    p.seekTo = (s: number) => new Promise<void>((res) => { parked.push(() => { void seekTo(s).then(res); }); });
+    await h.state({ positionMs: 400_000, paused: false }, 'seek');
+    assert.equal(parked.length, 1, 'the seek was not parked');
+    p.readyState = 1;
+    return { h, p, parked };
+  }
+
+  it('an old, unrelated input does not make the site\'s pause the member\'s', async () => {
+    // A key typed on the site a second into a ten-second seek is not a press
+    // of pause three seconds later.
+    const { h, p, parked } = await roomSeekParked();
+    await h.vt.advance(1000);
+    h.g.press();
+    h.g.active = false;
+    await h.vt.advance(3000);
+    const play = p.play.bind(p);
+    p.play = async () => {
+      p.play = play;
+      p.paused = true;
+      p.emit('pause');
+      throw new DOMException('The play() request was interrupted by a call to pause().', 'AbortError');
+    };
+    parked.shift()!();
+    await h.vt.advance(100);
+    assert.deepEqual(h.kinds(), [], 'the site\'s pause was sent to the room');
+  });
+
   const seeks: Array<[string, (h: H) => Promise<void>]> = [
     ['a correction seek', async (h) => {
       h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
