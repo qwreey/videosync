@@ -574,6 +574,10 @@ export class SyncEngine {
   private offline: {
     at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
     seq: number; anchor: Anchor;
+    /** A command of ours was unanswered at the drop; the snapshot is the room's. See `onClose`. */
+    lost: boolean;
+    /** ...and the last press among them was a play the player was held for. */
+    playLost: boolean;
   } | null = null;
 
   /** True once `play()` was refused for lack of a user gesture. */
@@ -995,6 +999,11 @@ export class SyncEngine {
     this.d.clearTimer(this.timeTimer); this.timeTimer = 0;
     this.d.clearTimer(this.applyTimer); this.applyTimer = 0;
     this.pending = [];
+    // Read before the clock and the unacked list are thrown away: see the
+    // offline snapshot below.
+    const at = this.d.now();
+    const lost = this.unacked.filter((c) => c.kind !== 'media' && at - c.at < OWN_ACK_WAIT_MS);
+    const roomMs = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
     // Whatever the old socket was carrying back will never arrive.
     this.unacked = [];
     this.intended = null;
@@ -1009,10 +1018,26 @@ export class SyncEngine {
     this.clock.reset();
     // Only the first drop of a session records the player: a failed reconnect
     // attempt has nothing newer to say about it.
+    //
+    // A command of ours still unanswered may never have left: a socket is
+    // usually found dead by writing into it. The player already shows what
+    // that command did, so a snapshot of the player would find nothing to
+    // send, and the reconciler then undid the member's change. Such a drop
+    // records the room as the anchor had it instead -- the member's change is
+    // then a difference like any made offline, and goes out if the room did
+    // not move. A lost `play` left the player held, which looks like the
+    // room; it is remembered as such. Only a command young enough to be
+    // waited for: an older one has been reconciled already.
     if (this.status === 'joined') {
       const s = this.d.adapter.readState();
+      const room = lost.length > 0 && roomMs !== null;
+      const lastPress = lost.filter((c) => c.kind !== 'seek').at(-1);
       this.offline = this.onRoomMedia() ? {
-        at: this.d.now(), positionS: s.positionS, paused: s.paused, rate: s.rate,
+        at, rate: s.rate,
+        positionS: room ? roomMs / 1000 : s.positionS,
+        paused: room ? this.anchor.paused : s.paused,
+        lost: room,
+        playLost: room && lastPress?.kind === 'play' && this.anchor.paused && s.paused,
         media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
       } : null;
     }
@@ -1894,7 +1919,8 @@ export class SyncEngine {
     this.offline = null;
     if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
     if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
-    if (this.d.gestures && this.d.gestures.lastInputAt() < o.at) return;
+    // A lost command's press came before the drop, and is evidence enough.
+    if (this.d.gestures && this.d.gestures.lastInputAt() < o.at && !o.lost) return;
     const a = this.anchor;
     if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
       a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
@@ -1907,8 +1933,11 @@ export class SyncEngine {
     if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs) {
       this.act({ kind: 'seek', positionS: state.positionS }, state);
     }
-    if (state.paused !== o.paused && !(state.paused && this.detector.browserPaused(state))) {
-      this.act({ kind: 'playstate', paused: state.paused, positionS: state.positionS }, state);
+    // A player still held for a lost play is, as far as the member is
+    // concerned, playing.
+    const paused = state.paused && !o.playLost;
+    if (paused !== o.paused && !(paused && this.detector.browserPaused(state))) {
+      this.act({ kind: 'playstate', paused, positionS: state.positionS }, state);
     }
   }
 

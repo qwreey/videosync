@@ -1652,8 +1652,10 @@ describe('a local play waits for the room (holdLocalPlay)', () => {
     h.tr.drop('link blip');                      // ...and the seek goes down with the link
     await h.vt.advance(600);
     h.tr.open();
+    // Into a room somebody else moved meanwhile (back to 10 s), so the lost
+    // seek is not sent again: the one the hold must not wait for is gone.
     h.tr.deliver({
-      t: 'welcome', you: 'me-1', seq: 0,
+      t: 'welcome', you: 'me-1', seq: 1,
       anchor: { positionMs: 10_000, atServerMs: OFFSET, paused: true, mediaKey: 'yt:abc' },
       members: [
         { id: 'me-1', name: 'm0', suspended: false, ready: true },
@@ -2030,6 +2032,117 @@ describe('a socket that dies without closing', () => {
     await vt.advance(10 * 60_000);
     assert.equal(engine.state, 'joined');
     assert.equal(tr.connects, 1);
+  });
+});
+
+describe('a command lost with the connection', () => {
+  // A command sent into a socket that was already dead, and noticed a moment
+  // later: the old socket takes its ack with it, and the snapshot taken at the
+  // drop already showed the change, so there was nothing "offline" to send.
+  // The room never heard of it, and the reconciler then undid it.
+
+  /**
+   * A member in a room of two playing at 10 s does `act` 2 s in; the command
+   * goes out and the link is found dead `dropAfterMs` later. The session comes
+   * back 600 ms after that into `room` (by default exactly what it left).
+   */
+  async function lostWithLink(
+    act: (p: FakePlayer) => Promise<void> | void,
+    o: { dropAfterMs?: number; room?: Partial<Anchor>; seq?: number; paused?: boolean; gestures?: boolean } = {},
+  ) {
+    const vt = new VirtualTime();
+    const paused = o.paused ?? false;
+    const player = new FakePlayer(vt, { paused, positionS: 10 });
+    const tr = new FakeTransport();
+    let input = -Infinity;
+    const engine = new SyncEngine({
+      adapter: player, transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer,
+      isHidden: () => false,
+      ...(o.gestures ? {
+        gestures: { lastInputAt: () => input, lastIgnoredInputAt: () => -Infinity, activationActive: () => null },
+      } : {}),
+    }, CFG);
+    const members = [
+      { id: 'me-1', name: 'm0', suspended: false, ready: true },
+      { id: 'other-1', name: 'm1', suspended: false, ready: true },
+    ];
+    const anchor = { positionMs: 10_000, atServerMs: OFFSET, paused, mediaKey: 'yt:abc' };
+    const welcome = (a: Anchor, seq: number) => tr.deliver({
+      t: 'welcome', you: 'me-1', seq, anchor: a, members, serverMs: vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    tr.autoAnswerTime(OFFSET);
+    engine.start();
+    tr.open();
+    welcome(anchor, 0);
+    await vt.advance(2000);
+    // Gesture evidence settles acquisition first; this member is past it.
+    assert.equal(engine.acquisition, 'steady');
+    input = vt.now;
+    await act(player);
+    await vt.advance(100);
+    const sent = tr.sentOf('cmd').length;
+    assert.ok(sent >= 1, 'the change never became a command');
+    await vt.advance(o.dropAfterMs ?? 200);
+    tr.drop('link was dead');
+    await vt.advance(600);
+    tr.open();
+    welcome({ ...anchor, ...o.room }, o.seq ?? 0);
+    await vt.advance(600);
+    return { vt, player, tr, engine, sent };
+  }
+
+  const pause = async (p: FakePlayer) => { await p.pause(); p.emit('pause'); };
+  const play = async (p: FakePlayer) => { await p.play(); p.emit('play'); };
+  const kinds = (tr: FakeTransport) => tr.sentOf('cmd').map((c) => c.kind);
+
+  it('a pause is sent again after the welcome, and stays', async () => {
+    const m = await lostWithLink(pause);
+    const cmds = m.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['pause', 'pause'], 'the lost pause never reached the room');
+    const t = m.vt.now + OFFSET;
+    m.tr.deliver({
+      t: 'ack', reqId: cmds[1]!.reqId, seq: 1, when: t, emittedAt: t, kind: 'pause',
+      anchor: { positionMs: cmds[1]!.positionMs, atServerMs: t, paused: true, mediaKey: 'yt:abc' },
+    });
+    await m.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.equal(m.player.paused, true, 'the reconciler undid the member\'s pause');
+  });
+
+  it('a pause is sent again with gesture evidence, whose press came before the drop', async () => {
+    const m = await lostWithLink(pause, { gestures: true });
+    assert.deepEqual(kinds(m.tr), ['pause', 'pause']);
+  });
+
+  it('a seek is sent again', async () => {
+    const m = await lostWithLink((p) => { p.readState(); p.positionS = 300; p.emit('seeked'); });
+    const cmds = m.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['seek', 'seek']);
+    assert.ok(Math.abs(cmds[1]!.positionMs - m.player.positionS * 1000) < 1500, `sent ${cmds[1]!.positionMs}`);
+  });
+
+  it('a held play is sent again, and still held', async () => {
+    const m = await lostWithLink(play, { paused: true });
+    assert.deepEqual(kinds(m.tr), ['play', 'play'], 'the lost play never reached the room');
+    assert.equal(m.player.paused, true, 'played on ahead of a room that has not started');
+  });
+
+  it('control: a pause and a play that cancel out send nothing more', async () => {
+    const m = await lostWithLink(async (p) => { await pause(p); await play(p); });
+    assert.equal(m.sent, kinds(m.tr).length, `sent ${kinds(m.tr).join(', ')}`);
+    assert.equal(m.player.paused, false);
+  });
+
+  it('control: a command the room took before the drop is not sent again', async () => {
+    // Its ack went down with the socket, but the welcome's seq says the room
+    // moved, and the room's word is the newer one.
+    const m = await lostWithLink(pause, { room: { positionMs: 12_100, atServerMs: OFFSET + 2100, paused: true }, seq: 1 });
+    assert.deepEqual(kinds(m.tr), ['pause']);
+    assert.equal(m.player.paused, true);
+  });
+
+  it('control: a command sent long before the drop is the reconciler\'s business', async () => {
+    const m = await lostWithLink(pause, { dropAfterMs: 20_000 });
+    assert.deepEqual(kinds(m.tr), ['pause']);
   });
 });
 
