@@ -2179,7 +2179,9 @@ export class SyncEngine {
    * gap, on an element it leaves unready, takes the member's pause for the
    * site's. Looking back past `applying.at` would fix that, but would also
    * count the press that started the transition -- the site reacting to it is
-   * exactly what this excuses.
+   * exactly what this excuses. And since the stamp is at pointerdown, a click
+   * held down longer than `gestureWindowMs` while our seek has the element
+   * unready is taken for the site's pause too; `intent` has the same limit.
    */
   private underOwnSeek(o: Observation, applying: Applying): boolean {
     if (o.kind !== 'playstate' || !o.unready) return false;
