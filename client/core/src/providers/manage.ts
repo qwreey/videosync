@@ -13,7 +13,7 @@ import type { FieldChange, IndexEntry, ProviderState } from './adoption.ts';
 import { parseDescriptor } from './descriptor.ts';
 import type { Descriptor } from './descriptor.ts';
 import { builtinEntries, displacedBuiltins } from './registry.ts';
-import type { ProviderRegistry } from './registry.ts';
+import type { Provider, ProviderRegistry } from './registry.ts';
 import { hostScore } from './template.ts';
 
 export type Outcome =
@@ -30,7 +30,11 @@ function builtinDescriptor(id: string): Descriptor | null {
   return builtinEntries().find((e) => e.provider.id === id)?.provider.d ?? null;
 }
 
-/** What is in force for `id` now, before the change: user > adopted > built-in. */
+/**
+ * What is in force for `id` now, before the change: user > adopted > built-in.
+ * A pin `buildRegistry` holds back (it would replace a built-in, by id or by
+ * displacing one, without the user's yes) is not in force.
+ */
 export function currentFor(s: ProviderState, id: string): Descriptor | null {
   for (const u of s.user) {
     const r = parseDescriptor(u.source);
@@ -39,9 +43,24 @@ export function currentFor(s: ProviderState, id: string): Descriptor | null {
   const a = s.adopted.find((x) => x.id === id);
   if (a) {
     const r = parseDescriptor(a.source);
-    if (r.ok && (a.replaceBuiltin || !builtinDescriptor(id))) return r.provider.d;
+    if (r.ok && r.provider.id === id &&
+        (a.replaceBuiltin || (!builtinDescriptor(id) && !displacedBuiltins(r.provider).length))) return r.provider.d;
   }
   return builtinDescriptor(id);
+}
+
+/**
+ * What applying `p` changes. With nothing in force under its id, a new id
+ * that displaces built-ins changes those: diffing against nothing would show
+ * every field as new, and diffing a held-back pin against itself shows
+ * nothing, while the user is being asked to replace a built-in.
+ */
+function changesFor(s: ProviderState, p: Provider): FieldChange[] {
+  const cur = currentFor(s, p.id);
+  const displaced = cur ? [] : displacedBuiltins(p);
+  if (displaced.length <= 1) return diffDescriptors(displaced[0]?.provider.d ?? cur, p.d);
+  return displaced.flatMap((b) => diffDescriptors(b.provider.d, p.d)
+    .map((c) => ({ ...c, field: `${b.provider.d.name}: ${c.field}` })));
 }
 
 /** Add or replace (by id) a descriptor the user wrote or imported. */
@@ -49,7 +68,7 @@ export async function saveUser(s: ProviderState, text: string): Promise<Outcome>
   const r = parseDescriptor(text);
   if (!r.ok) return { ok: false, error: r.errors.join('\n') };
   const d = r.provider.d;
-  const changes = diffDescriptors(currentFor(s, d.id), d);
+  const changes = changesFor(s, r.provider);
   const next = clone(s);
   const keep = [];
   for (const u of next.user) {
@@ -90,7 +109,7 @@ export async function adopt(
   if (!r.ok) return { ok: false, error: r.errors.join('\n') };
   const d = r.provider.d;
   if (d.id !== entry.id) return { ok: false, error: `파일의 id(${d.id})가 목록(${entry.id})과 달라요.` };
-  const changes = diffDescriptors(currentFor(s, d.id), d);
+  const changes = changesFor(s, r.provider);
   const builtin = builtinDescriptor(d.id);
   // Not only by id: a new id that claims a built-in's host as specifically,
   // or its key prefix, replaces it just the same (buildRegistry agrees).
