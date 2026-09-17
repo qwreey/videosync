@@ -529,6 +529,16 @@ export class SyncEngine {
   private secret: string;
   /** Our own commands on their way back, oldest first. See `OWN_ACK_WAIT_MS`. */
   private unacked: OwnCmd[] = [];
+  /**
+   * Where our newest command leaves the room, from the moment it is sent until
+   * the anchor says so. See `roomAnchor`.
+   *
+   * `seq` is 0 until the ack names it. The prediction is the sender's view --
+   * the timeline continuing from the position sent -- which is what the
+   * member's own player shows, and so what a later change of theirs is a
+   * change from.
+   */
+  private intended: { reqId: string; seq: number; at: number; anchor: Anchor } | null = null;
   /** The ticket for the `hello` about to be sent, spent by sending it. */
   private ticket = '';
   /**
@@ -853,6 +863,7 @@ export class SyncEngine {
     this.d.clearTimer(this.reconnectTimer); this.reconnectTimer = 0;
     this.pending = [];
     this.unacked = [];
+    this.intended = null;
     this.gestureRetryPending = false;
     this.offline = null;
     this.connectGen++;
@@ -968,6 +979,7 @@ export class SyncEngine {
     this.pending = [];
     // Whatever the old socket was carrying back will never arrive.
     this.unacked = [];
+    this.intended = null;
     if (!this.running || clean || this.status === 'refused') {
       this.releaseRate();
       this.setStatus('closed', reason);
@@ -1097,6 +1109,7 @@ export class SyncEngine {
         // simultaneity the timebase exists to provide.
         this.ownSeqs.add(f.seq);
         if (this.ownSeqs.size > 64) this.ownSeqs.delete(this.ownSeqs.values().next().value!);
+        if (this.intended?.reqId === f.reqId) this.intended.seq = f.seq;
         this.schedule({
           seq: f.seq, whenServerMs: f.when, emittedAtServerMs: f.emittedAt,
           anchor: f.anchor, kind: f.kind, beforeOwnPlay: this.ownAck(f.reqId), own: true,
@@ -1238,7 +1251,12 @@ export class SyncEngine {
     // command that arrives while an earlier one is still touching the player
     // knows it has been superseded.
     this.lastAppliedSeq = p.seq;
-    if (!p.own && !this.ownSeqs.has(p.seq) && this.adoptFor !== null) this.foreignMove = true;
+    const foreign = !p.own && !this.ownSeqs.has(p.seq);
+    if (foreign && this.adoptFor !== null) this.foreignMove = true;
+    // Somebody else moved the room before our command was taken: what ours
+    // makes of the room now is the server's to say, not a prediction built
+    // on the anchor this one replaced. See `roomAnchor`.
+    if (foreign && this.intended?.seq === 0) this.intended = null;
     const roomMoved = p.anchor.mediaKey !== this.anchor.mediaKey;
     const left = this.anchor.mediaKey;
     this.anchor = p.anchor;
@@ -1517,8 +1535,20 @@ export class SyncEngine {
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
 
-    const expected = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
-    const { observation, report } = this.detector.evaluate(state, expected, now);
+    // A seek is judged against where our own pending command takes the room
+    // (`roomAnchor`), so taking that command back is a jump from it. Only
+    // while that command keeps the pause state: a pending play or pause does
+    // not put the room on that timeline until `when`, and a held player
+    // judged against a running one would drift away from it at 1000 ms/s.
+    // The report stays on the anchor, the one its `lastAppliedSeq` names.
+    const intended = this.roomAnchor();
+    const judgeBy = intended.paused === this.anchor.paused ? intended : this.anchor;
+    const serverNow = this.clock.ready ? this.serverNow() : 0;
+    const expected = this.clock.ready ? expectedAt(this.anchor, serverNow) : null;
+    const judged = this.clock.ready ? expectedAt(judgeBy, serverNow) : null;
+    const { observation, report: raw } = this.detector.evaluate(state, judged, now);
+    const report = raw && expected !== null && judged !== expected
+      ? { ...raw, residualMs: raw.positionMs - expected } : raw;
 
     const onRoomMedia = this.onRoomMedia();
     if (!this.autoplayBlocked && onRoomMedia && SeekDetector.isUserIntent(observation)) {
@@ -1817,7 +1847,7 @@ export class SyncEngine {
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === this.anchor.paused || (!!applying && o.paused === applying.paused);
+      return o.paused === this.roomAnchor().paused || (!!applying && o.paused === applying.paused);
     }
     return true;
   }
@@ -1836,7 +1866,9 @@ export class SyncEngine {
         this.send('seek', o.positionS * 1000);
       }
     } else if (o.kind === 'playstate') {
-      if (o.paused !== this.anchor.paused &&
+      // Against where the room is going, not where it is: see `roomAnchor`.
+      const room = this.roomAnchor();
+      if (o.paused !== room.paused &&
         (!applying || o.paused !== applying.paused)) {
         if (o.paused && state.ended) {
           // The end of the media pauses the element, and it is nobody's
@@ -1854,6 +1886,10 @@ export class SyncEngine {
         // two-diff test's roomDiff, and the reason echo suppression here is
         // structural rather than a timeout flag.
         this.stats.echoesSuppressed++;
+        // Or a second press of a play of ours that is still on its way: not
+        // sent again, but held like the first, or it plays on ahead of a room
+        // that has not started.
+        if (!o.paused && !applying && this.anchor.paused) this.holdForRoom();
       }
     }
   }
@@ -2070,6 +2106,37 @@ export class SyncEngine {
     return this.cfg.holdLocalPlay && this.members.length >= 2;
   }
 
+  /**
+   * The room as this member has asked it to be: the anchor, or -- while a
+   * command of ours has not been applied yet -- what that command makes it.
+   *
+   * `this.anchor` becomes our command only at its `when`, and a seek during
+   * playback carries the whole lead. Judged against the anchor it replaces, a
+   * member who took their own seek back inside that window was "agreeing with
+   * the room": nothing was sent, and at `when` everybody jumped to where the
+   * member had just decided not to be. A play pressed right after our own
+   * pause was an "echo" the same way, and the pause's ack then stopped the
+   * room against the member's last press.
+   *
+   * Only for judging what the member does. The reconciler, the report and
+   * every apply stay on the anchor: the room is not there yet, and a command
+   * the gate holds or drops never gets there. A prediction that outlives its
+   * command -- no ack within `OWN_ACK_WAIT_MS`, somebody else's command first,
+   * the link gone -- is dropped, and judging is what it was before. Nothing is
+   * silenced by it: a wrong prediction sends a command that agrees with the
+   * room, which the room absorbs.
+   */
+  private roomAnchor(): Anchor {
+    const i = this.intended;
+    if (!i) return this.anchor;
+    const live = i.seq > 0
+      ? this.lastAppliedSeq < i.seq
+      : this.d.now() - i.at < OWN_ACK_WAIT_MS && this.unacked.some((c) => c.reqId === i.reqId);
+    if (live) return i.anchor;
+    this.intended = null;
+    return this.anchor;
+  }
+
   /** Whether a command of ours of this kind is still on its way back. */
   private ownPending(kind: CmdKind): boolean {
     const now = this.d.now();
@@ -2136,6 +2203,7 @@ export class SyncEngine {
     const now = this.d.now();
     this.unacked = this.unacked.filter((c) => now - c.at < OWN_ACK_WAIT_MS);
     this.unacked.push({ reqId, kind, at: now });
+    this.intended = this.predict(reqId, kind, positionMs);
     this.tx({
       t: 'cmd', reqId, kind, positionMs: Math.round(positionMs),
       ...(media === undefined ? {} : { mediaKey: media.key }),
@@ -2144,6 +2212,22 @@ export class SyncEngine {
     });
     this.stats.cmdsSent++;
     return reqId;
+  }
+
+  /**
+   * What `kind` at `positionMs` makes of the room, on top of whatever we have
+   * already asked for. See `roomAnchor`. None for `media`, which replaces the
+   * timeline rather than moving along it, and none before the clock can say
+   * when "now" is.
+   */
+  private predict(reqId: string, kind: CmdKind, positionMs: number): SyncEngine['intended'] {
+    if (kind === 'media' || !this.clock.ready) return null;
+    const base = this.roomAnchor();
+    const paused = kind === 'pause' ? true : kind === 'play' ? false : base.paused;
+    return {
+      reqId, seq: 0, at: this.d.now(),
+      anchor: { ...base, positionMs, atServerMs: this.serverNow(), paused },
+    };
   }
 
   /** Explicit user actions, for UI buttons. Local detection covers the rest. */
