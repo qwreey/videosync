@@ -36,6 +36,15 @@ describe('the userscript metadata block', () => {
     assert.ok(!block.some((l) => /^\/\/ @grant\s+none/.test(l)), '@grant none would put the script under the page CSP');
   });
 
+  it('asks Violentmonkey for the content-script world, whatever its default (N14)', () => {
+    // Violentmonkey's default, `auto`, runs a granted script in the page's own
+    // JS realm: window.VideoSync (and with it panelRoot()), the page's JSON
+    // around the device tokens, and the site's CSP around the socket.
+    const block = renderMeta(template, patterns).split('\n');
+    const inject = block.filter((l) => /^\/\/ @inject-into\b/.test(l));
+    assert.deepEqual(inject.map((l) => l.split(/\s+/)[2]), ['content']);
+  });
+
   it('refuses a template without the placeholder', () => {
     assert.throws(() => renderMeta('// ==UserScript==\n// ==/UserScript==', patterns));
   });

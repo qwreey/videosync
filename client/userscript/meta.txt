@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_openInTab
 // @grant        GM_registerMenuCommand
+// @inject-into  content
 // @connect      *
 // @run-at       document-idle
 // @noframes
@@ -26,8 +27,16 @@
 // userscript is injected into the PAGE context, where the site's
 // Content-Security-Policy governs everything it does -- including opening a
 // WebSocket. Most OTT sites ship a `connect-src` that does not list your
-// self-hosted server, so the socket would simply be refused. Granting any GM
-// API moves the script into the userscript sandbox, which has its own CSP.
+// self-hosted server, so the socket would simply be refused. In Tampermonkey,
+// granting any GM API moves the script into the userscript sandbox, which has
+// its own CSP.
+//
+// Violentmonkey decides by @inject-into instead, and its default (`auto`) runs
+// even a granted script in the page's own JavaScript realm: the page could
+// reach window.VideoSync and the closed panel through it, wrap the JSON that
+// carries the device tokens, and its CSP would govern the socket. `content`
+// asks for the content-script world whatever the user's default is. Other
+// managers ignore the line.
 //
 // GM_xmlhttpRequest carries every HTTP call to your server -- room creation,
 // sign-in, tickets -- from Tampermonkey's background, where the page's CSP and

@@ -37,4 +37,8 @@ const platform: Platform = {
 
 registerMenu(store, authFetch);
 const app = start(platform);
+// The sandbox's `window` (Tampermonkey's wrapper, Violentmonkey's content
+// script under `@inject-into content`), not the page's: this API opens the
+// closed panel. A manager that runs the script in the page realm hands it to
+// the site (meta.txt).
 window.VideoSync = app.api;
