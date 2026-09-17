@@ -1,0 +1,866 @@
+{
+  "when": "2026-09-17T13:18:43.601Z",
+  "checks": [
+    {
+      "name": "the Firefox build loads and mounts its panel",
+      "ok": true,
+      "detail": "영상을 찾았어요. 방을 만들거나 참가하세요."
+    },
+    {
+      "name": "Firefox is taken to the room's video",
+      "ok": true,
+      "detail": "after 1625 ms"
+    },
+    {
+      "name": "and rejoins there (the rejoin survived Firefox's storage)",
+      "ok": true,
+      "detail": "after 1627 ms"
+    },
+    {
+      "name": "B conformed to the room: paused at A's position",
+      "ok": true,
+      "detail": "A 30.00 B 30.00 B paused=true"
+    },
+    {
+      "name": "Chromium presses play, Firefox follows",
+      "ok": true,
+      "detail": "gap 61 ms"
+    },
+    {
+      "name": "Firefox pauses, Chromium follows",
+      "ok": true,
+      "detail": "gap 26 ms"
+    },
+    {
+      "name": "Firefox presses play, both run together",
+      "ok": true,
+      "detail": "gap 268 ms"
+    },
+    {
+      "name": "Chromium seeks, Firefox follows",
+      "ok": true,
+      "detail": "target 200: A 204.45 B 204.39, gap 58 ms"
+    },
+    {
+      "name": "still together over 30 s",
+      "ok": true,
+      "detail": "gaps 64, -5, 54, 21, 67, -6 ms"
+    },
+    {
+      "name": "Firefox hands back its playback rate on leaving",
+      "ok": true,
+      "detail": "rate 1"
+    }
+  ],
+  "measurements": {
+    "gapAfterPlayMs": 61,
+    "gapAfterFirefoxPlayMs": 268,
+    "gapsEvery5sMs": [
+      64,
+      -5,
+      54,
+      21,
+      67,
+      -6
+    ]
+  },
+  "notes": [],
+  "chromium": "Chrome/153.0.8010.36",
+  "firefox": "Session already started",
+  "dumps": {
+    "conformed": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 0,
+        "statesApplied": 0,
+        "acksApplied": 0,
+        "correctionsSeek": 0,
+        "correctionsNudge": 1,
+        "nudgesUnsupported": 0,
+        "reportsSent": 6,
+        "timeSamples": 5,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 0,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 0,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 30000,
+        "atServerMs": 1789651128540,
+        "paused": true,
+        "mediaKey": "127.0.0.1:/watch/1",
+        "mediaUrl": "http://127.0.0.1:8898/watch/1"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 30,
+        "paused": true,
+        "rate": 1,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 115.821315,
+        "bufferedBehindS": 30
+      },
+      "trace": [
+        {
+          "at": 54,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "127.0.0.1:/watch/1",
+            "mediaUrl": "http://127.0.0.1:8898/watch/1"
+          }
+        },
+        {
+          "at": 58,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "127.0.0.1:/watch/1",
+            "anchor": "30000P@1789651128540"
+          }
+        },
+        {
+          "at": 58,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 254,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 255,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 354,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 356,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651129314,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 356,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 581,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        }
+      ]
+    },
+    "after-pause": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 1,
+        "statesApplied": 1,
+        "acksApplied": 1,
+        "correctionsSeek": 0,
+        "correctionsNudge": 4,
+        "nudgesUnsupported": 0,
+        "reportsSent": 12,
+        "timeSamples": 7,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 1,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 0,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 0,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 33443,
+        "atServerMs": 1789651138115,
+        "paused": true,
+        "mediaKey": "127.0.0.1:/watch/1",
+        "mediaUrl": "http://127.0.0.1:8898/watch/1"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 33.442688,
+        "paused": true,
+        "rate": 1.0044263666971964,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 112.378627,
+        "bufferedBehindS": 33.442688
+      },
+      "trace": [
+        {
+          "at": 54,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "127.0.0.1:/watch/1",
+            "mediaUrl": "http://127.0.0.1:8898/watch/1"
+          }
+        },
+        {
+          "at": 58,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "127.0.0.1:/watch/1",
+            "anchor": "30000P@1789651128540"
+          }
+        },
+        {
+          "at": 58,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 254,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 255,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 354,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 356,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651129314,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 356,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 581,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 5138,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 2,
+            "when": 1789651134598,
+            "kind": "play",
+            "anchor": "30000-@1789651134598"
+          }
+        },
+        {
+          "at": 6076,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651135037,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 7093,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651136053,
+            "mode": "nudge",
+            "rate": 1.0020918045269989
+          }
+        },
+        {
+          "at": 8101,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651137062,
+            "mode": "nudge",
+            "rate": 1.0044263666971964
+          }
+        },
+        {
+          "at": 9152,
+          "dir": "tx",
+          "t": "cmd",
+          "detail": {
+            "kind": "pause",
+            "positionMs": 33443,
+            "reqId": "wwpUxWemfWk-1"
+          }
+        },
+        {
+          "at": 9154,
+          "dir": "rx",
+          "t": "ack",
+          "detail": {
+            "seq": 3,
+            "when": 1789651138115,
+            "kind": "pause",
+            "reqId": "wwpUxWemfWk-1",
+            "anchor": "33443P@1789651138115"
+          }
+        }
+      ]
+    },
+    "after-hold": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 2,
+        "statesApplied": 2,
+        "acksApplied": 2,
+        "correctionsSeek": 0,
+        "correctionsNudge": 35,
+        "nudgesUnsupported": 0,
+        "reportsSent": 51,
+        "timeSamples": 14,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 2,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 1,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 0,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 0,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 200000,
+        "atServerMs": 1789651144140,
+        "paused": false,
+        "mediaKey": "127.0.0.1:/watch/1",
+        "mediaUrl": "http://127.0.0.1:8898/watch/1"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 234.329413,
+        "paused": false,
+        "rate": 0.9907717189698291,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 5.670587000000012,
+        "bufferedBehindS": 34.32941299999999
+      },
+      "trace": [
+        {
+          "at": 5138,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 2,
+            "when": 1789651134598,
+            "kind": "play",
+            "anchor": "30000-@1789651134598"
+          }
+        },
+        {
+          "at": 6076,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651135037,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 7093,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651136053,
+            "mode": "nudge",
+            "rate": 1.0020918045269989
+          }
+        },
+        {
+          "at": 8101,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651137062,
+            "mode": "nudge",
+            "rate": 1.0044263666971964
+          }
+        },
+        {
+          "at": 9152,
+          "dir": "tx",
+          "t": "cmd",
+          "detail": {
+            "kind": "pause",
+            "positionMs": 33443,
+            "reqId": "wwpUxWemfWk-1"
+          }
+        },
+        {
+          "at": 9154,
+          "dir": "rx",
+          "t": "ack",
+          "detail": {
+            "seq": 3,
+            "when": 1789651138115,
+            "kind": "pause",
+            "reqId": "wwpUxWemfWk-1",
+            "anchor": "33443P@1789651138115"
+          }
+        },
+        {
+          "at": 10667,
+          "dir": "tx",
+          "t": "cmd",
+          "detail": {
+            "kind": "play",
+            "positionMs": 33443,
+            "reqId": "wwpUxWemfWk-2"
+          }
+        },
+        {
+          "at": 10672,
+          "dir": "rx",
+          "t": "ack",
+          "detail": {
+            "seq": 4,
+            "when": 1789651140131,
+            "kind": "play",
+            "reqId": "wwpUxWemfWk-2",
+            "anchor": "33443-@1789651140131"
+          }
+        },
+        {
+          "at": 12115,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651141076,
+            "mode": "nudge",
+            "rate": 0.990922542741887
+          }
+        },
+        {
+          "at": 14154,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651143114,
+            "mode": "nudge",
+            "rate": 0.9931419509257842
+          }
+        },
+        {
+          "at": 14680,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 5,
+            "when": 1789651144140,
+            "kind": "seek",
+            "anchor": "200000-@1789651144140"
+          }
+        },
+        {
+          "at": 16185,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651145146,
+            "mode": "nudge",
+            "rate": 0.995751152136053
+          }
+        },
+        {
+          "at": 17202,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651146162,
+            "mode": "nudge",
+            "rate": 1.0006559061087137
+          }
+        },
+        {
+          "at": 18209,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651147170,
+            "mode": "nudge",
+            "rate": 1.0046790233143887
+          }
+        },
+        {
+          "at": 20239,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651149199,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 21251,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651150211,
+            "mode": "nudge",
+            "rate": 0.9914014135957817
+          }
+        },
+        {
+          "at": 22269,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651151230,
+            "mode": "nudge",
+            "rate": 0.9861779079671937
+          }
+        },
+        {
+          "at": 23296,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651152257,
+            "mode": "nudge",
+            "rate": 0.9895202044079544
+          }
+        },
+        {
+          "at": 24302,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651153262,
+            "mode": "nudge",
+            "rate": 0.9946046378844313
+          }
+        },
+        {
+          "at": 25317,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651154278,
+            "mode": "nudge",
+            "rate": 1.0018684999421925
+          }
+        },
+        {
+          "at": 26336,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651155297,
+            "mode": "nudge",
+            "rate": 1.0074374297992594
+          }
+        },
+        {
+          "at": 27341,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651156301,
+            "mode": "nudge",
+            "rate": 1.0102157429743868
+          }
+        },
+        {
+          "at": 29375,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651158336,
+            "mode": "nudge",
+            "rate": 1.0032804167278793
+          }
+        },
+        {
+          "at": 30383,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651159345,
+            "mode": "nudge",
+            "rate": 0.9935847712600131
+          }
+        },
+        {
+          "at": 31399,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651160360,
+            "mode": "nudge",
+            "rate": 0.9890711372737288
+          }
+        },
+        {
+          "at": 32415,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651161375,
+            "mode": "nudge",
+            "rate": 0.9921327229599036
+          }
+        },
+        {
+          "at": 33435,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651162395,
+            "mode": "nudge",
+            "rate": 0.9968810664470947
+          }
+        },
+        {
+          "at": 34442,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651163403,
+            "mode": "nudge",
+            "rate": 1.001929202565962
+          }
+        },
+        {
+          "at": 35453,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651164413,
+            "mode": "nudge",
+            "rate": 1.007211694819241
+          }
+        },
+        {
+          "at": 36457,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651165417,
+            "mode": "nudge",
+            "rate": 1.009976319345719
+          }
+        },
+        {
+          "at": 38499,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651167459,
+            "mode": "nudge",
+            "rate": 1.0020673968669795
+          }
+        },
+        {
+          "at": 39505,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651168466,
+            "mode": "nudge",
+            "rate": 0.9927501252017142
+          }
+        },
+        {
+          "at": 40519,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651169479,
+            "mode": "nudge",
+            "rate": 0.9888695773227341
+          }
+        },
+        {
+          "at": 41536,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651170497,
+            "mode": "nudge",
+            "rate": 0.9919963051580944
+          }
+        },
+        {
+          "at": 42554,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651171515,
+            "mode": "nudge",
+            "rate": 0.9976869780587383
+          }
+        },
+        {
+          "at": 43560,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651172521,
+            "mode": "nudge",
+            "rate": 1.0022933548565167
+          }
+        },
+        {
+          "at": 44572,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651173533,
+            "mode": "nudge",
+            "rate": 1.0074344589443358
+          }
+        },
+        {
+          "at": 45575,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651174535,
+            "mode": "nudge",
+            "rate": 1.0102777871451742
+          }
+        },
+        {
+          "at": 47623,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651176584,
+            "mode": "nudge",
+            "rate": 1.0011603702568745
+          }
+        },
+        {
+          "at": 48631,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651177592,
+            "mode": "nudge",
+            "rate": 0.9907717189698291
+          }
+        }
+      ]
+    }
+  }
+}

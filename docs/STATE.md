@@ -362,8 +362,9 @@ what was already fixed or deliberately open) to see whether review had run dry. 
 had been reviewed least. All 47 were fixed on nine branches (each fix test-first, each branch
 checked by two reviewers who reverted fixes to see tests fail, then a follow-up pass on what they
 found) and merged. `mise run test` (Go 10 packages incl. `-race`; core 426; harness, manifest,
-meta and smoke-driver tests; both shims' typecheck) and `mise run test-e2e` (21) pass. Nothing of
-this round has run in a browser yet.
+meta and smoke-driver tests; both shims' typecheck) and `mise run test-e2e` (21) pass. Measured live
+afterwards: BROWSER-FINDINGS §24 (the existing probes unchanged; N37 and N1 confirmed in Helium
+and Firefox against a control on the pre-round build).
 
 What changed in behaviour (details in the commit bodies):
 
@@ -416,8 +417,7 @@ What changed in behaviour (details in the commit bodies):
 
 Still open from this round: a failed sign-out delete survives only until the MV3 worker restarts
 (then the old token is read back); `continuesMedia` without a page host falls back to the prefix
-check; the N37 `replaceState` and the GM status-0 rule are unrun in a browser (Firefox's isolated
-world passing `history.state` back in particular). **Convergence:** round 3 was not dry; the next
+check; the GM status-0 rule is unrun in Tampermonkey; N20 is covered by unit tests only. **Convergence:** round 3 was not dry; the next
 probe decides whether 47 was the tail of the new D6–D8 code or a steady rate.
 
 ## Open questions that block things

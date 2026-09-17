@@ -1,0 +1,172 @@
+{
+  "when": "2026-09-17T13:16:59.934Z",
+  "server": "http://127.0.0.1:8787",
+  "page": "https://laftel.net/player/45462/93304",
+  "checks": [
+    {
+      "name": "an invite link prefills the room and its secret",
+      "ok": true
+    },
+    {
+      "name": "the rotated secret is written into the address bar",
+      "ok": false,
+      "detail": "5079 ms"
+    },
+    {
+      "name": "the site is untouched: path, history.state, history length, no reload",
+      "ok": true,
+      "detail": "state kept, length 2 -> 2"
+    },
+    {
+      "name": "no hashchange or popstate fired",
+      "ok": true,
+      "detail": "{\"hashchange\":0,\"popstate\":0}"
+    },
+    {
+      "name": "the member is still in the room",
+      "ok": true,
+      "detail": "2 members"
+    },
+    {
+      "name": "a reload prefills the new secret",
+      "ok": false
+    },
+    {
+      "name": "and joining from it works",
+      "ok": false,
+      "detail": ""
+    },
+    {
+      "name": "the background tab is hidden",
+      "ok": true
+    },
+    {
+      "name": "the hidden member has no media",
+      "ok": true,
+      "detail": "readyState 0, acquisition detached"
+    },
+    {
+      "name": "A is not waiting on the hidden member",
+      "ok": false,
+      "detail": "[\"xsFNNfPxx8c\"]"
+    },
+    {
+      "name": "A's play starts at once, not after the gate timeout",
+      "ok": false,
+      "detail": "started after 27194 ms, playsHeld 1, waitingOn []"
+    },
+    {
+      "name": "and the hidden member was not moved",
+      "ok": true,
+      "detail": "0 -> 0"
+    }
+  ],
+  "notes": [
+    "rejoin after reload: waitFor timed out: VideoSync.status().state === 'joined' && VideoSync.status().members >= 2"
+  ],
+  "roomId": "zS9EZ3pnuTKYtVR3eK1X1Q",
+  "historyState": {
+    "before": "{\"__NA\":true,\"__PRIVATE_NEXTJS_INTERNALS_TREE\":{\"tree\":[\"\",{\"children\":[\"(laftel)\",{\"children\":[\"player\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0],\"episodeHeader\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"episodeList\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"video\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"modal\":[\"__DEFAULT__\",{},null,null,0]},null,null,16],\"renderedSearch\":\"\"}}",
+    "after": "{\"__NA\":true,\"__PRIVATE_NEXTJS_INTERNALS_TREE\":{\"tree\":[\"\",{\"children\":[\"(laftel)\",{\"children\":[\"player\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0],\"episodeHeader\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"episodeList\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"video\":[\"(__SLOT__)\",{\"children\":[[\"item_id\",\"45462\",\"d\",null],{\"children\":[[\"episode_id\",\"93304\",\"d\",null],{\"children\":[\"__PAGE__\",{},null,null,0]},null,null,0]},null,null,0]},null,null,0]},null,null,0]},null,null,0],\"modal\":[\"__DEFAULT__\",{},null,null,0]},null,null,16],\"renderedSearch\":\"\"}}"
+  },
+  "hiddenMember": {
+    "state": "joined",
+    "selfId": "xsFNNfPxx8c",
+    "seq": 3,
+    "blocked": false,
+    "acquisition": "detached",
+    "positionS": 0,
+    "paused": true,
+    "readyState": 0,
+    "expectedMs": 30282,
+    "mediaKey": "laftel:/player/45462/93304",
+    "roomMediaKey": "laftel:/player/45462/93304",
+    "members": 2,
+    "waitingOn": [
+      "xsFNNfPxx8c"
+    ],
+    "stats": {
+      "cmdsSent": 0,
+      "statesApplied": 0,
+      "acksApplied": 0,
+      "correctionsSeek": 0,
+      "correctionsNudge": 0,
+      "nudgesUnsupported": 0,
+      "reportsSent": 15,
+      "timeSamples": 5,
+      "reconnects": 0,
+      "lateApplies": 0,
+      "echoesSuppressed": 0,
+      "badFrames": 0,
+      "skippedOffMedia": 0,
+      "supersededApplies": 0,
+      "connectFailures": 0,
+      "ticketFailures": 0,
+      "playFailures": 0,
+      "playsHeld": 0,
+      "reportsDeferred": 0,
+      "reconciles": 0,
+      "mediaEpochs": 0,
+      "acquisitions": 0,
+      "siteMovesAbsorbed": 0,
+      "ungesturedIgnored": 0,
+      "gesturedIntents": 0,
+      "fought": 0,
+      "endsNotSent": 0,
+      "mediaStale": 0,
+      "continuations": 0,
+      "namings": 0,
+      "adoptions": 0,
+      "skippedAcquiring": 0
+    }
+  },
+  "presser": {
+    "state": "joined",
+    "selfId": "BO_T6PB2p5c",
+    "seq": 4,
+    "blocked": false,
+    "acquisition": "steady",
+    "positionS": 30.610782,
+    "paused": false,
+    "readyState": 4,
+    "expectedMs": 30809.5,
+    "mediaKey": "laftel:/player/45462/93304",
+    "roomMediaKey": "laftel:/player/45462/93304",
+    "members": 2,
+    "waitingOn": [],
+    "stats": {
+      "cmdsSent": 4,
+      "statesApplied": 0,
+      "acksApplied": 4,
+      "correctionsSeek": 0,
+      "correctionsNudge": 29,
+      "nudgesUnsupported": 0,
+      "reportsSent": 69,
+      "timeSamples": 17,
+      "reconnects": 0,
+      "lateApplies": 0,
+      "echoesSuppressed": 2,
+      "badFrames": 0,
+      "skippedOffMedia": 0,
+      "supersededApplies": 0,
+      "connectFailures": 0,
+      "ticketFailures": 0,
+      "playFailures": 0,
+      "playsHeld": 1,
+      "reportsDeferred": 0,
+      "reconciles": 0,
+      "mediaEpochs": 0,
+      "acquisitions": 1,
+      "siteMovesAbsorbed": 1,
+      "ungesturedIgnored": 0,
+      "gesturedIntents": 0,
+      "fought": 0,
+      "endsNotSent": 0,
+      "mediaStale": 0,
+      "continuations": 0,
+      "namings": 0,
+      "adoptions": 1,
+      "skippedAcquiring": 0
+    }
+  }
+}

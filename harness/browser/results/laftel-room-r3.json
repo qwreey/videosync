@@ -1,0 +1,484 @@
+{
+  "when": "2026-09-17T13:08:12.721Z",
+  "server": "http://127.0.0.1:8787",
+  "press": "adapter",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 568,
+        "presserNetMs": -596,
+        "gapAtEndMs": -101
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -154
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "playsHeld": 1,
+        "reportsDeferred": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 13,
+            "jumpMs": -154
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 532,
+        "presserNetMs": -616,
+        "gapAtEndMs": -7
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 34,
+        "gapAtEndMs": -21
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "playsHeld": 1,
+        "reportsDeferred": 9,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 534,
+        "presserNetMs": -594,
+        "gapAtEndMs": -115
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 29,
+        "gapAtEndMs": -140
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "playsHeld": 2,
+        "reportsDeferred": 8,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 14,
+            "jumpMs": -139
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 532,
+        "presserNetMs": -726,
+        "gapAtEndMs": -119
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 30,
+        "gapAtEndMs": -136
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "playsHeld": 2,
+        "reportsDeferred": 12,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 16,
+            "jumpMs": -137
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 518,
+        "otherStartsAfterMs": 535,
+        "presserNetMs": -702,
+        "gapAtEndMs": -137
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 28,
+        "gapAtEndMs": -182
+      },
+      "presserStats": {
+        "cmdsSent": 7,
+        "playsHeld": 3,
+        "reportsDeferred": 13,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 15,
+            "jumpMs": -182
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 517,
+        "otherStartsAfterMs": 532,
+        "presserNetMs": -666,
+        "gapAtEndMs": 15
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 28,
+        "gapAtEndMs": 3
+      },
+      "presserStats": {
+        "cmdsSent": 6,
+        "playsHeld": 3,
+        "reportsDeferred": 15,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      0,
+      -154,
+      0,
+      -139,
+      -137,
+      -182
+    ],
+    "playGapAtEndMs": [
+      -101,
+      -7,
+      -115,
+      -119,
+      -137,
+      15
+    ],
+    "playPresserStartsAfterMs": [
+      517,
+      517,
+      517,
+      517,
+      518,
+      517
+    ],
+    "playOtherStartsAfterMs": [
+      568,
+      532,
+      534,
+      532,
+      535,
+      532
+    ],
+    "playPresserNetMs": [
+      -596,
+      -616,
+      -594,
+      -726,
+      -702,
+      -666
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      -154,
+      -21,
+      -140,
+      -136,
+      -182,
+      3
+    ]
+  },
+  "notes": [],
+  "roomId": "FGF2czGohS4lr8Ww_aemPQ",
+  "clock": {
+    "a": {
+      "rttMs": 1.2000000029802322,
+      "uncertaintyMs": 0.6000000014901161
+    },
+    "b": {
+      "rttMs": 0.9000000059604645,
+      "uncertaintyMs": 0.45000000298023224
+    }
+  },
+  "traceA": [
+    {
+      "at": 23872,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "seek",
+        "positionMs": 156250,
+        "reqId": "YMHv-2XnPiE-1"
+      }
+    },
+    {
+      "at": 23874,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 1,
+        "when": 1789650494511,
+        "kind": "seek",
+        "reqId": "YMHv-2XnPiE-1",
+        "anchor": "156250P@1789650494511"
+      }
+    },
+    {
+      "at": 23875,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 1,
+        "when": 1789650494512,
+        "kind": "resync",
+        "anchor": "156250P@1789650494511"
+      }
+    },
+    {
+      "at": 27203,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 156335,
+        "reqId": "YMHv-2XnPiE-2"
+      }
+    },
+    {
+      "at": 27206,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789650498341,
+        "kind": "play",
+        "reqId": "YMHv-2XnPiE-2",
+        "anchor": "156250-@1789650498341"
+      }
+    },
+    {
+      "at": 32135,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 160591,
+        "reqId": "YMHv-2XnPiE-3"
+      }
+    },
+    {
+      "at": 32136,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789650502774,
+        "kind": "pause",
+        "reqId": "YMHv-2XnPiE-3",
+        "anchor": "160591P@1789650502774"
+      }
+    },
+    {
+      "at": 38049,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789650509186,
+        "kind": "play",
+        "anchor": "160591-@1789650509186"
+      }
+    },
+    {
+      "at": 42985,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789650513622,
+        "kind": "pause",
+        "anchor": "165074P@1789650513622"
+      }
+    },
+    {
+      "at": 48895,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 165193,
+        "reqId": "YMHv-2XnPiE-4"
+      }
+    },
+    {
+      "at": 48898,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789650520034,
+        "kind": "play",
+        "reqId": "YMHv-2XnPiE-4",
+        "anchor": "165074-@1789650520034"
+      }
+    },
+    {
+      "at": 53821,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 169427,
+        "reqId": "YMHv-2XnPiE-5"
+      }
+    },
+    {
+      "at": 53823,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789650524460,
+        "kind": "pause",
+        "reqId": "YMHv-2XnPiE-5",
+        "anchor": "169427P@1789650524460"
+      }
+    },
+    {
+      "at": 59741,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789650530878,
+        "kind": "play",
+        "anchor": "169427-@1789650530878"
+      }
+    },
+    {
+      "at": 64670,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789650535307,
+        "kind": "pause",
+        "anchor": "173769P@1789650535307"
+      }
+    },
+    {
+      "at": 70586,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 174002,
+        "reqId": "YMHv-2XnPiE-6"
+      }
+    },
+    {
+      "at": 70592,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 10,
+        "when": 1789650541725,
+        "kind": "play",
+        "reqId": "YMHv-2XnPiE-6",
+        "anchor": "173769-@1789650541725"
+      }
+    },
+    {
+      "at": 75517,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 178135,
+        "reqId": "YMHv-2XnPiE-7"
+      }
+    },
+    {
+      "at": 75519,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 11,
+        "when": 1789650546156,
+        "kind": "pause",
+        "reqId": "YMHv-2XnPiE-7",
+        "anchor": "178135P@1789650546156"
+      }
+    },
+    {
+      "at": 81433,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 12,
+        "when": 1789650552571,
+        "kind": "play",
+        "anchor": "178135-@1789650552571"
+      }
+    },
+    {
+      "at": 86359,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 13,
+        "when": 1789650556996,
+        "kind": "pause",
+        "anchor": "182589P@1789650556996"
+      }
+    }
+  ],
+  "rateAfterLeave": {
+    "a": 1,
+    "b": 1
+  }
+}

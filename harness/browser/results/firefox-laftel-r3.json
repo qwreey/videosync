@@ -1,0 +1,834 @@
+{
+  "when": "2026-09-17T13:20:32.547Z",
+  "checks": [
+    {
+      "name": "the Firefox build loads and mounts its panel",
+      "ok": true,
+      "detail": "영상을 찾았어요. 방을 만들거나 참가하세요."
+    },
+    {
+      "name": "Firefox is taken to the room's video",
+      "ok": true,
+      "detail": "after 1644 ms"
+    },
+    {
+      "name": "and rejoins there (the rejoin survived Firefox's storage)",
+      "ok": true,
+      "detail": "after 2180 ms"
+    },
+    {
+      "name": "B conformed to the room: paused at A's position",
+      "ok": true,
+      "detail": "A 30.00 B 30.00 B paused=true"
+    },
+    {
+      "name": "Chromium presses play, Firefox follows",
+      "ok": true,
+      "detail": "gap -21 ms"
+    },
+    {
+      "name": "Firefox pauses, Chromium follows",
+      "ok": true,
+      "detail": "gap 2 ms"
+    },
+    {
+      "name": "Firefox presses play, both run together",
+      "ok": true,
+      "detail": "gap 252 ms"
+    },
+    {
+      "name": "Chromium seeks, Firefox follows",
+      "ok": false,
+      "detail": "target 200: A 204.65 B 204.33, gap 321 ms"
+    },
+    {
+      "name": "still together over 30 s",
+      "ok": true,
+      "detail": "gaps 299, 257, 288, 225, 293, 252 ms"
+    },
+    {
+      "name": "Firefox hands back its playback rate on leaving",
+      "ok": true,
+      "detail": "rate 1"
+    }
+  ],
+  "measurements": {
+    "gapAfterPlayMs": -21,
+    "gapAfterFirefoxPlayMs": 252,
+    "gapsEvery5sMs": [
+      299,
+      257,
+      288,
+      225,
+      293,
+      252
+    ]
+  },
+  "notes": [],
+  "chromium": "Chrome/153.0.8010.36",
+  "firefox": "Session already started",
+  "dumps": {
+    "conformed": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 0,
+        "statesApplied": 0,
+        "acksApplied": 0,
+        "correctionsSeek": 0,
+        "correctionsNudge": 1,
+        "nudgesUnsupported": 0,
+        "reportsSent": 10,
+        "timeSamples": 6,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 0,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 30000,
+        "atServerMs": 1789651238033,
+        "paused": true,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 30,
+        "paused": true,
+        "rate": 1,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 45.075,
+        "bufferedBehindS": 4.975000000000001
+      },
+      "trace": [
+        {
+          "at": 481,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "laftel:/player/45462/93304",
+            "mediaUrl": "https://laftel.net/player/45462/93304"
+          }
+        },
+        {
+          "at": 491,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "laftel:/player/45462/93304",
+            "anchor": "30000P@1789651238033"
+          }
+        },
+        {
+          "at": 493,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 583,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 684,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 684,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 2275,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 2276,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651240708,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 2276,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        }
+      ]
+    },
+    "after-pause": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 1,
+        "statesApplied": 1,
+        "acksApplied": 1,
+        "correctionsSeek": 0,
+        "correctionsNudge": 3,
+        "nudgesUnsupported": 0,
+        "reportsSent": 16,
+        "timeSamples": 7,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 1,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 0,
+        "reportsDeferred": 0,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 33413,
+        "atServerMs": 1789651248184,
+        "paused": true,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 33.412679,
+        "paused": true,
+        "rate": 0.9894342266646593,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 47.918571,
+        "bufferedBehindS": 8.387678999999999
+      },
+      "trace": [
+        {
+          "at": 481,
+          "dir": "tx",
+          "t": "hello",
+          "detail": {
+            "mediaKey": "laftel:/player/45462/93304",
+            "mediaUrl": "https://laftel.net/player/45462/93304"
+          }
+        },
+        {
+          "at": 491,
+          "dir": "rx",
+          "t": "welcome",
+          "detail": {
+            "seq": 1,
+            "mediaKey": "laftel:/player/45462/93304",
+            "anchor": "30000P@1789651238033"
+          }
+        },
+        {
+          "at": 493,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 583,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 684,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 684,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 2275,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 2276,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651240708,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 2276,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 5704,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 2,
+            "when": 1789651244654,
+            "kind": "play",
+            "anchor": "30000-@1789651244654"
+          }
+        },
+        {
+          "at": 7094,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651245545,
+            "mode": "nudge",
+            "rate": 0.9845642757185301
+          }
+        },
+        {
+          "at": 9110,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651247561,
+            "mode": "nudge",
+            "rate": 0.9894342266646593
+          }
+        },
+        {
+          "at": 9731,
+          "dir": "tx",
+          "t": "cmd",
+          "detail": {
+            "kind": "pause",
+            "positionMs": 33413,
+            "reqId": "5OdYxt2sM5g-1"
+          }
+        },
+        {
+          "at": 9734,
+          "dir": "rx",
+          "t": "ack",
+          "detail": {
+            "seq": 3,
+            "when": 1789651248184,
+            "kind": "pause",
+            "reqId": "5OdYxt2sM5g-1",
+            "anchor": "33413P@1789651248184"
+          }
+        }
+      ]
+    },
+    "after-hold": {
+      "acquisition": "steady",
+      "stats": {
+        "cmdsSent": 2,
+        "statesApplied": 2,
+        "acksApplied": 2,
+        "correctionsSeek": 1,
+        "correctionsNudge": 37,
+        "nudgesUnsupported": 0,
+        "reportsSent": 57,
+        "timeSamples": 14,
+        "reconnects": 0,
+        "lateApplies": 0,
+        "echoesSuppressed": 2,
+        "badFrames": 0,
+        "skippedOffMedia": 0,
+        "supersededApplies": 0,
+        "connectFailures": 0,
+        "ticketFailures": 0,
+        "playFailures": 0,
+        "playsHeld": 1,
+        "reportsDeferred": 5,
+        "reconciles": 0,
+        "mediaEpochs": 2,
+        "acquisitions": 1,
+        "siteMovesAbsorbed": 0,
+        "ungesturedIgnored": 2,
+        "gesturedIntents": 0,
+        "fought": 0,
+        "endsNotSent": 0,
+        "playsAtEnd": 0,
+        "mediaStale": 0,
+        "continuations": 0,
+        "namings": 0,
+        "adoptions": 0,
+        "skippedAcquiring": 0
+      },
+      "anchor": {
+        "positionMs": 200000,
+        "atServerMs": 1789651254192,
+        "paused": false,
+        "mediaKey": "laftel:/player/45462/93304",
+        "mediaUrl": "https://laftel.net/player/45462/93304"
+      },
+      "player": {
+        "adapter": "html5",
+        "capabilities": {
+          "supportsDirectSeek": true,
+          "supportsDirectPlayPause": true,
+          "supportsPlaybackRateNudge": true,
+          "supportsAdDetection": false,
+          "volatileVideoElement": false
+        },
+        "positionS": 234.230961,
+        "paused": false,
+        "rate": 0.9943390347821256,
+        "readyState": 4,
+        "muted": false,
+        "ended": false,
+        "bufferedAheadS": 47.30028899999999,
+        "bufferedBehindS": 40.28721100000001
+      },
+      "trace": [
+        {
+          "at": 12132,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651250583,
+            "mode": "nudge",
+            "rate": 0.9754704896448794
+          }
+        },
+        {
+          "at": 13165,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651251616,
+            "mode": "nudge",
+            "rate": 0.9769728401363895
+          }
+        },
+        {
+          "at": 14189,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651252640,
+            "mode": "nudge",
+            "rate": 0.982834924080786
+          }
+        },
+        {
+          "at": 15190,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651253642,
+            "mode": "nudge",
+            "rate": 0.9892658464893513
+          }
+        },
+        {
+          "at": 15242,
+          "dir": "rx",
+          "t": "state",
+          "detail": {
+            "seq": 5,
+            "when": 1789651254192,
+            "kind": "seek",
+            "anchor": "200000-@1789651254192"
+          }
+        },
+        {
+          "at": 16100,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 16100,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 16502,
+          "dir": "rx",
+          "t": "members",
+          "detail": {}
+        },
+        {
+          "at": 16502,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651254953,
+            "mode": "seek"
+          }
+        },
+        {
+          "at": 16502,
+          "dir": "rx",
+          "t": "gate",
+          "detail": {}
+        },
+        {
+          "at": 17210,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651255661,
+            "mode": "nudge",
+            "rate": 1
+          }
+        },
+        {
+          "at": 18228,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651256679,
+            "mode": "nudge",
+            "rate": 1.012414156118058
+          }
+        },
+        {
+          "at": 19250,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651257702,
+            "mode": "nudge",
+            "rate": 1.0177568830558787
+          }
+        },
+        {
+          "at": 20270,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651258721,
+            "mode": "nudge",
+            "rate": 1.0146783847665044
+          }
+        },
+        {
+          "at": 21273,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651259724,
+            "mode": "nudge",
+            "rate": 1.0071566425782699
+          }
+        },
+        {
+          "at": 22285,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651260736,
+            "mode": "nudge",
+            "rate": 0.9947384564184
+          }
+        },
+        {
+          "at": 23291,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651261743,
+            "mode": "nudge",
+            "rate": 0.985179699263336
+          }
+        },
+        {
+          "at": 25326,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651263778,
+            "mode": "nudge",
+            "rate": 0.9913432488289637
+          }
+        },
+        {
+          "at": 26354,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651264805,
+            "mode": "nudge",
+            "rate": 0.9992663831737219
+          }
+        },
+        {
+          "at": 27377,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651265829,
+            "mode": "nudge",
+            "rate": 1.0043145861356335
+          }
+        },
+        {
+          "at": 28386,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651266838,
+            "mode": "nudge",
+            "rate": 1.008806424772593
+          }
+        },
+        {
+          "at": 29394,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651267845,
+            "mode": "nudge",
+            "rate": 1.0119769263208482
+          }
+        },
+        {
+          "at": 30396,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651268847,
+            "mode": "nudge",
+            "rate": 1.0071397311475923
+          }
+        },
+        {
+          "at": 31408,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651269860,
+            "mode": "nudge",
+            "rate": 0.9966929068197014
+          }
+        },
+        {
+          "at": 32416,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651270867,
+            "mode": "nudge",
+            "rate": 0.9906252511223028
+          }
+        },
+        {
+          "at": 34440,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651272890,
+            "mode": "nudge",
+            "rate": 0.9948431343567475
+          }
+        },
+        {
+          "at": 35458,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651273909,
+            "mode": "nudge",
+            "rate": 1.0009224531861647
+          }
+        },
+        {
+          "at": 36472,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651274923,
+            "mode": "nudge",
+            "rate": 1.0054197166028562
+          }
+        },
+        {
+          "at": 37493,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651275944,
+            "mode": "nudge",
+            "rate": 1.0073756184332978
+          }
+        },
+        {
+          "at": 39497,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651277948,
+            "mode": "nudge",
+            "rate": 1.0049370124818875
+          }
+        },
+        {
+          "at": 40520,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651278972,
+            "mode": "nudge",
+            "rate": 0.9959469525112903
+          }
+        },
+        {
+          "at": 41526,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651279978,
+            "mode": "nudge",
+            "rate": 0.9886741999346369
+          }
+        },
+        {
+          "at": 42532,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651280983,
+            "mode": "nudge",
+            "rate": 0.9904425379318047
+          }
+        },
+        {
+          "at": 43547,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651281999,
+            "mode": "nudge",
+            "rate": 0.9951118723876268
+          }
+        },
+        {
+          "at": 44555,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651283006,
+            "mode": "nudge",
+            "rate": 1.0005492172667463
+          }
+        },
+        {
+          "at": 45566,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651284017,
+            "mode": "nudge",
+            "rate": 1.0044707879481862
+          }
+        },
+        {
+          "at": 46571,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651285023,
+            "mode": "nudge",
+            "rate": 1.0078160671307137
+          }
+        },
+        {
+          "at": 47579,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651286030,
+            "mode": "nudge",
+            "rate": 1.0101342870051673
+          }
+        },
+        {
+          "at": 48584,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651287036,
+            "mode": "nudge",
+            "rate": 1.0054063294990492
+          }
+        },
+        {
+          "at": 49608,
+          "dir": "rx",
+          "t": "correct",
+          "detail": {
+            "when": 1789651288055,
+            "mode": "nudge",
+            "rate": 0.9943390347821256
+          }
+        }
+      ]
+    }
+  }
+}

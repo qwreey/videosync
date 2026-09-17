@@ -1,0 +1,458 @@
+{
+  "when": "2026-09-17T13:20:17.964Z",
+  "server": "http://127.0.0.1:8787",
+  "page": "https://laftel.net/player/45462/93304",
+  "checks": [
+    {
+      "name": "an invite link prefills the room and its secret",
+      "ok": true
+    },
+    {
+      "name": "the rotated secret is written into the address bar",
+      "ok": true,
+      "detail": "2 ms"
+    },
+    {
+      "name": "the site's history.state survives the Xray round trip",
+      "ok": true,
+      "detail": "Date true, Map true"
+    },
+    {
+      "name": "same path and history length",
+      "ok": true,
+      "detail": "length 1 -> 1"
+    },
+    {
+      "name": "no hashchange or popstate fired",
+      "ok": true
+    },
+    {
+      "name": "a reload prefills the new secret",
+      "ok": true
+    },
+    {
+      "name": "and joining from it works",
+      "ok": true
+    }
+  ],
+  "notes": [],
+  "roomId": "zkFfoT0l0weVNfQxGK496Q",
+  "before": {
+    "path": "/player/45462/93304",
+    "length": 1,
+    "state": {
+      "__NA": true,
+      "__PRIVATE_NEXTJS_INTERNALS_TREE": {
+        "tree": [
+          "",
+          {
+            "children": [
+              "(laftel)",
+              {
+                "children": [
+                  "player",
+                  {
+                    "children": [
+                      [
+                        "item_id",
+                        "45462",
+                        "d",
+                        null
+                      ],
+                      {
+                        "children": [
+                          [
+                            "episode_id",
+                            "93304",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              "__PAGE__",
+                              {},
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "episodeHeader": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "episodeList": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "video": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ]
+                  },
+                  null,
+                  null,
+                  0
+                ]
+              },
+              null,
+              null,
+              0
+            ],
+            "modal": [
+              "__DEFAULT__",
+              {},
+              null,
+              null,
+              0
+            ]
+          },
+          null,
+          null,
+          16
+        ],
+        "renderedSearch": ""
+      },
+      "__r3": {
+        "n": 1,
+        "list": [
+          1,
+          "x",
+          null
+        ],
+        "at": "1970-01-01T00:00:00.000Z",
+        "m": {}
+      }
+    },
+    "date": true,
+    "map": true
+  },
+  "after": {
+    "path": "/player/45462/93304",
+    "length": 1,
+    "state": {
+      "__NA": true,
+      "__PRIVATE_NEXTJS_INTERNALS_TREE": {
+        "tree": [
+          "",
+          {
+            "children": [
+              "(laftel)",
+              {
+                "children": [
+                  "player",
+                  {
+                    "children": [
+                      [
+                        "item_id",
+                        "45462",
+                        "d",
+                        null
+                      ],
+                      {
+                        "children": [
+                          [
+                            "episode_id",
+                            "93304",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              "__PAGE__",
+                              {},
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "episodeHeader": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "episodeList": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ],
+                    "video": [
+                      "(__SLOT__)",
+                      {
+                        "children": [
+                          [
+                            "item_id",
+                            "45462",
+                            "d",
+                            null
+                          ],
+                          {
+                            "children": [
+                              [
+                                "episode_id",
+                                "93304",
+                                "d",
+                                null
+                              ],
+                              {
+                                "children": [
+                                  "__PAGE__",
+                                  {},
+                                  null,
+                                  null,
+                                  0
+                                ]
+                              },
+                              null,
+                              null,
+                              0
+                            ]
+                          },
+                          null,
+                          null,
+                          0
+                        ]
+                      },
+                      null,
+                      null,
+                      0
+                    ]
+                  },
+                  null,
+                  null,
+                  0
+                ]
+              },
+              null,
+              null,
+              0
+            ],
+            "modal": [
+              "__DEFAULT__",
+              {},
+              null,
+              null,
+              0
+            ]
+          },
+          null,
+          null,
+          16
+        ],
+        "renderedSearch": ""
+      },
+      "__r3": {
+        "n": 1,
+        "list": [
+          1,
+          "x",
+          null
+        ],
+        "at": "1970-01-01T00:00:00.000Z",
+        "m": {}
+      }
+    },
+    "date": true,
+    "map": true
+  }
+}

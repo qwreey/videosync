@@ -1,0 +1,333 @@
+{
+  "when": "2026-09-17T13:09:27.722Z",
+  "server": "http://127.0.0.1:8787",
+  "press": "click",
+  "trials": [
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 1,
+        "presserStartsAfterMs": 566,
+        "otherStartsAfterMs": 589,
+        "presserNetMs": -727,
+        "gapAtEndMs": -135
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 41,
+        "gapAtEndMs": -206
+      },
+      "presserStats": {
+        "cmdsSent": 3,
+        "playsHeld": 1,
+        "reportsDeferred": 0,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 53,
+            "jumpMs": -206
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 3,
+        "presserStartsAfterMs": 557,
+        "otherStartsAfterMs": 572,
+        "presserNetMs": -745,
+        "gapAtEndMs": -316
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 180,
+        "gapAtEndMs": 0
+      },
+      "presserStats": {
+        "cmdsSent": 2,
+        "playsHeld": 1,
+        "reportsDeferred": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "a",
+      "play": {
+        "presserJumps": [],
+        "presserHeld": true,
+        "presserFlips": 1,
+        "presserStartsAfterMs": 558,
+        "otherStartsAfterMs": 574,
+        "presserNetMs": -408,
+        "gapAtEndMs": 54
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 45,
+        "gapAtEndMs": 37
+      },
+      "presserStats": {
+        "cmdsSent": 5,
+        "playsHeld": 2,
+        "reportsDeferred": 3,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    },
+    {
+      "presser": "b",
+      "play": {
+        "presserJumps": [
+          {
+            "atMs": 36,
+            "jumpMs": 108
+          }
+        ],
+        "presserHeld": true,
+        "presserFlips": 1,
+        "presserStartsAfterMs": 536,
+        "otherStartsAfterMs": 552,
+        "presserNetMs": -436,
+        "gapAtEndMs": -25
+      },
+      "pause": {
+        "presserJumps": [],
+        "otherStopsAfterMs": 47,
+        "gapAtEndMs": -48
+      },
+      "presserStats": {
+        "cmdsSent": 4,
+        "playsHeld": 2,
+        "reportsDeferred": 5,
+        "correctionsSeek": 0,
+        "lateApplies": 0,
+        "reconciles": 0
+      }
+    }
+  ],
+  "summary": {
+    "playPresserBackJumpMs": [
+      0,
+      -206,
+      0,
+      0
+    ],
+    "playGapAtEndMs": [
+      -135,
+      -316,
+      54,
+      -25
+    ],
+    "playPresserStartsAfterMs": [
+      566,
+      557,
+      558,
+      536
+    ],
+    "playOtherStartsAfterMs": [
+      589,
+      572,
+      574,
+      552
+    ],
+    "playPresserNetMs": [
+      -727,
+      -745,
+      -408,
+      -436
+    ],
+    "pausePresserLargestJumpMs": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "pauseGapAtEndMs": [
+      -206,
+      0,
+      37,
+      -48
+    ]
+  },
+  "notes": [],
+  "roomId": "ZKrO5P5yOFOvS2n7mAIZaQ",
+  "clock": {
+    "a": {
+      "rttMs": 1.2000000029802322,
+      "uncertaintyMs": 0.6000000014901161
+    },
+    "b": {
+      "rttMs": 1,
+      "uncertaintyMs": 0.5
+    }
+  },
+  "traceA": [
+    {
+      "at": 98874,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "seek",
+        "positionMs": 182586,
+        "reqId": "dgQ4pHlZIIw-1"
+      }
+    },
+    {
+      "at": 98876,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 1,
+        "when": 1789650569514,
+        "kind": "seek",
+        "reqId": "dgQ4pHlZIIw-1",
+        "anchor": "182586P@1789650569514"
+      }
+    },
+    {
+      "at": 102256,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 182586,
+        "reqId": "dgQ4pHlZIIw-2"
+      }
+    },
+    {
+      "at": 102276,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 2,
+        "when": 1789650573395,
+        "kind": "play",
+        "reqId": "dgQ4pHlZIIw-2",
+        "anchor": "182586-@1789650573395"
+      }
+    },
+    {
+      "at": 107173,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 186815,
+        "reqId": "dgQ4pHlZIIw-3"
+      }
+    },
+    {
+      "at": 107177,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 3,
+        "when": 1789650577812,
+        "kind": "pause",
+        "reqId": "dgQ4pHlZIIw-3",
+        "anchor": "186815P@1789650577812"
+      }
+    },
+    {
+      "at": 113130,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 4,
+        "when": 1789650584267,
+        "kind": "play",
+        "anchor": "186815-@1789650584267"
+      }
+    },
+    {
+      "at": 118050,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 5,
+        "when": 1789650588688,
+        "kind": "pause",
+        "anchor": "191234P@1789650588688"
+      }
+    },
+    {
+      "at": 124004,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "play",
+        "positionMs": 191237,
+        "reqId": "dgQ4pHlZIIw-4"
+      }
+    },
+    {
+      "at": 124016,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 6,
+        "when": 1789650595143,
+        "kind": "play",
+        "reqId": "dgQ4pHlZIIw-4",
+        "anchor": "191234-@1789650595143"
+      }
+    },
+    {
+      "at": 128931,
+      "dir": "tx",
+      "t": "cmd",
+      "detail": {
+        "kind": "pause",
+        "positionMs": 195801,
+        "reqId": "dgQ4pHlZIIw-5"
+      }
+    },
+    {
+      "at": 128935,
+      "dir": "rx",
+      "t": "ack",
+      "detail": {
+        "seq": 7,
+        "when": 1789650599571,
+        "kind": "pause",
+        "reqId": "dgQ4pHlZIIw-5",
+        "anchor": "195801P@1789650599571"
+      }
+    },
+    {
+      "at": 134866,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 8,
+        "when": 1789650606003,
+        "kind": "play",
+        "anchor": "195801-@1789650606003"
+      }
+    },
+    {
+      "at": 139800,
+      "dir": "rx",
+      "t": "state",
+      "detail": {
+        "seq": 9,
+        "when": 1789650610438,
+        "kind": "pause",
+        "anchor": "200283P@1789650610438"
+      }
+    }
+  ],
+  "rateAfterLeave": {
+    "a": 1,
+    "b": 1
+  }
+}

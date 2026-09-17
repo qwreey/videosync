@@ -1180,6 +1180,44 @@ The file this table used to cite as run 1 was byte-identical to `firefox-laftel-
 contradicts its row. Run 1's row and the paragraph above are all that is left of it; run 4 has
 no file either. A re-run writes `firefox-laftel.json` again: rename it before the next run.
 
+## 24. Review round 3, live (2026-09-17)
+
+`main` at c30c41f (STATE.md "Review round 3"), Helium over CDP on the dedicated profile and Firefox
+over BiDi, both on the `local-ext.mjs` build `NAME=ext-r3`, `videosyncd` built from the same
+commit. Every result file carries an `-r3` suffix.
+
+**The existing probes did not move:**
+
+| probe | result | against §22/§23 |
+|---|---|---|
+| `probe-laftel.mjs` (`laftel-r3.json`) | **8/8**; seek within 0.157 s of its line; rate 1.1 gives 1.0975× | 8/8 |
+| `probe-laftel-room.mjs`, adapter, 6 trials (`laftel-room-r3.json`) | presser starts 517–518 ms, the other 532–568 ms; re-aim at the press in 4 of 6 (137–182 ms); 0 correction seeks, 0 reconciles, 0 late applies; pause moves the presser by 0; gap 4 s later −137 to +15 ms; rate 1 on leaving | 525–545 / 551–577 ms, re-aim 3 of 6, gap −180 to +17 |
+| the same, `PRESS=click`, 4 trials (`laftel-room-r3-click.json`) | presser 536–566 ms, other 552–589 ms; re-aim 1 of 4 (206 ms); 0 correction seeks; gap −316 to +54 ms | 576–616 / 605–641 ms, gap −156 to +137 |
+| `probe-follow.mjs` (`follow-r3.json`) | **11/11**; taken to the room's episode 1.97 s after joining by code, rejoined 0.41 s later; followed the move in 1.75 s | 11/11 |
+| `probe-acquire.mjs SCEN=CONTROL` (`acquire-CONTROL-r3.json`) | all twelve cases as in §22: L1/A1/A3/B1/D1/E1/G1 send nothing; N1 `media@0`, `play@0`, no pause; A2, P2, P3 `play@30000`; P1 `pause` | same |
+| `probe-firefox.mjs LOCAL=1` (`firefox-local-r3.json`) | **10/10**; play from Chromium 61 ms, pause from Firefox 26 ms, play from Firefox 268 ms, seek 58 ms; 30 s at −6 to +67 ms | 10/10 |
+| `probe-firefox.mjs LAFTEL=1` (`firefox-laftel-r3.json`) | **9/10**; the seek from Chromium landed 321 ms apart (bound 300); 30 s at 225–299 ms; one correction seek | §23: 9/10 three times, the one miss a 330–374 ms gap |
+
+The Firefox–Laftel run sits where §23 left it: a steady lag of a few hundred milliseconds that the
+servo's 500 ms band leaves alone (the sub-tolerance lag STATE.md lists as open), and the known
+single extra correction after a seek.
+
+**What the round changed, measured (`probe-round3.mjs`, `probe-round3-firefox.mjs`):**
+
+| check | Helium (`round3.json`) | Helium, **before** the round (`ext-main`, 5ec092e; `round3-control-5ec092e.json`) | Firefox (`round3-firefox.json`) |
+|---|---|---|---|
+| N37: a rotation rewrites the `#videosync=` fragment | in 17 ms | **no** (5 s, never) | in 2 ms |
+| the site untouched: path, `history.length`, `history.state`, no `hashchange`/`popstate` | yes | yes | yes, and a state holding a `Date` and a `Map` came back as a `Date` and a `Map` through the content script's Xray `history` |
+| a reload prefills the new secret, and joining works | yes | **no**: the old secret, refused | yes |
+| N1: a background tab joined to the room has no media (readyState 0, `detached`) | yes | yes | — |
+| A is not waiting on it | `waitingOn` [] | **`waitingOn` [the hidden member]** | — |
+| A's `play` starts | after 1.04 s (the hold) | **after 27.2 s** — the gate timeout | — |
+| the hidden member is not moved | yes | yes | — |
+
+So both fixes are real in a browser, and the probe tells the builds apart. Not measured here:
+N20 (a change made while reconnecting) needs a connection dropped under a live room; it is covered
+by unit tests only.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The
