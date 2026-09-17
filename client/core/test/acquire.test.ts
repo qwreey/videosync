@@ -917,6 +917,55 @@ describe('the next episode', () => {
     assert.deepEqual(h.kinds(), ['media', 'play']);
   });
 
+  /** The media acked paused@0, and the continuation play sent and held. */
+  async function continuationPending() {
+    const h = await finishThenNavigate();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    return h;
+  }
+
+  it('a member\'s play while our own play is on its way ends acquiring and is held for the room', async () => {
+    // It agrees with where we asked the room to go, so it is sent no second
+    // time -- but it is the member's press, and the room is still paused.
+    const h = await continuationPending();
+    const intents = h.engine.stats.gesturedIntents;
+    h.g.press();
+    await h.siteAutoplay();
+    await h.vt.advance(300);
+    assert.equal(h.engine.stats.gesturedIntents, intents + 1, 'the press was taken for our own echo');
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.equal(h.player.paused, true, 'the member played ahead of a paused room');
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+  });
+
+  it('a member\'s pause while our own play is on its way is sent', async () => {
+    // It agrees with the room as it is, but not with where we asked it to go:
+    // the member has changed their mind.
+    // A site that keeps its autoplay going through the conform leaves the
+    // member playing, and the member stops it.
+    const h = await finishThenNavigate();
+    const p = h.player;
+    const pause = p.pause.bind(p);
+    p.pause = async () => {};
+    await h.siteAutoplay();
+    const media = h.cmds().filter((c) => c.kind === 'media');
+    await h.ack(media[0]!, { mediaKey: NEXT, positionMs: 0, paused: true });
+    await h.vt.advance(300);
+    p.pause = pause;
+    assert.deepEqual(h.kinds(), ['media', 'play']);
+    assert.equal(h.engine.acquisition, 'guarded');
+    assert.equal(p.paused, false);
+    h.g.press();
+    await p.pause();
+    p.emit('pause');
+    await h.vt.advance(300);
+    assert.deepEqual(h.kinds(), ['media', 'play', 'pause']);
+  });
+
   it('a member that loses the race does not start the room', async () => {
     const h = await finishThenNavigate();
     h.tr.deliver({ t: 'error', code: 'media_stale' });

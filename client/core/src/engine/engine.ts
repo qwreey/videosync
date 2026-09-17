@@ -1957,10 +1957,7 @@ export class SyncEngine {
       if (!adopting) this.act(o, state);
       return;
     }
-    // Without a gesture it is not the member's, so our own pending command
-    // says nothing about it: a site's move that only matches where we asked
-    // the room to go is still the site's, and is put back like any.
-    if (this.isEcho(o, state, this.intent(now) ? this.roomAnchor() : this.anchor)) {
+    if (this.isEcho(o, state, this.intent(now))) {
       this.stats.echoesSuppressed++;
       return;
     }
@@ -2098,18 +2095,24 @@ export class SyncEngine {
   }
 
   /**
-   * The effect of our own in-flight transition, or agreement with `room`:
-   * where the room is going for a press of the member's (`roomAnchor`), where
-   * it is for anything else.
+   * The effect of our own in-flight transition, or agreement with the room.
+   *
+   * While a command of ours is on its way, the room is (`anchor`) and will be
+   * (`roomAnchor`) in different states. A change with no gesture is not the
+   * member's, so our pending command says nothing about it: one that only
+   * matches where we asked the room to go is still the site's, and is put
+   * back like any. A `gestured` press is an echo only if it agrees with both;
+   * matching just one, it is the member's, and `act` judges it -- a pause
+   * against our pending play is sent, a play that repeats it is held.
    */
-  private isEcho(o: Observation, state: PlayerState, room: Anchor): boolean {
+  private isEcho(o: Observation, state: PlayerState, gestured: boolean): boolean {
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       return !!applying &&
         Math.abs(o.positionS * 1000 - landsAt(applying.targetMs, state.durationS)) <= this.seekThresholdMs;
     }
     if (o.kind === 'playstate') {
-      return o.paused === room.paused ||
+      return (o.paused === this.anchor.paused && (!gestured || o.paused === this.roomAnchor().paused)) ||
         (!!applying && (o.paused === applying.paused || this.underOwnSeek(o, applying)));
     }
     return true;
