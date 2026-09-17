@@ -24,6 +24,7 @@ import type { Entry } from '@videosync/core/providers/registry.ts';
 
 import type { AuthResponse } from '@videosync/core/app/authfetch.ts';
 
+import { sitesGranted } from './grants.ts';
 import { ask, authCall } from './relay.ts';
 import type { SyncReply } from './relay.ts';
 
@@ -130,7 +131,7 @@ function requestSites(d: Descriptor): void {
 function entryCard(e: Entry): HTMLElement {
   const d = e.provider.d;
   const granted = grantedBy(origins);
-  const allGranted = d.hosts.every((x) => granted(x.startsWith('*.') ? x.slice(2) : x));
+  const allGranted = sitesGranted(d, granted);
   const needsGrant = e.tier !== 'built-in' && !allGranted;
   return h('div', { class: 'card' },
     h('h3', {},
