@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -431,6 +432,52 @@ func TestAQueuedPasswordCheckGivesUpWhenItsRequestDoes(t *testing.T) {
 	if c := answered(done, 2*time.Second); c == -1 {
 		t.Fatal("a cancelled request is still queued for a password check")
 	}
+}
+
+// The same over a real connection. net/http cancels a request's context when
+// its client hangs up only once the handler has read the body to its end, so
+// a /api/session that declared a body and left it unread stayed queued for
+// the whole wait and then hashed for nobody.
+func TestAPasswordCheckGivesUpWhenItsClientHangsUp(t *testing.T) {
+	g := passwordOnlyRig(t)
+	g.s.kdfWait = time.Minute
+	holdEveryKDFSlot(t, g.s)
+	srv := httptest.NewServer(g.mux)
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /api/session HTTP/1.1\r\nHost: sync.example\r\nAuthorization: %s\r\n"+
+		"Content-Type: application/json\r\nContent-Length: 2\r\n\r\n{}", basic("mallory", "y"))
+	waitFor := func(n int64) bool {
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			if g.s.kdfQueued.Load() == n {
+				return true
+			}
+		}
+		return false
+	}
+	if !waitFor(1) {
+		t.Fatalf("the check never queued (%d waiting)", g.s.kdfQueued.Load())
+	}
+	conn.Close()
+	if !waitFor(0) {
+		t.Fatal("a check whose client hung up is still queued")
+	}
+
+	// A body that never arrives is never queued at all.
+	conn, err = net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "POST /api/session HTTP/1.1\r\nHost: sync.example\r\nAuthorization: %s\r\n"+
+		"Content-Length: 5\r\n\r\n", basic("mallory", "y"))
+	time.Sleep(50 * time.Millisecond)
+	if n := g.s.kdfQueued.Load(); n != 0 {
+		t.Fatalf("a request still sending its body queued a check (%d waiting)", n)
+	}
+	conn.Close()
 }
 
 func TestAPasswordCheckWaitsForASlotOnlySoLong(t *testing.T) {

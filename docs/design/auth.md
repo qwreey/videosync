@@ -158,7 +158,15 @@ what it left open:
   instead of hashing for nobody; past either bound the answer is `503 busy` (the login tab says
   so and keeps the flow). Unbounded, the queue was the attack: a /48 is 65 536 fresh per-/64
   buckets, and every request they got past the limiter queued a full hash ahead of real
-  sign-ins, long after the sender left. At most 100 000 outstanding tickets and 100 000
+  sign-ins, long after the sender left. "Gone away" needs the body read: `net/http` cancels a
+  request's context on hang-up only once the handler has consumed the body, so `/api/session`
+  drains it (1 KiB at most) before queueing, and the login form's parse already does.
+  **Still open:** the bound ends the backlog, not the attack. While it runs, the same /48 —
+  5 requests at once per /64, then one per 2 s — refills 16 waiters per slot for nearly
+  nothing, and every real password sign-in gets `503 busy` until it stops. Signed-in devices
+  are untouched (a password is checked once per device), and a key, the proxy and OIDC do not
+  queue. A coarser limit (per /48, or global on password checks) would narrow it; none is
+  built. At most 100 000 outstanding tickets and 100 000
   logins in progress *(review 3: was 1 000, which a thousand people signing in at once filled)*,
   of which one client holds at most 16 — the tighter bound, since the begin bucket alone admits
   about 65 in a TTL (`begin` answers `429 rate_limited`

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -156,7 +157,8 @@ type Server struct {
 	// A check waits for a slot at most kdfWait, and at most kdfQueueMax
 	// checks wait at once (kdfQueued counts them). Past either the answer is
 	// 503 busy. Without a bound the queue is the attack: a handler outlives
-	// its client, so every request a /48 of fresh per-/64 buckets gets past
+	// its client (and learns it has gone only once it has read the body), so
+	// every request a /48 of fresh per-/64 buckets gets past
 	// the limiter waited its turn and then ran the full hash for nobody,
 	// hours of it, ahead of every real sign-in.
 	kdfWait     time.Duration
@@ -387,9 +389,11 @@ func (s *Server) proxyUser(r *http.Request) (string, bool) {
 // the client retries rather than treating it as a wrong password.
 var errBusy = errors.New("busy")
 
-// checkPassword waits for a kdf slot, but only while its request is still
-// wanted and only so long (Server.kdfWait). Whether it waits at all does not
-// depend on the user, so busy says nothing about which names exist.
+// checkPassword waits for a kdf slot, but only while ctx is live and only so
+// long (Server.kdfWait). Whether it waits at all does not depend on the user,
+// so busy says nothing about which names exist. A request's context notices
+// its client hanging up only after the handler has read the body to its end
+// (net/http), so a caller passing r.Context() must have done that first.
 func (s *Server) checkPassword(ctx context.Context, user, pass string) (bool, error) {
 	if s.kdfQueued.Add(1) > int64(s.kdfQueueMax) {
 		s.kdfQueued.Add(-1)
@@ -505,6 +509,14 @@ func (s *Server) limited(w http.ResponseWriter, r *http.Request, l *limiter) boo
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	if s.limited(w, r, s.limSession) {
+		return
+	}
+	// Nothing here is in the body, but read it to its end first: net/http
+	// cancels r.Context() when the client hangs up only once the body is
+	// consumed, and a check queued on a context that never cancels hashes
+	// for a client long gone. A body still being sent is not queued at all.
+	if _, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 1024)); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad_request"})
 		return
 	}
 	sub, via, ok, err := s.credentials(r)
