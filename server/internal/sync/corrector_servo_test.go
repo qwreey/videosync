@@ -28,6 +28,15 @@ type servoPlant struct {
 	// rateDrops counts decisions after the kick that put the player back to
 	// exactly 1.0, by a reset or a nudge.
 	rateDrops int
+
+	// extraAfterKickMs, if set, adds one report that long after the kick,
+	// off the whole-second grid, as an anomaly report would be.
+	extraAfterKickMs int64
+	// trackAfterKick records worstRateAfterKick: the largest distance between
+	// the rate the player runs and 1/intrinsic after any decision past the
+	// kick's seek.
+	trackAfterKick     bool
+	worstRateAfterKick float64
 }
 
 const plantStepMs = 50
@@ -72,7 +81,8 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 		if now >= durMs-tailMs && math.Abs(p.res) > worst {
 			worst = math.Abs(p.res)
 		}
-		if now%1000 != 0 {
+		extra := p.extraAfterKickMs > 0 && p.kickAtMs > 0 && now == p.kickAtMs+p.extraAfterKickMs
+		if now%1000 != 0 && !extra {
 			continue
 		}
 		d := c.Decide(Report{
@@ -93,6 +103,9 @@ func (p *servoPlant) run(c *ServoCorrector, durMs, tailMs int64) float64 {
 		}
 		if p.kickAtMs > 0 && now > p.kickAtMs && p.rate == 1 && d.Action != ActionSeek {
 			p.rateDrops++
+		}
+		if p.trackAfterKick && p.kickAtMs > 0 && now > p.kickAtMs {
+			p.worstRateAfterKick = math.Max(p.worstRateAfterKick, math.Abs(p.rate-1/p.intrinsic))
 		}
 	}
 	return worst
@@ -155,7 +168,7 @@ func TestServoLearnsARateMismatch(t *testing.T) {
 }
 
 // A seek removes a step, not a rate mismatch, and it does not touch the rate
-// the client is running. dropBias hands that rate over to the commanded offset
+// the client is running. dropStep keeps the loop as the last command left it,
 // so the frequency term sees the client still compensating. Zeroing the bias
 // alone made the report right after the seek look settled -- residual 0, slope
 // 0 -- and the servo told a 0.99x decoder to run at exactly 1.0 again, then
@@ -275,5 +288,30 @@ func TestServoARateReleaseIsNotAFrequencyError(t *testing.T) {
 	got := c.st["m"].rateBias - before
 	if want := -slope / 1000 * 0.35 * 1; math.Abs(got-want) > 1e-9 {
 		t.Errorf("first report after the release moved the bias by %.5f, want %.5f", got, want)
+	}
+}
+
+// The free-seek hand-over, off the whole-second grid. A seek removes a step,
+// not a rate mismatch, so the rate a decoder was learned to need must still be
+// what it is told right after the seek. Handing the whole running rate to the
+// phase term and zeroing the bias commanded 1+bias+phase with both near 0: a
+// 0.99x decoder that had learned 1.0101 was told 1.0035 on the next heartbeat,
+// and a 0.995x one reporting 150 ms after the seek was told exactly 1.0.
+// TestServoKeepsTheLearnedRateAcrossAFreeSeek reports only on whole seconds
+// and counts only exact 1.0s, so it saw neither.
+func TestServoCommandsTheLearnedRateRightAfterAFreeSeek(t *testing.T) {
+	for _, gap := range []int64{1000, 250, 150} {
+		for _, intrinsic := range []float64{0.99, 0.995, 1.008} {
+			p := servoPlant{intrinsic: intrinsic, aheadS: 11, behindS: 10,
+				kickAtMs: 120000, kickMs: 1500, extraAfterKickMs: gap, trackAfterKick: true}
+			p.run(&ServoCorrector{}, 180000, 0)
+			if p.seeks != 1 {
+				t.Fatalf("gap %d ms, %.3fx: %d seeks, want the one free seek", gap, intrinsic, p.seeks)
+			}
+			if p.worstRateAfterKick > 0.002 {
+				t.Errorf("gap %d ms, %.3fx decoder: ran up to %.4f off the ~%.4f it needs after the seek",
+					gap, intrinsic, p.worstRateAfterKick, 1/intrinsic)
+			}
+		}
 	}
 }
