@@ -25,7 +25,12 @@ export interface HelloFrame {
   secret: string;
   name: string;
   mediaKey: string;
-  /** Only the first member's is kept -- see `mediaKey`. */
+  /**
+   * Never kept, not even the first member's: a `hello` changes no room state
+   * (D8). A room that names nothing is named by `cmd{kind:"media",
+   * ifMediaKey:""}`. The server reads only `mediaKey` here, and only to send
+   * `media.mismatch`.
+   */
   mediaUrl?: string;
   /** A server-access ticket, when the server gates joining. Single-use. */
   ticket?: string;

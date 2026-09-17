@@ -103,8 +103,9 @@ anything that is not http(s), has credentials or a fragment, or is over 512 byte
 
 `mediaKey` and `name` are bounded too, because both are repeated to every member: the key in every
 `state`, `ack` and `welcome`, the name in every roster and chat line. A `mediaKey` over 512 bytes
-names nothing when it comes from `POST /api/rooms` or a first `hello` (its `mediaUrl` goes with it),
-and a `media` command carrying one is refused with `bad_cmd`. A `name` is truncated to 64 bytes on
+names nothing when it comes from `POST /api/rooms` (its `mediaUrl` goes with it), and a `media`
+command carrying one is refused with `bad_cmd`. (A `hello`'s key names nothing whatever its size;
+see the D8 amendment below.) A `name` is truncated to 64 bytes on
 a rune boundary, like chat text.
 
 The URL comes from a member, so a client **checks it before following it**: it must normalise to

@@ -116,7 +116,9 @@ func (h *Hub) Handler(cfg HTTPConfig) http.Handler {
 			MediaURL string `json:"mediaUrl"`
 			Ticket   string `json:"ticket"`
 		}
-		// An empty body is fine: the first member's `hello` names the media.
+		// An empty body is fine: the room names nothing until a member on
+		// media names it with `media{ifMediaKey:""}`. A `hello` never does,
+		// not even the first one (D8, docs/PROTOCOL.md section 2).
 		json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body)
 		// Gated in every scope (F39): anyone who can reach the port could
 		// otherwise fill MaxRooms.
