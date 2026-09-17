@@ -29,57 +29,12 @@ func TestParseRefusesTrailingDataLikeJSONParse(t *testing.T) {
 	}
 }
 
-func TestQueryValuesDecodeLikeURLSearchParams(t *testing.T) {
-	// URLSearchParams decodes with "UTF-8 decode without BOM": one U+FFFD
-	// per maximal invalid subsequence, not one per run of bad bytes.
-	const r = "�"
-	for search, want := range map[string]string{
-		"v=%FF%FE":                r + r,
-		"v=%E2%82A":               r + "A",
-		"v=%E2%82%E2%82%AC":       r + "€",
-		"v=%F0%9F%98":             r,
-		"v=%ED%A0%80":             r + r + r,
-		"v=%C0%AFx":               r + r + "x",
-		"v=a%F4%90%80%80":         "a" + r + r + r + r,
-		"v=%E0%80%80":             r + r + r,
-		"v=%EF%BB%BFx":            string(rune(0xFEFF)) + "x", // "without BOM": kept
-		"v=%F0%9F%98%80%FF":       "😀" + r,
-		"v=%E2%82%AC+%zz":         "€ %zz", // control: valid input is unchanged
-		"v=plain&v=second":        "plain",
-		"v=%F0%9F%98%F0%9F%98%80": r + "😀",
-	} {
-		if got := firstQueryValues("?" + search)["v"]; got != want {
-			t.Errorf("%s: got %+q, want %+q", search, got, want)
-		}
-	}
-}
+// The per-byte U+FFFD decoding of query values and the dot-segment cases
+// of pathnames are in providers/testdata/templates.json, which the client
+// suite checks against URLSearchParams and URL too.
 
-func TestPathnameRemovesDotSegmentsLikeURL(t *testing.T) {
-	for href, want := range map[string]string{
-		"https://x":                    "/",
-		"https://x/a/b/..":             "/a/",
-		"https://x/a/./b":              "/a/b",
-		"https://x/..":                 "/",
-		"https://x/a/%2E%2e/b":         "/b",
-		"https://x/a/.%2E":             "/",
-		"https://x/a/b/.":              "/a/b/",
-		"https://x/a/%2e/":             "/a/",
-		"https://x/a/../../b/":         "/b/",
-		"https://x/watch/../watch/abc": "/watch/abc",
-		"https://x/a//../b":            "/a/b",
-		"https://x/./":                 "/",
-		"https://x/a/..?q=1":           "/",
-		// Controls: dots that are not a whole segment stay.
-		"https://x/a/..b/...": "/a/..b/...",
-		"https://x/a%2F../b":  "/a%2F../b",
-		"https://x/a/b/":      "/a/b/",
-	} {
-		u, ok := parseURL(href)
-		if !ok || u.pathname != want {
-			t.Errorf("%s: got %q (ok %v), want %q", href, u.pathname, ok, want)
-		}
-	}
-	// End to end: examples the client accepts (checked against
+func TestExamplesWithDotSegmentsKeyLikeTheClient(t *testing.T) {
+	// Examples the client accepts (checked against
 	// parseDescriptor) are accepted here too.
 	for _, ex := range []string{
 		`{"url":"https://www.youtube.com/watch/../watch?v=abc","key":"yt:abc"}`,

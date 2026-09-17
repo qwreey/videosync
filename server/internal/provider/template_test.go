@@ -40,6 +40,10 @@ type templateVectors struct {
 			Captures *map[string]string `json:"captures"`
 		} `json:"cases"`
 	} `json:"query"`
+	Pathnames []struct {
+		URL      string `json:"url"`
+		Pathname string `json:"pathname"`
+	} `json:"pathnames"`
 	InvalidQuery []map[string]any `json:"invalidQuery"`
 	Substitute   []struct {
 		Template string            `json:"template"`
@@ -66,7 +70,7 @@ func capsEqual(got map[string]string, want *map[string]string) bool {
 func TestTemplateVectors(t *testing.T) {
 	var v templateVectors
 	readVectors(t, "templates.json", &v)
-	if len(v.Path) == 0 || len(v.Query) == 0 || len(v.Hosts) == 0 {
+	if len(v.Path) == 0 || len(v.Query) == 0 || len(v.Pathnames) == 0 || len(v.Hosts) == 0 {
 		t.Fatal("vectors did not load")
 	}
 
@@ -95,6 +99,11 @@ func TestTemplateVectors(t *testing.T) {
 			if got := matchQuery(tpl, c.Search); !capsEqual(got, c.Captures) {
 				t.Errorf("%v vs %q: got %v, want %v", g.Template, c.Search, got, c.Captures)
 			}
+		}
+	}
+	for _, c := range v.Pathnames {
+		if u, ok := parseURL(c.URL); !ok || u.pathname != c.Pathname {
+			t.Errorf("%s: pathname %q (ok %v), want %q", c.URL, u.pathname, ok, c.Pathname)
 		}
 	}
 	for _, q := range v.InvalidQuery {
