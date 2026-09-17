@@ -208,6 +208,12 @@ export interface EngineEvents {
    * follow the room no matter what the server does.
    */
   onAutoplayBlocked?(): void;
+  /**
+   * A refused autoplay no longer applies: the element was seen playing --
+   * started by a key on the site's player or a media key, which the overlay
+   * does not catch. The click-to-sync prompt can go.
+   */
+  onAutoplayUnblocked?(): void;
   onAnchor?(a: Anchor): void;
   /** The acquisition state changed. `fought` is worth telling the member. */
   onAcquisition?(s: AcquisitionState): void;
@@ -1411,6 +1417,21 @@ export class SyncEngine {
   }
 
   /**
+   * A refused autoplay is over once the element is seen playing. The overlay
+   * catches clicks, not keys: Space on the site's player or an OS media key
+   * starts the element with the page's own gesture, and the member stayed
+   * "blocked" -- unjudged, reported absent, its presses unsent -- until it
+   * clicked the overlay anyway or the room happened to move (review 4 N18).
+   * Before the detector runs, so a press made that way is classified like any.
+   */
+  private noticeUnblocked(state: PlayerState): void {
+    if (!this.autoplayBlocked || state.paused || state.ended) return;
+    this.autoplayBlocked = false;
+    this.gestureRetryPending = false;
+    this.ev.onAutoplayUnblocked?.();
+  }
+
+  /**
    * Retry a refused play from inside a user gesture.
    *
    * If the room is paused right now there is nothing to play, and the earlier
@@ -1528,6 +1549,7 @@ export class SyncEngine {
 
     const now = this.d.now();
     const state = this.d.adapter.readState();
+    this.noticeUnblocked(state);
 
     this.nameRoomIfUnnamed(state);
     this.continueWhenShown();

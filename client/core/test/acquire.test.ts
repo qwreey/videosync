@@ -55,6 +55,7 @@ function harness(o: Opts = {}) {
   const g = new FakeGestures(vt);
   const acq: string[] = [];
   const errors: string[] = [];
+  const unblocked: number[] = [];
   const tab = { hidden: false };
   const engine = new SyncEngine({
     adapter: o.adapter ? o.adapter(player) : player,
@@ -66,10 +67,11 @@ function harness(o: Opts = {}) {
   }, {
     onAcquisition: (s) => { acq.push(s); },
     onError: (c) => { errors.push(c); },
+    onAutoplayUnblocked: () => { unblocked.push(vt.now); },
   });
   let seq = 0;
   const h = {
-    vt, player, tr, engine, g, acq, errors, tab,
+    vt, player, tr, engine, g, acq, errors, unblocked, tab,
     cmds: () => tr.sentOf('cmd'),
     kinds: () => tr.sentOf('cmd').map((c) => c.kind),
     lastHb: () => tr.sentOf('hb').at(-1)!,
@@ -1540,4 +1542,59 @@ describe('a hidden tab on the room\'s media', () => {
     await h.vt.advance(50);
     assert.equal(h.player.seeks, seeks + 1);
   });
+});
+
+describe('a member whose autoplay was refused', () => {
+  // The overlay takes clicks, not keys: Space on the site's player or an OS
+  // media key still starts the element. That member used to stay "blocked" --
+  // unjudged, reported absent, its own presses unsent -- until it clicked the
+  // overlay or the room moved (review 4 N18).
+  const PLAYING = { positionMs: 100_000, atServerMs: OFFSET, paused: false };
+  for (const gestures of [true, false]) {
+    const tag = gestures ? '' : ' (no gesture evidence)';
+
+    async function blocked() {
+      const h = harness({ gestures, player: { paused: true, positionS: 0, autoplayBlocked: true } });
+      await h.join(PLAYING);
+      // Without gesture evidence the reconciler is what first presses play.
+      await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1500);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(h.lastHb().suspended, true);
+      return h;
+    }
+    /** Space on the site's own player: the page has its gesture now. */
+    async function spacePlays(h: H) {
+      h.g.press();
+      h.player.autoplayBlocked = false;
+      h.player.paused = false;
+      h.player.emit('play');
+      await h.vt.advance(1500);
+    }
+
+    it(`is no longer blocked once it plays by the keyboard, and is judged again${tag}`, async () => {
+      const h = await blocked();
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      assert.equal(h.unblocked.length, 1, 'the app was not told to take the overlay down');
+      assert.equal(h.lastHb().suspended, false, 'a playing member is still reported absent');
+      assert.deepEqual(h.kinds(), [], 'a play that agrees with the room was sent');
+    });
+
+    it(`sends its press when the room was paused meanwhile${tag}`, async () => {
+      const h = await blocked();
+      await h.state({ positionMs: 101_000, paused: true }, 'pause');
+      await h.vt.advance(500);
+      await spacePlays(h);
+      assert.equal(h.engine.blocked, false);
+      assert.deepEqual(h.kinds(), ['play']);
+    });
+
+    it(`control: stays blocked while its element stays paused${tag}`, async () => {
+      const h = await blocked();
+      await h.vt.advance(10_000);
+      assert.equal(h.engine.blocked, true);
+      assert.equal(h.unblocked.length, 0);
+      assert.equal(h.lastHb().suspended, true);
+    });
+  }
 });
