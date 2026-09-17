@@ -1576,9 +1576,9 @@ export class SyncEngine {
     // was left to the seed (`pressSeeds`), and `toSteady` put the seed off
     // until the clock could schedule its acks. Nothing else ever ran it -- the
     // press was never sent and the room was defended against its creator
-    // (review 4 N19). Sent now, by the same rule.
-    if (this.gating() && this.acq.state === 'steady' && this.adoptFor !== null && this.clock.ready &&
-      this.adoptFor === this.anchor.mediaKey && this.onRoomMedia()) {
+    // (review 4 N19). Retried here; `toSteady` itself decides whether the
+    // seed can go yet (the room's media, a settled clock).
+    if (this.gating() && this.acq.state === 'steady' && this.adoptFor !== null) {
       this.toSteady(now, state);
     }
     this.sendOfflineChanges(now, state);
