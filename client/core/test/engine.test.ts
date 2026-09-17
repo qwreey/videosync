@@ -502,20 +502,43 @@ describe('buffering', () => {
     assert.ok(h.engine.detector.stallDetections > stalls, 'the freeze was not recognised as a stall');
   });
 
-  it('holds back an unready report while the buffer is full, briefly', async () => {
-    // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
-    // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
+  /**
+   * A playing member whose element reads `readyState` 1 with its buffer
+   * intact for `unreadyMs`, placed over a heartbeat that is due: without that,
+   * nothing would be sent inside the window whether or not it is held back.
+   */
+  async function unreadyOverHeartbeat(unreadyMs: number) {
     const h = harness({ paused: false, positionS: 10 });
     await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
     await h.vt.advance(1000);
     h.tr.sent.length = 0;
+    // Find the heartbeat cadence, then open the window just before the next one.
+    while (h.tr.sentOf('hb').length === 0) await h.vt.advance(10);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.hbIntervalMs - 50);
+    const before = h.tr.sentOf('hb').length;
     h.player.readyState = 1;                      // mid-seek, buffer intact
-    await h.vt.advance(150);
+    for (let t = 0; t < unreadyMs; t += 10) await h.vt.advance(10);
+    const during = h.tr.sentOf('hb').slice(before);
     h.player.readyState = 4;                      // seeked
     await h.vt.advance(1500);
+    return { h, during };
+  }
+
+  it('holds back an unready report while the buffer is full, briefly', async () => {
+    // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
+    // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
+    const { h, during } = await unreadyOverHeartbeat(200);
+    assert.deepEqual(during, [], 'a heartbeat fell due mid-seek and was sent anyway');
     assert.ok(h.tr.sentOf('hb').every((f) => f.readyState === 4),
       'a mid-seek readyState reached the server');
     assert.ok(h.engine.stats.reportsDeferred >= 1);
+  });
+
+  it('control: the same window, held longer than the deferral, is reported', async () => {
+    // Same placement, so the test above is not passing on a window that no
+    // heartbeat could have fallen into.
+    const { during } = await unreadyOverHeartbeat(600);
+    assert.ok(during.some((f) => f.readyState === 1), 'the window covered no heartbeat');
   });
 
   it('still reports a player that stays unready with a full buffer', async () => {
