@@ -29,6 +29,10 @@ func TestTheServerHasReadAndIdleTimeouts(t *testing.T) {
 	if d.read < d.header {
 		t.Errorf("read %v < header %v: a request's whole read cannot be shorter than its headers'", d.read, d.header)
 	}
+	srv := newHTTPServer("", http.NotFoundHandler(), d)
+	if srv.ReadHeaderTimeout != d.header || srv.ReadTimeout != d.read || srv.IdleTimeout != d.idle {
+		t.Errorf("newHTTPServer set header %v read %v idle %v, want %+v", srv.ReadHeaderTimeout, srv.ReadTimeout, srv.IdleTimeout, d)
+	}
 }
 
 // scaled is defaultTimeouts shrunk so a test can outwait it.
@@ -104,6 +108,10 @@ func TestAnIdleKeepAliveConnectionIsClosed(t *testing.T) {
 	}
 }
 
+// What keeps the socket alive here is net/http's Hijack, which clears the
+// connection's deadlines as it hands it over; this passes even if
+// ws.Conn.ReadMessage never set one. ws.Conn's own deadline is guarded in
+// internal/ws (TestReadDeadlineFiresOnASilentPeer).
 func TestAWebSocketOutlivesTheRequestTimeout(t *testing.T) {
 	addr := serve(t, scaled)
 	resp, err := http.Post("http://"+addr+"/api/rooms", "application/json", strings.NewReader(`{"mediaKey":"yt:abc"}`))
