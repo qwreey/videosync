@@ -502,20 +502,43 @@ describe('buffering', () => {
     assert.ok(h.engine.detector.stallDetections > stalls, 'the freeze was not recognised as a stall');
   });
 
-  it('holds back an unready report while the buffer is full, briefly', async () => {
-    // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
-    // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
+  /**
+   * A playing member whose element reads `readyState` 1 with its buffer
+   * intact for `unreadyMs`, placed over a heartbeat that is due: without that,
+   * nothing would be sent inside the window whether or not it is held back.
+   */
+  async function unreadyOverHeartbeat(unreadyMs: number) {
     const h = harness({ paused: false, positionS: 10 });
     await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false });
     await h.vt.advance(1000);
     h.tr.sent.length = 0;
+    // Find the heartbeat cadence, then open the window just before the next one.
+    while (h.tr.sentOf('hb').length === 0) await h.vt.advance(10);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.hbIntervalMs - 50);
+    const before = h.tr.sentOf('hb').length;
     h.player.readyState = 1;                      // mid-seek, buffer intact
-    await h.vt.advance(150);
+    for (let t = 0; t < unreadyMs; t += 10) await h.vt.advance(10);
+    const during = h.tr.sentOf('hb').slice(before);
     h.player.readyState = 4;                      // seeked
     await h.vt.advance(1500);
+    return { h, during };
+  }
+
+  it('holds back an unready report while the buffer is full, briefly', async () => {
+    // BROWSER-FINDINGS §14: an in-buffer seek on Laftel reads readyState 1
+    // with 45 s ahead for ~100 ms. Sent, it gates the room for nothing.
+    const { h, during } = await unreadyOverHeartbeat(200);
+    assert.deepEqual(during, [], 'a heartbeat fell due mid-seek and was sent anyway');
     assert.ok(h.tr.sentOf('hb').every((f) => f.readyState === 4),
       'a mid-seek readyState reached the server');
     assert.ok(h.engine.stats.reportsDeferred >= 1);
+  });
+
+  it('control: the same window, held longer than the deferral, is reported', async () => {
+    // Same placement, so the test above is not passing on a window that no
+    // heartbeat could have fallen into.
+    const { during } = await unreadyOverHeartbeat(600);
+    assert.ok(during.some((f) => f.readyState === 1), 'the window covered no heartbeat');
   });
 
   it('still reports a player that stays unready with a full buffer', async () => {
@@ -542,6 +565,107 @@ describe('reconnect', () => {
     const connects = h.tr.connects;
     await h.vt.advance(600);
     assert.equal(h.tr.connects, connects + 1);
+  });
+
+  /**
+   * A member playing with a room of two at 10 s loses its link, `offline`
+   * does something to the player 200 ms later, and the session comes back
+   * 800 ms after that into the room as `anchor` and `seq` say -- by default,
+   * exactly the room it left. `beforeDrop` runs in the same instant as the
+   * drop, so nothing evaluates in between.
+   */
+  async function changedWhileAway(
+    offline: (p: FakePlayer, h: Harness) => void,
+    o: { anchor?: Partial<Anchor>; seq?: number; beforeDrop?: (p: FakePlayer) => void } = {},
+  ) {
+    const h = harness({ paused: false, positionS: 10 });
+    await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
+    await h.vt.advance(2000);
+    o.beforeDrop?.(h.player);
+    h.tr.drop('link blip');
+    await h.vt.advance(200);
+    offline(h.player, h);
+    await h.vt.advance(800);
+    h.tr.open();
+    h.tr.deliver({
+      t: 'welcome', you: 'me-1', seq: o.seq ?? 0,
+      anchor: {
+        mediaKey: 'yt:abc',
+        ...(o.anchor ?? { positionMs: 10_000, atServerMs: OFFSET, paused: false }),
+      },
+      members: [{ id: 'me-1', name: 'm0', suspended: false, ready: true }, { id: 'o', name: 'o', suspended: false, ready: true }],
+      serverMs: h.vt.now + OFFSET, mediaKey: 'yt:abc',
+    });
+    await h.vt.advance(600);
+    return h;
+  }
+
+  it('sends a pause made while reconnecting, rather than undoing it', async () => {
+    const h = await changedWhileAway((p) => { p.paused = true; });
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['pause'], 'the member\'s pause never reached the room');
+    assert.ok(Math.abs(cmds[0]!.positionMs - 12_200) < 300, `paused at ${cmds[0]!.positionMs}`);
+  });
+
+  it('sends a seek made while reconnecting', async () => {
+    const h = await changedWhileAway((p) => { p.positionS = 300; });
+    const cmds = h.tr.sentOf('cmd');
+    assert.deepEqual(cmds.map((c) => c.kind), ['seek']);
+    assert.ok(Math.abs(cmds[0]!.positionMs - 301_400) < 500, `seeked to ${cmds[0]!.positionMs}`);
+  });
+
+  it('control: a player that just kept playing sends nothing', async () => {
+    const h = await changedWhileAway(() => {});
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+  });
+
+  it('control: a player that stalled while away is not read as a seek', async () => {
+    const h = await changedWhileAway((p) => p.stall());
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'a stall offline dragged the room back');
+  });
+
+  it('does not send a jump offline that lands where the room is', async () => {
+    // Behind the room when the link went, then moved onto it: that is
+    // catching up, and the room has nowhere to be sent.
+    const h = await changedWhileAway((p, hh) => {
+      p.readState();
+      p.positionS = (hh.vt.now + 10_000) / 1000;
+    }, { beforeDrop: (p) => { p.readState(); p.positionS = 5; } });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'a member catching up to the room sent the room a seek');
+    assert.ok(Math.abs(h.player.positionS * 1000 - (h.vt.now + 10_000)) < 300, `at ${h.player.positionS}`);
+  });
+
+  it('control: the same member jumping elsewhere sends the seek', async () => {
+    const h = await changedWhileAway((p) => { p.readState(); p.positionS = 300; },
+      { beforeDrop: (p) => { p.readState(); p.positionS = 5; } });
+    assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['seek']);
+  });
+
+  it('follows a room another member moved while away, over its own pause', async () => {
+    // Somebody seeked the playing room to 50 s while this member was
+    // offline pausing: the room's move is newer, and the pause is dropped.
+    const moved = { positionMs: 50_000, atServerMs: OFFSET + 2700, paused: false };
+    const h = await changedWhileAway((p) => { p.paused = true; }, { anchor: moved, seq: 1 });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an older offline pause overrode the room');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+    assert.equal(h.player.paused, false, 'the member was left paused against the room');
+    const room = 50_000 + (h.vt.now + OFFSET - moved.atServerMs);
+    assert.ok(Math.abs(h.player.positionS * 1000 - room) < 500, `at ${h.player.positionS}, room at ${room}`);
+  });
+
+  it('follows a room another member moved while away, over its own seek', async () => {
+    const moved = { positionMs: 50_000, atServerMs: OFFSET + 2700, paused: true };
+    const h = await changedWhileAway((p) => { p.positionS = 300; }, { anchor: moved, seq: 1 });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an older offline seek overrode the room');
+  });
+
+  it('control: a room that moved while away is followed, not overridden', async () => {
+    const h = await changedWhileAway(() => {},
+      { anchor: { positionMs: 50_000, atServerMs: OFFSET + 3000, paused: true }, seq: 1 });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.deepEqual(h.tr.sentOf('cmd'), []);
+    assert.equal(h.player.paused, true);
   });
 
   it('reconnects with the secret the room rotated to, not the one it joined with', async () => {

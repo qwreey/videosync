@@ -44,18 +44,21 @@ interface Opts {
   gestures?: boolean;
   continues?: EngineDeps['continues'];
   adapter?: (p: FakePlayer) => EngineDeps['adapter'];
+  /** A player that ends as the HTML spec says. See `SpecPlayer`. */
+  spec?: boolean;
 }
 
 function harness(o: Opts = {}) {
   const vt = new VirtualTime();
-  const player = new FakePlayer(vt, { durationS: 1400, ...o.player });
+  const player = new (o.spec ? SpecPlayer : FakePlayer)(vt, { durationS: 1400, ...o.player });
   const tr = new FakeTransport();
   const g = new FakeGestures(vt);
   const acq: string[] = [];
   const errors: string[] = [];
+  const tab = { hidden: false };
   const engine = new SyncEngine({
     adapter: o.adapter ? o.adapter(player) : player,
-    transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => false,
+    transport: tr, now: () => vt.now, setTimer: vt.setTimer, clearTimer: vt.clearTimer, isHidden: () => tab.hidden,
     ...(o.gestures === false ? {} : { gestures: g }),
     ...(o.continues ? { continues: o.continues } : {}),
   }, {
@@ -66,7 +69,7 @@ function harness(o: Opts = {}) {
   });
   let seq = 0;
   const h = {
-    vt, player, tr, engine, g, acq, errors,
+    vt, player, tr, engine, g, acq, errors, tab,
     cmds: () => tr.sentOf('cmd'),
     kinds: () => tr.sentOf('cmd').map((c) => c.kind),
     lastHb: () => tr.sentOf('hb').at(-1)!,
@@ -344,6 +347,101 @@ describe('the end of the media', () => {
     h.player.emit('pause');
     await h.vt.advance(20);
     assert.deepEqual(h.kinds(), ['pause']);
+  });
+});
+
+/**
+ * The end of media as the HTML spec has it, which FakePlayer does not model:
+ * a seek clamps to the duration, playback that reaches the end pauses and
+ * sets `ended`, and play() on an ended element seeks back to 0 first.
+ */
+class SpecPlayer extends FakePlayer {
+  restarts = 0;
+  private atEnd(): void {
+    if (this.positionS < this.durationS) { this.ended = false; return; }
+    this.positionS = this.durationS;
+    this.ended = true;
+    this.paused = true;
+  }
+  override readState() {
+    super.readState();
+    this.atEnd();
+    return super.readState();
+  }
+  override async seekTo(positionS: number): Promise<void> {
+    await super.seekTo(Math.max(0, Math.min(positionS, this.durationS)));
+    this.atEnd();
+  }
+  override async play(): Promise<void> {
+    if (this.ended) {
+      this.restarts++;
+      this.positionS = 0;
+      this.ended = false;
+    }
+    await super.play();
+  }
+}
+
+describe('an ended element and the room\'s transitions', () => {
+  /** A room of two playing at `positionS`, and a steady member with it. */
+  async function playing(positionS: number) {
+    const h = harness({ spec: true, player: { paused: false, positionS } });
+    await h.join({ positionMs: positionS * 1000, atServerMs: OFFSET, paused: false });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    return { h, p: h.player as SpecPlayer };
+  }
+
+  it('a room seeked to the end leaves the member there, not at the start', async () => {
+    const { h, p } = await playing(1000);
+    await h.state({ positionMs: 1_400_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.ok(p.positionS > 1399, `at ${p.positionS}`);
+    assert.ok(!h.kinds().includes('seek'), 'a restart was sent to the room');
+  });
+
+  it('a member who already ended is not restarted by a pause and play just short of the end', async () => {
+    const { h, p } = await playing(1399);
+    await h.vt.advance(1500); // plays to its end
+    assert.equal(p.ended, true);
+    await h.state({ positionMs: 1_399_850, paused: true }, 'pause');
+    await h.state({ positionMs: 1_399_850, paused: false }, 'play');
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.deepEqual(h.kinds(), []);
+  });
+
+  it('the member who scrubs to the end is not restarted by its own ack', async () => {
+    const { h, p } = await playing(1000);
+    h.g.press();
+    await p.seekTo(1400);
+    p.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek']);
+    await h.ack(h.cmds()[0]!, { positionMs: 1_400_000, paused: false });
+    await h.vt.advance(500);
+    assert.equal(p.restarts, 0, `play() restarted the ended element, now at ${p.positionS}`);
+    assert.deepEqual(h.kinds(), ['seek']);
+  });
+
+  it('control: a room seeked short of the end is played', async () => {
+    const { h, p } = await playing(1000);
+    await h.state({ positionMs: 1_390_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.paused, false);
+    assert.ok(p.positionS > 1390, `at ${p.positionS}`);
+  });
+
+  it('control: an ended member is played again by a room seeked back into the media', async () => {
+    const { h, p } = await playing(1399);
+    await h.vt.advance(1500);
+    assert.equal(p.ended, true);
+    await h.state({ positionMs: 600_000, paused: false }, 'seek');
+    await h.vt.advance(500);
+    assert.equal(p.paused, false);
+    assert.equal(p.restarts, 0);
+    assert.ok(Math.abs(p.positionS - 600.5) < 0.3, `at ${p.positionS}`);
   });
 });
 
@@ -845,6 +943,70 @@ async function rejoin(h: H, seq: number, anchor: Partial<Anchor>) {
   await h.vt.advance(400);
 }
 
+describe('a pause made while the session is down', () => {
+  const ROOM = { positionMs: 100_000, atServerMs: OFFSET, paused: false };
+
+  /**
+   * Playing in a playing room, the link drops; 200 ms later the player is
+   * paused -- by a press if `pressed`, else by nobody we saw. `hidden` hides
+   * the tab first, and `muted` makes the playback one that never made a
+   * sound. The session comes back into `room` at `seq`.
+   */
+  async function pausedAway(pressed: boolean, o: {
+    hidden?: boolean; muted?: boolean; room?: Partial<Anchor>; seq?: number;
+  } = {}) {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    h.player.muted = o.muted ?? false;
+    await h.join(ROOM);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    h.tr.drop();
+    await h.vt.advance(200);
+    if (pressed) h.g.press();
+    if (o.hidden) h.tab.hidden = true;
+    h.player.readState();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await rejoin(h, o.seq ?? 0, o.room ?? ROOM);
+    return h;
+  }
+
+  it('is sent when a gesture made it', async () => {
+    const h = await pausedAway(true);
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('control: with no gesture after the drop it is the site\'s, and put back', async () => {
+    const h = await pausedAway(false);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.player.paused, false);
+  });
+
+  it('is not sent when it is the browser\'s pause of a hidden tab that never made a sound', async () => {
+    // The member clicked, then switched tabs; the browser paused the muted
+    // playback. Live, the detector calls that `suspended` and sends nothing.
+    const h = await pausedAway(true, { hidden: true, muted: true });
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the browser\'s background pause paused the room');
+  });
+
+  it('control: a pause in a hidden tab that has made a sound is the member\'s (a media key)', async () => {
+    const h = await pausedAway(true, { hidden: true });
+    assert.deepEqual(h.kinds(), ['pause']);
+  });
+
+  it('is not sent over a room somebody else moved meanwhile', async () => {
+    const moved = { positionMs: 400_000, atServerMs: OFFSET + 1000, paused: false };
+    const h = await pausedAway(true, { room: moved, seq: 1 });
+    assert.deepEqual(h.kinds(), [], 'an older offline pause overrode the room');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.player.paused, false, 'the member did not follow the room');
+    assert.ok(h.player.positionS > 390, `left at ${h.player.positionS}`);
+  });
+});
+
 describe('a creator that reconnects while it loads', () => {
   async function loadingCreator() {
     const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
@@ -1037,6 +1199,23 @@ describe('a seeder whose site keeps moving its player', () => {
     assert.ok(Math.abs(h.cmds()[0]!.positionMs - 700_000) < 1000, `seeded at ${h.cmds()[0]!.positionMs}`);
   });
 
+  it('sends the member\'s press when somebody else moved the room meanwhile', async () => {
+    // No seed will be sent over the other member's move, so nothing else
+    // carries the press.
+    for (const adopt of [true, false]) {
+      const h = await restless(adopt ? { adoptLocalStateOnJoin: true } : {});
+      assert.equal(h.engine.acquisition, 'fought');
+      await h.state({ positionMs: 50_000, paused: false }, 'play');
+      h.g.press();
+      h.player.positionS = 300;
+      h.player.emit('seeked');
+      await h.vt.advance(50);
+      assert.equal(h.engine.acquisition, 'steady');
+      assert.deepEqual(h.kinds(), ['seek'], `adopt=${adopt}: the press never reached the room`);
+      assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `sent ${h.cmds()[0]!.positionMs}`);
+    }
+  });
+
   it('control: a joiner under the same site reaches the bound too', async () => {
     const h = await restless({});
     assert.equal(h.engine.acquisition, 'fought');
@@ -1073,6 +1252,78 @@ describe('a creator of a room with no media, who then names it', () => {
   });
 });
 
+describe('an element with no finite duration (a live stream)', () => {
+  // Html5Adapter reports an Infinity or NaN duration as 0; past HAVE_METADATA
+  // it is Infinity, not unknown.
+  it('is acquired, and follows the room', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 0 } });
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.equal(h.lastHb().acquiring, undefined, 'held every play of the room for good');
+    await h.state({ positionMs: 30_000, paused: false }, 'play');
+    await h.vt.advance(500);
+    assert.equal(h.player.paused, false, 'the room\'s play was never applied');
+    assert.equal(h.engine.stats.skippedAcquiring, 0);
+  });
+
+  it('names a room that names nothing', async () => {
+    const h = harness({ player: { paused: false, positionS: 42, durationS: 0 } });
+    await h.join({ mediaKey: '' }, 2);
+    assert.deepEqual(h.kinds(), ['media']);
+  });
+
+  it('control: an element with no metadata yet is still waited for', async () => {
+    const h = harness({ player: { paused: true, positionS: 0, durationS: 0 } });
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.lastHb().acquiring, true);
+  });
+});
+
+describe('a creator moved by somebody else, then pressed', () => {
+  it('while still loading: the press is sent', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    h.player.readyState = 1;
+    await h.join({}, 2);
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    assert.equal(h.engine.acquisition, 'detached');
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek'], 'the press was dropped');
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `sent ${h.cmds()[0]!.positionMs}`);
+  });
+
+  it('while guarded: the press is sent, and the player is not put back over it', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    assert.equal(h.engine.acquisition, 'guarded');
+    await h.state({ positionMs: 50_000, paused: true }, 'seek');
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.equal(h.engine.acquisition, 'steady');
+    assert.deepEqual(h.kinds(), ['seek'], 'the press was dropped');
+    assert.ok(Math.abs(h.player.positionS - 300) < 0.3, `put back to ${h.player.positionS}`);
+  });
+
+  it('control: with nobody else moving the room, the press is carried by the seed', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 2);
+    h.g.press();
+    h.player.positionS = 300;
+    h.player.emit('seeked');
+    await h.vt.advance(50);
+    assert.deepEqual(h.kinds(), ['seek']);
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 300_000) < 1000, `seeded at ${h.cmds()[0]!.positionMs}`);
+  });
+});
+
 describe('the creator, moved while still loading', () => {
   it('conforms at once rather than waiting out a seed it will not send', async () => {
     const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
@@ -1104,5 +1355,71 @@ describe('a namer that lost the race', () => {
     await h.vt.advance(100);
     assert.deepEqual(h.kinds(), ['media', 'play']);
     assert.equal(h.player.paused, true, 'the play ran ahead of the room: a refused naming still counted as ours');
+  });
+});
+
+describe('a hidden tab on the room\'s media', () => {
+  it('whose media has not loaded is absent, so the room does not wait for it', async () => {
+    // Media does not load in a hidden tab at all (BROWSER-FINDINGS §5b): an
+    // invite opened in a background tab sits at readyState 0 until shown.
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.tab.hidden = true;
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    assert.equal(h.engine.acquisition, 'detached');
+    assert.equal(h.lastHb().acquiring, undefined);
+    assert.equal(h.lastHb().suspended, true, 'judged present at readyState 0: the room gates every play on it');
+    // Shown, it is on its way again.
+    h.tab.hidden = false;
+    await h.vt.advance(1100);
+    assert.equal(h.lastHb().acquiring, true);
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  it('control: the same member in a visible tab is acquiring, not absent', async () => {
+    const h = harness({ player: { paused: true, positionS: 0 } });
+    h.player.readyState = 0;
+    await h.join({ positionMs: 30_000, atServerMs: OFFSET, paused: true });
+    await h.vt.advance(3000);
+    assert.equal(h.lastHb().acquiring, true);
+    assert.equal(h.lastHb().suspended, false);
+  });
+
+  async function hiddenSeeder() {
+    const h = harness({ player: { paused: true, positionS: 0 }, cfg: { adoptLocalStateOnJoin: true } });
+    await h.join({}, 1);
+    h.player.positionS = 813; // the site's resume, then its autoplay
+    h.player.emit('seeked');
+    await h.siteAutoplay();
+    assert.equal(h.engine.acquisition, 'guarded');
+    assert.equal(h.lastHb().acquiring, true);
+    await h.vt.advance(100);
+    h.tab.hidden = true; // the creator switches tabs to paste the invite
+    await h.vt.advance(150);
+    return h;
+  }
+
+  it('that is still to seed the room is absent, and not corrected to the placeholder', async () => {
+    const h = await hiddenSeeder();
+    assert.equal(h.lastHb().acquiring, undefined);
+    assert.equal(h.lastHb().suspended, true, 'judged against paused@0');
+    // A judgement the server made on an earlier report, arriving now.
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+    await h.vt.advance(50);
+    assert.ok(h.player.positionS > 800, `the seeder was moved to ${h.player.positionS}`);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.deepEqual(h.kinds(), ['seek', 'play']);
+    assert.ok(Math.abs(h.cmds()[0]!.positionMs - 813_000) < 2000, `seeded at ${h.cmds()[0]!.positionMs}`);
+  });
+
+  it('control: a correction reaches a seeder that has seeded', async () => {
+    const h = await hiddenSeeder();
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 200);
+    assert.equal(h.engine.acquisition, 'steady');
+    const seeks = h.player.seeks;
+    h.tr.deliver({ t: 'correct', mode: 'seek', when: h.serverNow() });
+    await h.vt.advance(50);
+    assert.equal(h.player.seeks, seeks + 1);
   });
 });

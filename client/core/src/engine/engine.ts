@@ -317,6 +317,8 @@ export interface EngineStats {
   fought: number;
   /** Pauses made by the end of the media, which are not a member's pause. */
   endsNotSent: number;
+  /** Room transitions to "playing" not pressed on an element at its end, which play() would restart. */
+  playsAtEnd: number;
   /** Our conditional `media` commands the room had already moved past. */
   mediaStale: number;
   /** Next-episode continuations sent. */
@@ -472,7 +474,7 @@ export class SyncEngine {
     skippedOffMedia: 0, supersededApplies: 0, connectFailures: 0, ticketFailures: 0,
     playFailures: 0, playsHeld: 0, reportsDeferred: 0, reconciles: 0,
     mediaEpochs: 0, acquisitions: 0, siteMovesAbsorbed: 0, ungesturedIgnored: 0,
-    gesturedIntents: 0, fought: 0, endsNotSent: 0, mediaStale: 0, continuations: 0,
+    gesturedIntents: 0, fought: 0, endsNotSent: 0, playsAtEnd: 0, mediaStale: 0, continuations: 0,
     namings: 0, adoptions: 0, skippedAcquiring: 0,
   };
 
@@ -537,6 +539,15 @@ export class SyncEngine {
   private connectGen = 0;
   /** A click to sync arrived when there was no session to sync to. */
   private gestureRetryPending = false;
+  /**
+   * The player as it was when a joined session dropped, so that what the
+   * member did to it before the next `welcome` can still be sent. See
+   * `sendOfflineChanges`.
+   */
+  private offline: {
+    at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
+    seq: number; anchor: Anchor;
+  } | null = null;
 
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
@@ -843,6 +854,7 @@ export class SyncEngine {
     this.pending = [];
     this.unacked = [];
     this.gestureRetryPending = false;
+    this.offline = null;
     this.connectGen++;
     this.ticket = '';
     this.d.transport.close();
@@ -964,6 +976,15 @@ export class SyncEngine {
     // longer exists. Keeping it would let a stale bias survive the one event
     // that could have cleared it.
     this.clock.reset();
+    // Only the first drop of a session records the player: a failed reconnect
+    // attempt has nothing newer to say about it.
+    if (this.status === 'joined') {
+      const s = this.d.adapter.readState();
+      this.offline = this.onRoomMedia() ? {
+        at: this.d.now(), positionS: s.positionS, paused: s.paused, rate: s.rate,
+        media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
+      } : null;
+    }
     this.detector.reset();
     // NOT zeroed: `welcome` sets it from the server, and zeroing it here
     // disarmed the supersede guard for any mutation still queued from the old
@@ -1303,8 +1324,14 @@ export class SyncEngine {
       }
       if (paused) {
         await a.pause();
-      } else {
+      } else if (!this.atEnd(targetMs)) {
         await this.tryPlay();
+      } else {
+        // play() on an ended element seeks it to 0 first (HTML spec), so the
+        // room's own transition would start this member over -- and a seek
+        // that lands on the duration ends the element itself. At the end of
+        // the media the member is finished, which is where the room is too.
+        this.stats.playsAtEnd++;
       }
     } finally {
       this.applyingRemote = null;
@@ -1315,6 +1342,12 @@ export class SyncEngine {
       // sent by `evaluate`, so adopting it here loses nothing.
       this.detector.rebaseline(s.positionS, s.paused);
     }
+  }
+
+  /** Whether the element is at its end, or `targetMs` is (read after any seek). */
+  private atEnd(targetMs: number): boolean {
+    const s = this.d.adapter.readState();
+    return s.ended === true || (s.durationS > 0 && landsAt(targetMs, s.durationS) >= s.durationS * 1000);
   }
 
   private async tryPlay(): Promise<void> {
@@ -1396,8 +1429,9 @@ export class SyncEngine {
     if (!this.onRoomMedia()) return;
     if (mode === 'seek' && !this.clock.ready) return;
     // Judged on a report sent before we started acquiring: stale, and the
-    // conform step is about to do better.
-    if (this.acquiring()) return;
+    // conform step is about to do better. Hidden or not: a hidden seeder moved
+    // to the room's placeholder would seed the room from there.
+    if (this.unacquired()) return;
     if (mode === 'nudge') {
       if (!a.capabilities.supportsPlaybackRateNudge) {
         // A provider that fights playbackRate gets seek-only correction. Count
@@ -1474,6 +1508,7 @@ export class SyncEngine {
         this.adoptLocalState(state);
       }
     }
+    this.sendOfflineChanges(now, state);
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
 
@@ -1528,10 +1563,11 @@ export class SyncEngine {
     // Watching something else is the same fact to the server as a suspended tab
     // or a refused autoplay: this member cannot follow the room and no
     // correction can change that. Absent, not behind. So is a member whose
-    // video has ended, and one whose site took the player over.
+    // video has ended, one whose site took the player over, and one that would
+    // be acquiring but for a hidden tab (see `unacquired`).
     const absent = !acquiring && (
       report.suspended || this.autoplayBlocked || !onRoomMedia || finished || this.acq.state === 'fought' ||
-      (this.acq.state === 'detached' && this.acq.pastEnd));
+      (this.acq.state === 'detached' && this.acq.pastEnd) || this.unacquired());
 
     // An absent member is no longer judged, so any rate the servo left behind
     // would stick forever -- including onto whatever they navigate to next,
@@ -1584,7 +1620,19 @@ export class SyncEngine {
    * was seeded, and judging it would seek it to the room's placeholder.
    */
   private acquiring(): boolean {
-    if (!this.gating() || this.autoplayBlocked || this.d.isHidden()) return false;
+    return this.unacquired() && !this.d.isHidden();
+  }
+
+  /**
+   * `acquiring()`, whether or not the tab is visible. A hidden tab in this
+   * state is not on its way -- its media does not load until it is shown
+   * (BROWSER-FINDINGS §5b) -- so it is reported absent rather than gated on.
+   * It is still not on the room's timeline, though: judged, a hidden member at
+   * readyState 0 gates every play, and a hidden seeder is corrected to the
+   * room's placeholder and then seeds the room from there.
+   */
+  private unacquired(): boolean {
+    if (!this.gating() || this.autoplayBlocked) return false;
     const a = this.acq;
     if (this.onRoomMedia()) {
       return (a.state === 'detached' && !a.pastEnd) || a.state === 'conforming' ||
@@ -1635,7 +1683,7 @@ export class SyncEngine {
       // The panel asked for a press, so any press ends it -- including one
       // that agrees with the room, which the echo test below would swallow.
       this.stats.gesturedIntents++;
-      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
+      const adopting = this.pressSeeds();
       this.toSteady(now, state);
       // A seeder the site fought: the adoption carries the press (below).
       if (!adopting) this.act(o, state);
@@ -1653,7 +1701,7 @@ export class SyncEngine {
     }
     if (this.intent(now)) {
       this.stats.gesturedIntents++;
-      const adopting = this.adoptFor !== null && this.adoptFor === this.anchor.mediaKey;
+      const adopting = this.pressSeeds();
       this.toSteady(now, state);
       // A creator's press is carried by the adoption, which sends the
       // position as well; the press alone (a `play` has none) would not.
@@ -1681,6 +1729,73 @@ export class SyncEngine {
       return;
     }
     this.stats.ungesturedIgnored++;
+  }
+
+  /**
+   * Whether a gestured press ends acquiring by seeding the room (`toSteady`),
+   * which then carries the press.
+   *
+   * Not once somebody else has moved the room: then no seed is sent, and from
+   * `fought` or `detached` nothing else would send the press -- it was
+   * dropped, and the reconciler undid it. Such a seeder is a joiner now, and
+   * its press is sent like one; the seed is given up here so that `toSteady`
+   * does not also put the player back to the room over the press.
+   */
+  private pressSeeds(): boolean {
+    if (this.adoptFor === null || this.adoptFor !== this.anchor.mediaKey) return false;
+    if (!this.foreignMove) return true;
+    this.adoptFor = null;
+    return false;
+  }
+
+  /**
+   * Send what the member did to the player while the session was down.
+   *
+   * Nothing is evaluated while not joined, and the detector is reset with the
+   * connection, so a pause made then became the new baseline: never sent,
+   * and undone by the reconciler `reconcileAfterMs` after the `welcome`.
+   * Compared once the clock can aim again, against the player as it was when
+   * the link dropped:
+   *
+   * - a play state that changed is sent, as `act` sends any (so not the end
+   *   of the media, and not one that agrees with the room as it is now);
+   * - a position is a seek only outside everything playback could have
+   *   reached meanwhile, and away from the room -- the detector's stall
+   *   range and two-diff test, so a player that stalled offline is not read
+   *   as a backward seek.
+   *
+   * Only in `steady`, and with gesture evidence only if an input came after
+   * the drop: nothing is evaluated offline, so no gesture window applies, and
+   * a site's own move in that time is left for the reconciler to put back.
+   *
+   * Only if the room did not move meanwhile, either: the anchor and `seq`
+   * are the ones the drop left. Anybody else's command is newer than what
+   * this member did offline, so the member follows the room. And never a
+   * pause the detector would have called `suspended`: the browser's own pause
+   * of a hidden tab that never made a sound pauses nobody else.
+   */
+  private sendOfflineChanges(now: number, state: PlayerState): void {
+    const o = this.offline;
+    if (!o || !this.clock.ready) return;
+    this.offline = null;
+    if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
+    if (this.acq.state !== 'steady' || this.autoplayBlocked || this.applyingRemote) return;
+    if (this.d.gestures && this.d.gestures.lastInputAt() < o.at) return;
+    const a = this.anchor;
+    if (this.lastAppliedSeq !== o.seq || a.mediaKey !== o.anchor.mediaKey || a.paused !== o.anchor.paused ||
+      a.positionMs !== o.anchor.positionMs || a.atServerMs !== o.anchor.atServerMs) return;
+    const pos = state.positionS * 1000;
+    const lo = o.positionS * 1000;
+    const ran = !o.paused || !state.paused;
+    const hi = ran ? lo + (now - o.at) * Math.max(0, o.rate, state.rate) : lo;
+    const jump = pos < lo ? lo - pos : pos > hi ? pos - hi : 0;
+    const expected = expectedAt(this.anchor, this.serverNow());
+    if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs) {
+      this.act({ kind: 'seek', positionS: state.positionS }, state);
+    }
+    if (state.paused !== o.paused && !(state.paused && this.detector.browserPaused(state))) {
+      this.act({ kind: 'playstate', paused: state.paused, positionS: state.positionS }, state);
+    }
   }
 
   /** The effect of our own in-flight transition, or agreement with the room. */
@@ -1761,7 +1876,8 @@ export class SyncEngine {
    */
   private nameRoomIfUnnamed(state: PlayerState): void {
     if (this.anchor.mediaKey !== '' || this.localMediaKey === '' || this.namedFor === this.localMediaKey) return;
-    if (!this.clock.ready || this.d.isHidden() || state.readyState < 1 || !(state.durationS > 0)) return;
+    // Metadata, not a finite duration: see `readyToAcquire`.
+    if (!this.clock.ready || this.d.isHidden() || state.readyState < 1) return;
     this.namedFor = this.localMediaKey;
     this.adoptFor = this.localMediaKey;
     this.foreignMove = false;
@@ -1807,12 +1923,17 @@ export class SyncEngine {
    */
   private readyToAcquire(now: number, state: PlayerState): boolean {
     if (!this.clock.ready || !this.onRoomMedia() || this.d.isHidden()) return false;
-    if (state.readyState < 1 || !(state.durationS > 0)) return false;
+    // HAVE_METADATA is where the duration becomes known -- and it can be
+    // Infinity (a live stream), which the adapter reports as 0. Waiting for a
+    // positive duration as well left such an element detached for good:
+    // acquiring forever, holding every play of the room, applying none.
+    if (state.readyState < 1) return false;
     const a = this.acq;
     if (a.metadataAt === 0) a.metadataAt = now;
     if (state.readyState < 3 && now - a.metadataAt < METADATA_ONLY_MS) return false;
     const expected = expectedAt(this.anchor, this.serverNow());
-    a.pastEnd = expected > state.durationS * 1000 + PAST_DURATION_SLACK_MS;
+    // With no end, nothing is past it.
+    a.pastEnd = state.durationS > 0 && expected > state.durationS * 1000 + PAST_DURATION_SLACK_MS;
     return !a.pastEnd;
   }
 
