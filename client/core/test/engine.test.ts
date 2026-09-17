@@ -1217,6 +1217,9 @@ describe('queued player work re-checks the session when it runs', () => {
     const parked = parkSeeks(h.player);
     const before = h.tr.sentOf('cmd').length;
     h.tr.deliver({ t: 'correct', mode: 'seek', when: h.vt.now + OFFSET });
+    // A real element is below HAVE_FUTURE_DATA for as long as its seek is in
+    // flight, so the user's pause is seen on an unready sample.
+    h.player.readyState = 1;
     await h.vt.advance(500);
     assert.equal(parked.length, 1);
 
@@ -1227,12 +1230,52 @@ describe('queued player work re-checks the session when it runs', () => {
     h.player.emit('seeked');
     await h.vt.advance(100);
     parked[0]!.release(false);                  // the engine's seek never took
+    h.player.readyState = 4;
     await h.vt.advance(100);
 
     const sent = h.tr.sentOf('cmd').slice(before);
     assert.deepEqual(sent.map((c) => c.kind), ['pause', 'seek'], `sent ${JSON.stringify(sent)}`);
     assert.ok(Math.abs(sent[1]!.positionMs - 500_000) < 1000);
   });
+
+  for (const readyState of [4, 2]) {
+    it(`a pause made while a room play waits on the element is sent (readyState ${readyState})`, async () => {
+      // No seek of ours: the member is already where the room plays from, so
+      // the transition only presses play -- and on an element below
+      // HAVE_FUTURE_DATA that play() stays pending. The member's pause in that
+      // window is unready and inside the apply, and is still the member's.
+      const h = harness({ paused: true, positionS: 100 });
+      await h.join({ positionMs: 100_000, atServerMs: OFFSET, paused: true }, 0, 2);
+      await h.vt.advance(1000);
+      const p = h.player;
+      p.readyState = readyState;
+      let reject: ((e: unknown) => void) | null = null;
+      p.play = () => {
+        p.paused = false; p.plays++;
+        if (readyState >= 3) return Promise.resolve();
+        return new Promise<void>((_, rj) => { reject = rj; });
+      };
+      const pause = p.pause.bind(p);
+      p.pause = async () => {
+        await pause();
+        reject?.(new DOMException('The play() request was interrupted by a call to pause().', 'AbortError'));
+        reject = null;
+      };
+      const when = h.vt.now + OFFSET;
+      h.tr.deliver({
+        t: 'state', seq: 1, when, emittedAt: when,
+        anchor: { positionMs: 100_000, atServerMs: when, paused: false, mediaKey: 'yt:abc' },
+        by: 'other-1', kind: 'play',
+      });
+      await h.vt.advance(300);
+      assert.equal(p.paused, false);
+      assert.equal(p.seeks, 0);
+      await p.pause();                            // the member pauses
+      p.emit('pause');
+      await h.vt.advance(100);
+      assert.deepEqual(h.tr.sentOf('cmd').map((c) => c.kind), ['pause']);
+    });
+  }
 
   it('a seek of the engine\'s that the element clamps to its end is not sent', async () => {
     // A room past this member's end: the element lands on its duration, far

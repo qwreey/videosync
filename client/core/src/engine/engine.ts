@@ -479,6 +479,11 @@ interface Applying {
   targetMs: number;
   /** The pause state it leaves behind. */
   paused: boolean;
+  /**
+   * It seeked, and its play() is now outstanding: the one window in which a
+   * site reacting to our seek pauses the element under that play().
+   */
+  seeked?: boolean;
 }
 
 /**
@@ -1486,11 +1491,14 @@ export class SyncEngine {
     targetMs: number, paused: boolean, toleranceMs: number, current: () => boolean,
   ): Promise<void> {
     const a = this.d.adapter;
-    this.applyingRemote = { targetMs, paused };
+    const applying: Applying = { targetMs, paused };
+    this.applyingRemote = applying;
     try {
       const cur = a.readState().positionS * 1000;
+      let seeked = false;
       if (Math.abs(cur - targetMs) > toleranceMs && a.capabilities.supportsDirectSeek) {
         await a.seekTo(targetMs / 1000).catch(() => { /* a stalled seek is reported, not thrown */ });
+        seeked = true;
       }
       if (!current()) {
         this.stats.supersededApplies++;
@@ -1499,6 +1507,7 @@ export class SyncEngine {
       if (paused) {
         await a.pause();
       } else if (!this.atEnd(targetMs)) {
+        applying.seeked = seeked;
         await this.tryPlay();
       } else {
         // play() on an ended element seeks it to 0 first (HTML spec), so the
@@ -2090,9 +2099,22 @@ export class SyncEngine {
     }
     if (o.kind === 'playstate') {
       return o.paused === this.roomAnchor().paused ||
-        (!!applying && (o.paused === applying.paused || !!o.unready));
+        (!!applying && (o.paused === applying.paused || this.underOwnSeek(o, applying)));
     }
     return true;
+  }
+
+  /**
+   * A pause seen unready while our own post-seek play() is outstanding: a
+   * site reacting to that seek pauses the element under the play() (the
+   * AbortError in `tryPlay`), and it is the transition's, left to its
+   * rebaseline and the reconciler. Nothing else an apply spans is -- not a
+   * correction's seek, a hold, or a play() waiting on an element we never
+   * seeked: a real element is unready through all of those, and a press made
+   * then is the member's.
+   */
+  private underOwnSeek(o: Observation, applying: Applying): boolean {
+    return o.kind === 'playstate' && o.paused && !!o.unready && !!applying.seeked && !applying.paused;
   }
 
   /** The member's own change: tell the room. */
@@ -2101,10 +2123,9 @@ export class SyncEngine {
     // user's: its seek lands near its own target (the room may have moved on
     // since, so the two-diff test alone is not enough there), and its pause
     // state is the one it was asked for. Anything else is still the user's --
-    // except a play state that changed while the element was unready: our
-    // seek is what made it unready, and a site reacting to that seek pauses
-    // the element under our play() (the AbortError in `tryPlay`). Left to the
-    // transition's rebaseline and the reconciler, as before review 4 N4.
+    // except a pause seen unready under the play() that follows our own seek
+    // (`underOwnSeek`). Left to the transition's rebaseline and the
+    // reconciler, as before review 4 N4.
     const applying = this.applyingRemote;
     if (o.kind === 'seek') {
       if (!applying ||
@@ -2116,7 +2137,7 @@ export class SyncEngine {
       // Against where the room is going, not where it is: see `roomAnchor`.
       const room = this.roomAnchor();
       if (o.paused !== room.paused &&
-        (!applying || (o.paused !== applying.paused && !o.unready))) {
+        (!applying || (o.paused !== applying.paused && !this.underOwnSeek(o, applying)))) {
         if (o.paused && state.ended) {
           // The end of the media pauses the element, and it is nobody's
           // pause: sent, the first member to finish stops the room at its own
