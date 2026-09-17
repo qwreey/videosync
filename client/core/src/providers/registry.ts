@@ -71,7 +71,15 @@ export class ProviderRegistry {
       if (s > best) { best = s; tied = [e]; } else tied.push(e);
     }
     let out: Lookup;
-    if (tied.length <= 1) out = { entry: tied[0] ?? null, conflict: [] };
+    if (tied.length === 1) out = { entry: tied[0]!, conflict: [] };
+    else if (tied.length === 0) {
+      // Nobody claims it. On a host a compiled-in built-in describes, whose
+      // id is taken by a descriptor that no longer claims the host (N10),
+      // the generic rule there is F20 again.
+      const replaced = builtinEntries().some((b) => b.provider.claims(h) > 0 &&
+        this.entries.some((e) => e.tier !== 'built-in' && e.provider.id === b.provider.id));
+      out = { entry: null, conflict: [], ...(replaced ? { blocked: true } : {}) };
+    }
     else {
       let bi: Entry | null = null;
       let biScore = 0;

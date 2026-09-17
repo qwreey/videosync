@@ -557,7 +557,8 @@ describe('what a change widens', () => {
   it('flags every field that lets a descriptor claim or reach more', () => {
     const cases: Array<[string, Partial<Descriptor>, boolean]> = [
       ['version only', { version: '1.0.1' }, false],
-      ['a narrower host list', { hosts: ['video.example'] }, false],
+      // A dropped host goes to whoever else claims it, or the generic rule (N10).
+      ['a narrower host list', { hosts: ['video.example'] }, true],
       ['a new host', { hosts: [...BASE.hosts, 'other.example'] }, true],
       // An exact host under an old wildcard claims that host more strongly
       // (hostScore 4 -> 7) and can tie or beat another descriptor there.
@@ -641,6 +642,46 @@ describe('what a change widens', () => {
       [{ id: 'example', name: 'X', version: '1.0.1', sha256: await sha256Hex(v2), hosts: [] }], async () => v2);
     assert.deepEqual(r.applied, [], 'the update waits for the user');
     assert.equal(normalizeMediaKey(logout, buildRegistry(r.state, () => true)), null);
+  });
+
+  it('does not silently hand a dropped host to the generic path rule', async () => {
+    // N10: an update that stops claiming a host was "narrower", but nothing
+    // claims that host afterwards, so it fell to the generic path rule:
+    // F20 back on a replaced built-in's host, and every key there renamed.
+    const server = 'https://s.example/';
+    const lf = JSON.parse(BUILTIN_SOURCES.find((b) => b.file === 'laftel.json')!.source) as Descriptor;
+    const v1 = JSON.stringify(lf);
+    const v2 = JSON.stringify({ ...lf, version: '1.0.1', hosts: ['laftel.net'],
+      examples: lf.examples!.filter((e) => !('url' in e) || !e.url.includes('www.')) });
+    assert.ok(parseDescriptor(v2).ok, 'control: the narrower copy is valid');
+    const entry = { id: 'laftel', name: 'Laftel', version: '1.0.0', sha256: await sha256Hex(v1), hosts: [] };
+    const pinned = await adopt(EMPTY, server, entry, v1, true);
+    assert.ok(pinned.ok);
+    const on = setAutoAdopt(pinned.state, server, true);
+    const www = 'https://www.laftel.net';
+    const before = buildRegistry(on, () => true);
+    assert.equal(before.byId('laftel')?.tier, 'server', 'control: the server copy replaced the built-in');
+    assert.equal(normalizeMediaKey(`${www}/logout`, before), null);
+    assert.equal(normalizeMediaKey(`${www}/player/1/2`, before), 'laftel:/player/1/2');
+
+    assert.equal(widens(lf, JSON.parse(v2)), true, 'a host removed');
+    assert.equal(widens(lf, { ...lf, hosts: [...lf.hosts].reverse() }), false, 'control: hosts reordered');
+    const r = await autoUpdate(on, server,
+      [{ ...entry, version: '1.0.1', sha256: await sha256Hex(v2) }], async () => v2);
+    assert.deepEqual(r.applied, [], 'the update waits for the user');
+
+    // And once the user does take it, the dropped host of a built-in names no
+    // media rather than every path on it.
+    const taken = await adopt(on, server, { ...entry, version: '1.0.1', sha256: await sha256Hex(v2) }, v2, true);
+    assert.ok(taken.ok);
+    const after = buildRegistry(taken.state, () => true);
+    assert.equal(after.lookup('www.laftel.net').blocked, true);
+    assert.equal(normalizeMediaKey(`${www}/logout`, after), null, 'F20 reopened on www.laftel.net');
+    assert.equal(watchUrl(`${www}/logout`, after), null);
+    assert.equal(followableUrl(`${www}/logout`, 'laftel.net:/logout', `${www}/player/1/2`, after), null);
+    assert.equal(normalizeMediaKey('https://laftel.net/player/1/2', after), 'laftel:/player/1/2', 'control: still Laftel');
+    // Control: a host no built-in describes still gets the generic rule.
+    assert.equal(normalizeMediaKey('https://video.example/logout', after), 'video.example:/logout');
   });
 
   it('treats identity rules as the ordered list they are', () => {

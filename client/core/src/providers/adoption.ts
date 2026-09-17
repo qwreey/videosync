@@ -205,8 +205,13 @@ export function diffDescriptors(before: Descriptor | null, after: Descriptor): F
   // Any host that is not literally an old one widens, even one an old
   // wildcard covers: the registry picks by how specifically a host is
   // claimed, across ids and tiers, so `*.x` -> `www.x` raises the claim on
-  // www.x and can tie or beat the user's own descriptor there.
-  add('hosts', b.hosts, after.hosts, after.hosts.some((h) => !b.hosts.includes(h)));
+  // www.x and can tie or beat the user's own descriptor there. Dropping one
+  // widens too (N10): nothing may claim that host afterwards, so its pages
+  // get the generic rule's key instead of this descriptor's -- every path
+  // named as media, and keys that fork from members on the old pin. Only a
+  // reorder changes nothing.
+  add('hosts', b.hosts, after.hosts,
+    after.hosts.some((h) => !b.hosts.includes(h)) || b.hosts.some((h) => !after.hosts.includes(h)));
   const pb = b.pageHosts ?? b.hosts;
   const pa = after.pageHosts ?? after.hosts;
   add('pageHosts', pb, pa, pa.some((h) => !coveredBy(h, pb)));
