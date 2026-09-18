@@ -113,8 +113,10 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
   host joins the top layer as a manual popover (`Panel.showTopLayer`), which is the only way to
   paint above a fullscreen element without moving into the site's own subtree — and moving there
   was tried and rejected in review. Firefox before 125 and anything pre-2023 get nothing, banner
-  included. **Known and accepted**; the popover path has no live coverage yet, so the next
-  `probe-stack` run should check the panel is visible over fullscreen on Laftel and YouTube.
+  included. **Known and accepted.** Measured on Laftel (BROWSER-FINDINGS §26): with the Popover API
+  the panel paints over fullscreen but cannot be pressed there, so it goes read-only
+  (`.panel.fullscreen`). Still unmeasured: YouTube's fullscreen, and Firefox (its popover support
+  and whether its hit testing behaves like Chromium's).
 - **The panel's compact collapsed banner is CSS-only and untested.** The fake DOM lays nothing out,
   so `.panel.collapsed .banner .banner-body { display: none }` is unverified; only the structural
   guarantee (the banner is not inside the part collapsing hides) is pinned.

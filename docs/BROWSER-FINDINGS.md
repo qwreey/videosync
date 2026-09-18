@@ -1281,6 +1281,52 @@ already on the episode, so the invite URL was a same-document fragment navigatio
 nothing. The probe now goes through `about:blank` first. The product gap it shows (an invite pasted
 into a tab already on that page is not read until a reload) is in `docs/REVIEW-NEXT.md`.
 
+## 26. The panel over a fullscreen player (2026-09-18)
+
+Helium 153 on the dedicated profile, Laftel, `main` at 6a8d2f7 with the `ext-r7` build
+(`probe-panel.mjs`, `results/panel-r7.json`). The question is the disconnect banner from round 5:
+it is what the member gets instead of having their offline presses replayed, so it has to be
+visible where they watch — collapsed, and fullscreen.
+
+**A fullscreen element is in the top layer, and the panel gets in the same way.** The host is a
+manual popover (`showPopover()`), so it paints over Laftel's fullscreen player: measured, and seen
+in a screenshot — the panel's title and the amber banner sit over the video, readable.
+
+**But the top layer does not get the pointer.** With the site fullscreen, at the panel's own
+coordinates:
+
+| | `document.elementsFromPoint` at the panel's header |
+|---|---|
+| windowed | `videosync-root`, DIV, DIV, root |
+| fullscreen, popover shown | `DIV.VideoActionIndicator`, VIDEO, `DIV.VideoOverlay`, HTML — **no `videosync-root` at all** |
+| fullscreen, host moved into `document.fullscreenElement` | `DIV.VideoActionIndicator`, `videosync-root`, VIDEO, `DIV.VideoOverlay`, HTML |
+
+Hiding and re-showing the popover after the fullscreen element joined the top layer (so it is
+*later* in join order) changed nothing. A real CDP click on the panel's collapse button while
+fullscreen:
+
+- the panel did **not** collapse;
+- the video's play state flipped — the press went to Laftel's player and would have paused the
+  whole room.
+
+Moving the host inside the fullscreen element is no better: it is then in the stack, but the site's
+own `VideoActionIndicator` overlay is above it and takes the press (and that route was already
+rejected in review — the site owns and rebuilds that subtree).
+
+**So the panel is a read-out while a site is fullscreen** (`.panel.fullscreen`: body and head button
+hidden, title and banner left). `probe-panel.mjs` on that build: **10/10** — popover shown under
+`<html>`, a windowed click lands on the panel, the panel paints in fullscreen, no controls to press
+there, the hit test confirms the site owns the pointer, and the banner appears on a cut (also in
+fullscreen, 280x75), survives a collapsed panel, and goes when the room is back.
+
+Not measured: YouTube's fullscreen, and Firefox — both whether its popover reaches the top layer
+and whether its hit testing does the same thing.
+
+Rig notes: `requestFullscreen` needs user activation, so the probe presses F2 with CDP `Input` and
+calls it from a `keydown` handler. It fails with `TypeError: Permissions check failed` if a
+previous fullscreen was left over; reloading the page clears that. And while focus is inside the
+panel, the site's own shortcuts do not fire — the shadow root stops key events, which is the point.
+
 ## Reproducing
 
 <!-- Unnumbered on purpose: this is not a finding, and it lives at the end. The

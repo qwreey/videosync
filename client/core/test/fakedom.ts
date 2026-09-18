@@ -71,10 +71,11 @@ export class FakeElement {
       contains: (c: string) => get().includes(c),
       add: (c: string) => { if (!get().includes(c)) set([...get(), c]); },
       remove: (c: string) => { set(get().filter((x) => x !== c)); },
-      toggle: (c: string) => {
+      toggle: (c: string, force?: boolean) => {
         const has = get().includes(c);
-        set(has ? get().filter((x) => x !== c) : [...get(), c]);
-        return !has;
+        const on = force === undefined ? !has : force;
+        if (on !== has) set(on ? [...get(), c] : get().filter((x) => x !== c));
+        return on;
       },
     };
   }

@@ -1,0 +1,208 @@
+{
+  "when": "2026-09-18T03:02:34.008Z",
+  "page": "https://laftel.net/player/45462/93304",
+  "relay": "http://127.0.0.1:8788",
+  "checks": [
+    {
+      "name": "the panel host is a shown popover under <html>",
+      "ok": true,
+      "detail": "parent HTML, popover manual, open true"
+    },
+    {
+      "name": "and a click on its header lands on the panel, not the site",
+      "ok": true,
+      "detail": "hit videosync-root"
+    },
+    {
+      "name": "the site went fullscreen",
+      "ok": true,
+      "detail": "VIDEO"
+    },
+    {
+      "name": "the panel still paints there (top layer)",
+      "ok": false,
+      "detail": "box 302x623, hit "
+    },
+    {
+      "name": "a press on the panel does not play or pause the site",
+      "ok": true,
+      "detail": "paused true -> true"
+    },
+    {
+      "name": "and the panel took the press (it collapsed)",
+      "ok": false,
+      "detail": "collapsed false -> false"
+    },
+    {
+      "name": "no banner while the room is reachable",
+      "ok": true,
+      "detail": "shown false"
+    },
+    {
+      "name": "the banner is up while the session is down",
+      "ok": true,
+      "detail": "shown true, box 280x75"
+    },
+    {
+      "name": "it is visible in fullscreen too",
+      "ok": false,
+      "detail": "fullscreen true, hit "
+    },
+    {
+      "name": "and it survives a collapsed panel",
+      "ok": false,
+      "detail": "collapsed false, banner true, h 74.625"
+    },
+    {
+      "name": "the banner goes away when the room is back",
+      "ok": true,
+      "detail": "shown false"
+    }
+  ],
+  "notes": [],
+  "windowed": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 726,
+      "y": 48.265625,
+      "w": 302,
+      "h": 622.734375
+    },
+    "hitTop": "videosync-root",
+    "collapsed": false,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": false,
+    "fsTag": null,
+    "video": {
+      "paused": true,
+      "t": 329.794117
+    }
+  },
+  "fullscreen": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 750,
+      "y": 119.265625,
+      "w": 302,
+      "h": 622.734375
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 329.794117
+    }
+  },
+  "fullscreenAfterPress": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 750,
+      "y": 119.265625,
+      "w": 302,
+      "h": 622.734375
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 329.861333
+    }
+  },
+  "roomId": "l9AwJfI8TNwMzn1vQ0bW8g",
+  "cut": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 750,
+      "y": -0.140625,
+      "w": 302,
+      "h": 742.140625
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "bannerShown": true,
+    "bannerBox": {
+      "w": 280,
+      "h": 74.625
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 329.864527
+    }
+  },
+  "cutCollapsed": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 750,
+      "y": -0.140625,
+      "w": 302,
+      "h": 742.140625
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "bannerShown": true,
+    "bannerBox": {
+      "w": 280,
+      "h": 74.625
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 329.927518
+    }
+  },
+  "restored": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 726,
+      "y": 30.875,
+      "w": 302,
+      "h": 640.125
+    },
+    "hitTop": "videosync-root",
+    "collapsed": false,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": false,
+    "fsTag": null,
+    "video": {
+      "paused": true,
+      "t": 329.927518
+    }
+  }
+}

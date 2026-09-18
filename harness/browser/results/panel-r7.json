@@ -1,0 +1,169 @@
+{
+  "when": "2026-09-18T03:13:05.688Z",
+  "page": "https://laftel.net/player/45462/93304",
+  "relay": "http://127.0.0.1:8788",
+  "checks": [
+    {
+      "name": "the panel host is a shown popover under <html>",
+      "ok": true,
+      "detail": "parent HTML, popover manual, open true"
+    },
+    {
+      "name": "and a click on its header lands on the panel, not the site",
+      "ok": true,
+      "detail": "hit videosync-root"
+    },
+    {
+      "name": "the site went fullscreen",
+      "ok": true,
+      "detail": "VIDEO"
+    },
+    {
+      "name": "the panel still paints there (top layer)",
+      "ok": true,
+      "detail": "box 302x37"
+    },
+    {
+      "name": "the panel is a read-out there: no controls to press",
+      "ok": true,
+      "detail": "class panel fullscreen, head buttons 0"
+    },
+    {
+      "name": "and the hit test confirms why: the site owns the pointer",
+      "ok": true,
+      "detail": "hit (site)"
+    },
+    {
+      "name": "no banner while the room is reachable",
+      "ok": true,
+      "detail": "shown false"
+    },
+    {
+      "name": "the banner is up while the session is down",
+      "ok": true,
+      "detail": "shown true, box 280x75"
+    },
+    {
+      "name": "it is visible in fullscreen too",
+      "ok": true,
+      "detail": "fullscreen true, banner box 280x75"
+    },
+    {
+      "name": "the banner goes away when the room is back",
+      "ok": true,
+      "detail": "shown false"
+    }
+  ],
+  "notes": [
+    "collapsed check skipped: the panel cannot be pressed while the site is fullscreen"
+  ],
+  "windowed": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 726,
+      "y": 48.265625,
+      "w": 302,
+      "h": 622.734375
+    },
+    "hitTop": "videosync-root",
+    "collapsed": false,
+    "panelClass": "panel",
+    "readOnly": false,
+    "headButtons": 1,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": false,
+    "fsTag": null,
+    "video": {
+      "paused": true,
+      "t": 659.829536
+    }
+  },
+  "fullscreen": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 1602,
+      "y": 1147.15625,
+      "w": 302,
+      "h": 36.84375
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "panelClass": "panel fullscreen",
+    "readOnly": true,
+    "headButtons": 0,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 659.829536
+    }
+  },
+  "roomId": "2GrKu4XLY0x6H3q-GcN6bQ",
+  "cut": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 1602,
+      "y": 1052.53125,
+      "w": 302,
+      "h": 131.46875
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "panelClass": "panel fullscreen",
+    "readOnly": true,
+    "headButtons": 0,
+    "bannerShown": true,
+    "bannerBox": {
+      "w": 280,
+      "h": 74.625
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 659.829536
+    }
+  },
+  "restored": {
+    "hostParent": "HTML",
+    "popover": "manual",
+    "open": true,
+    "panel": {
+      "x": 1602,
+      "y": 1147.15625,
+      "w": 302,
+      "h": 36.84375
+    },
+    "hitTop": "",
+    "collapsed": false,
+    "panelClass": "panel fullscreen",
+    "readOnly": true,
+    "headButtons": 0,
+    "bannerShown": false,
+    "bannerBox": {
+      "w": 0,
+      "h": 0
+    },
+    "fullscreen": true,
+    "fsTag": "VIDEO",
+    "video": {
+      "paused": true,
+      "t": 659.829536
+    }
+  }
+}

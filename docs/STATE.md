@@ -523,8 +523,14 @@ lines with their tests. Unchanged: `releaseRate()` on close, the reconciler, `in
   living inside the site's DOM. The `popover` attribute is never left on a popover that did not
   open, because a closed popover is `display: none` and that would hide the panel the rest of the
   time too.
-- **Not measured live yet.** The popover path has unit coverage only; the next `probe-stack` run
-  should check the panel is visible over fullscreen on Laftel and YouTube.
+- **Measured live (BROWSER-FINDINGS §26, 2026-09-18).** The popover paints over Laftel's fullscreen
+  player, and the banner is readable there. But **nothing outside the fullscreen subtree is hit
+  tested**: a press aimed at the panel reaches the site's player instead, which on Laftel toggles
+  playback and so pauses the whole room. Moving the host into the fullscreen element does not help
+  either — Laftel's own overlay (`VideoActionIndicator`) is above it and takes the press. So while
+  a site is fullscreen the panel is a **read-out**: `.panel.fullscreen` hides the body and the head
+  button, leaving the title and the banner, and there is nothing left to press by mistake. The
+  member leaves fullscreen to act, which is where the controls work.
 
 **Two holes in the banner itself, both known and accepted:**
 

@@ -79,6 +79,19 @@ button.action:disabled { opacity: .5; cursor: default; }
 /* Collapsed: the title alone, and it has to carry its own bottom margin. */
 .panel.collapsed .banner { margin-bottom: 10px; }
 .panel.collapsed .banner .banner-body { display: none; }
+/*
+ * Fullscreen, measured (BROWSER-FINDINGS 26): the panel paints over the site's
+ * player from the top layer, but nothing outside the fullscreen subtree is hit
+ * tested, so not one of its controls can be pressed -- and the click goes to
+ * the site's player instead, which on Laftel pauses the whole room. Moving the
+ * host inside the fullscreen element does not help either: the site's own
+ * overlay is above it. So while a site is fullscreen the panel is a read-out:
+ * the banner and the title, with everything pressable out of the way.
+ */
+.panel.fullscreen .body,
+.panel.fullscreen .head button { display: none; }
+.panel.fullscreen .banner { margin-bottom: 10px; }
+.panel.fullscreen .banner .banner-body { display: flex; }
 .note { font-size: 12px; color: #9a9ca6; }
 .note.warn { color: #e0b23a; }
 .note.err { color: #e05a4f; }
@@ -145,7 +158,18 @@ export class Panel {
   private gestureOverlay: HTMLElement | null = null;
   private joined = false;
   private readonly doc: Document;
-  private readonly onFullscreen = () => { this.raiseTopLayer(); };
+  private readonly onFullscreen = () => { this.raiseTopLayer(); this.markFullscreen(); };
+
+  /**
+   * A site is fullscreen: the panel can be read, not pressed (see the CSS).
+   * `webkitFullscreenElement` is the same fact on an older WebKit.
+   */
+  private markFullscreen(): void {
+    const d = this.doc as Document & { webkitFullscreenElement?: Element | null };
+    const on = !!(d.fullscreenElement || d.webkitFullscreenElement);
+    const panel = this.el.panel;
+    if (panel) panel.classList.toggle('fullscreen', on);
+  }
 
   constructor(doc: Document, fields: UIFields, handlers: UIHandlers, mode: ShadowRootMode = 'closed') {
     this.doc = doc;
@@ -383,11 +407,12 @@ export class Panel {
     panel.append(head, banner, body);
 
     Object.assign(this.el, {
-      dot, title, status, banner, members, log, create, join, leave, copy, rotate,
+      panel, dot, title, status, banner, members, log, create, join, leave, copy, rotate,
       server, name, room, secret, chatInput, mediaWrap, mediaNotice, mediaBtn,
       signed, signedText,
     });
     this.setJoined(false);
+    this.markFullscreen();
     return panel;
   }
 

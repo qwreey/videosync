@@ -648,6 +648,28 @@ describe('the disconnect banner', () => {
     assert.equal(shown(h), false, 'the banner stayed up over a room the member is back in');
   });
 
+  it('is readable but not pressable while the site is fullscreen', async () => {
+    // BROWSER-FINDINGS 26: the panel paints over a fullscreen player from the
+    // top layer, but nothing outside the fullscreen subtree is hit tested --
+    // the press goes to the site's player, which pauses the room. So the
+    // controls get out of the way and the banner stays.
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    const panel = [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'panel')!;
+    assert.equal(panel.className.includes('fullscreen'), false, 'control: windowed, the panel is whole');
+    h.dom.doc.setFullscreen(h.dom.doc.createElement("div"));
+    await h.tick(20);
+    assert.equal(panel.className.includes('fullscreen'), true, 'the panel stayed pressable over a fullscreen player');
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'the banner is what fullscreen is for');
+    h.dom.doc.setFullscreen(null);
+    await h.tick(20);
+    assert.equal(panel.className.includes('fullscreen'), false, 'the panel stayed read-only after leaving fullscreen');
+  });
+
   it('is not shown for a session that never joined', async () => {
     const h = harness(ROOM_URL);
     h.join();
