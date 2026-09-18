@@ -130,6 +130,9 @@ export class FakeElement {
   }
 
   click(): void { this.dispatchEvent({ type: 'click' }); }
+  /** Focus and text selection have no effect here; they only must not throw. */
+  focus(): void { /* no-op */ }
+  select(): void { /* no-op */ }
 
   contains(el: FakeElement | null): boolean {
     for (let n: FakeElement | null = el; n; n = n.parentNode) if (n === this) return true;

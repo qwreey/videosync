@@ -1136,6 +1136,49 @@ describe('the panel', () => {
   });
 });
 
+describe('진단 정보 복사', () => {
+  // A member who is not a developer presses one button and pastes the result
+  // to whoever runs the server; nobody has to open a console.
+  const SECRET = 'SECRET-only-the-room-knows';
+  function joined(clip: { writeText(s: string): Promise<void> } | undefined) {
+    const h = harness(ROOM_URL);
+    h.dom.setClipboard(clip);
+    h.app.api.join(SERVER, 'R', SECRET, 'me');
+    return h;
+  }
+  const diagArea = (h: H) => [...h.root().shadow!.walk()].find((x) => x.tagName === 'TEXTAREA')!;
+
+  it('copies the dump, which carries no room secret', async () => {
+    let got = '';
+    const h = joined({ writeText: (s) => { got = s; return Promise.resolve(); } });
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.button('진단 정보 복사')!.click();
+    await flush();
+    assert.match(h.status().text, /복사했어요/);
+    const d = JSON.parse(got);
+    assert.equal(d.engine.state, 'joined', 'not the live session\'s dump');
+    assert.equal(got.includes(SECRET), false, 'the room secret went into a text meant to be pasted anywhere');
+    assert.equal(diagArea(h).className.includes('on'), false, 'control: nothing to select by hand');
+  });
+
+  for (const [what, clip] of [
+    ['no clipboard at all', undefined],
+    ['a refused write', { writeText: () => Promise.reject(new Error('NotAllowedError')) }],
+  ] as const) {
+    it(`puts the text where it can be selected: ${what}`, async () => {
+      const h = joined(clip);
+      await h.tick(50);
+      h.button('진단 정보 복사')!.click();
+      await flush();
+      assert.doesNotMatch(h.status().text, /복사했어요/, 'said copied when nothing was');
+      const area = diagArea(h);
+      assert.equal(area.className.includes('on'), true, 'the text is nowhere the member can take it');
+      assert.notEqual(JSON.parse((area as unknown as { value: string }).value).engine, undefined);
+    });
+  }
+});
+
 describe('the engine the page builds', () => {
   it('has everything D6-D8 need: gesture evidence, the continuation rule, a ticket source', () => {
     const h = harness(ROOM_URL);

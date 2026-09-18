@@ -340,6 +340,8 @@ export function start(p: Platform): App {
     onRotate: () => engine?.rotateSecret(),
     onGesture: () => { void engine?.resumeAfterGesture(); },
     onBrowserSignIn: () => { void browserSignIn(); },
+    // `api` is built below; this runs on a press, long after.
+    onDiagnostics: () => api.dump(),
     onCancelSignIn: () => {
       abandonLogin();
       panel.showSignInCode(null);

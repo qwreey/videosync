@@ -92,6 +92,17 @@ button.action:disabled { opacity: .5; cursor: default; }
 .panel.fullscreen .head button { display: none; }
 .panel.fullscreen .banner { margin-bottom: 10px; }
 .panel.fullscreen .banner .banner-body { display: flex; }
+.diag-row { display: flex; justify-content: flex-end; }
+button.linkish {
+  background: none; border: 0; padding: 0; font: inherit; font-size: 11px;
+  color: #9a9ca6; text-decoration: underline; cursor: pointer;
+}
+textarea.diag {
+  display: none; width: 100%; box-sizing: border-box; height: 80px; resize: vertical;
+  background: #101116; color: #c9cbd4; border: 1px solid #303138; border-radius: 6px;
+  font: 11px/1.3 ui-monospace, monospace;
+}
+textarea.diag.on { display: block; }
 .note { font-size: 12px; color: #9a9ca6; }
 .note.warn { color: #e0b23a; }
 .note.err { color: #e05a4f; }
@@ -132,6 +143,12 @@ export interface UIHandlers {
    * password typed here would be typed into the site's page (below).
    */
   onBrowserSignIn?(): void;
+  /**
+   * The text of "진단 정보 복사": what the app knows about this page and its
+   * session (`VideoSync.dump()`), to paste into a message to whoever runs the
+   * server. Built to be shared: no device token, no room secret.
+   */
+  onDiagnostics?(): string;
   onCancelSignIn?(): void;
   onSignOut?(): void;
 }
@@ -321,6 +338,35 @@ export class Panel {
       if (!clip) { failed(); return; }
       clip.writeText(link).then(() => this.setStatus(`초대 링크를 복사했어요. ${warn}`, 'warn'), failed);
     });
+    // For a member who is not a developer: one press, then paste it into the
+    // chat with whoever runs the server. Opening the page's console and
+    // switching it to the extension's context is not something to ask of
+    // them. If the clipboard refuses, the text is put where it can be
+    // selected by hand.
+    const diag = mk('button', 'linkish', '진단 정보 복사');
+    diag.title = '문제가 생겼을 때 눌러서, 복사된 내용을 서버 운영자에게 보내 주세요.';
+    const diagText = mk('textarea', 'diag');
+    diagText.readOnly = true;
+    diag.addEventListener('click', () => {
+      const text = this.h.onDiagnostics?.() ?? '';
+      const note = '방 비밀키와 로그인 정보는 들어 있지 않아요.';
+      const failed = () => {
+        diagText.value = text;
+        diagText.className = 'diag on';
+        diagText.focus();
+        diagText.select();
+        this.setStatus(`자동으로 복사하지 못했어요. 아래 칸의 내용을 전부 복사해서 보내 주세요. ${note}`, 'warn');
+      };
+      const clip = navigator.clipboard as Clipboard | undefined;
+      if (!clip) { failed(); return; }
+      clip.writeText(text).then(() => {
+        diagText.className = 'diag';
+        this.setStatus(`진단 정보를 복사했어요. 그대로 붙여 넣어 보내 주세요. ${note}`);
+      }, failed);
+    });
+    const diagRow = mk('div', 'diag-row');
+    diagRow.append(diag);
+
     const rotate = mk('button', 'action secondary', '비밀키 교체');
     rotate.title = '기존 참가자는 그대로 있고, 예전 링크로는 아무도 들어올 수 없게 돼요.';
     rotate.addEventListener('click', () => this.h.onRotate());
@@ -404,6 +450,8 @@ export class Panel {
       members,
       log,
       chatInput,
+      diagText,
+      diagRow,
     );
     panel.append(head, banner, body);
 
