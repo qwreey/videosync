@@ -657,6 +657,30 @@ describe('the disconnect banner', () => {
     assert.equal(shown(h), false, 'a member who was never in a room was told they left one');
   });
 
+  it('is not inside the part a collapsed panel hides', async () => {
+    // `.panel.collapsed .body { display: none }` takes the whole body with it,
+    // and a member who collapsed the panel is exactly the one who will not
+    // notice a dot. Nothing here lays anything out (see fakedom.ts), so this
+    // is structural: the banner is a sibling of `.body`, not a descendant, so
+    // no rule on `.body` can reach it. The compact form when collapsed is CSS
+    // only (`.panel.collapsed .banner .banner-body`).
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'control: the banner is up');
+    const all = [...h.root().shadow!.walk()];
+    const body = all.find((x) => x.className === 'body')!;
+    const panel = all.find((x) => x.className.split(' ')[0] === 'panel')!;
+    assert.equal(banner(h)!.parentNode, panel, 'the banner is not a direct child of the panel');
+    assert.equal(body.contains(banner(h)!), false, 'the banner is inside the part collapsing hides');
+    h.button('–')!.click();
+    assert.ok(panel.className.split(' ').includes('collapsed'), 'control: the panel collapsed');
+    assert.equal(shown(h), true, 'collapsing took the banner down');
+  });
+
   it('goes when the member leaves', async () => {
     const h = harness(ROOM_URL);
     h.join();
@@ -668,6 +692,45 @@ describe('the disconnect banner', () => {
     h.button('나가기')!.click();
     await h.tick(100);
     assert.equal(shown(h), false, 'a member with no session was told their input goes nowhere');
+  });
+});
+
+describe('the panel follows the page into fullscreen', () => {
+  // A fullscreen element is in the top layer: nothing under `documentElement`
+  // is on screen while one is set, so the panel -- and the disconnect banner
+  // with it -- would be invisible for as long as the member watches.
+  const host = (h: H) => h.dom.doc.getElementById('videosync-root')!;
+
+  it('moves into the fullscreen element and back out', async () => {
+    const h = harness(ROOM_URL);
+    const player = h.dom.doc.createElement('div');
+    h.dom.doc.documentElement.append(player);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'control: it starts on the root');
+    h.dom.doc.setFullscreen(player);
+    assert.equal(host(h).parentNode, player, 'the panel stayed under the root, off screen');
+    assert.equal(h.app.api.panelRoot(), host(h).shadow as unknown as ShadowRoot,
+      'panelRoot() lost the shadow root in the move');
+    h.dom.doc.setFullscreen(null);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the panel stayed inside a dead element');
+  });
+
+  it('stays put for an element that renders no children', async () => {
+    // A <video> taken fullscreen by itself shows no children, so moving in
+    // would hide the panel just as surely -- and take it out of the page.
+    const h = harness(ROOM_URL);
+    const video = h.dom.doc.createElement('video');
+    h.dom.doc.documentElement.append(video);
+    h.dom.doc.setFullscreen(video);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the panel was appended into a <video>');
+  });
+
+  it('puts itself back when the site moved it', async () => {
+    const h = harness(ROOM_URL);
+    const elsewhere = h.dom.doc.createElement('div');
+    h.dom.doc.documentElement.append(elsewhere);
+    elsewhere.append(host(h));                    // the site rearranges its player
+    h.dom.doc.setFullscreen(null);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'a moved host was left where the site put it');
   });
 });
 

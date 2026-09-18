@@ -49,13 +49,17 @@ button.action:disabled { opacity: .5; cursor: default; }
 .status { font-size: 12px; color: #9a9ca6; min-height: 1.45em; }
 .status.warn { color: #e0b23a; }
 .status.err { color: #e05a4f; }
+/* Outside .body on purpose: collapsing the panel must not hide it. */
 .banner {
-  display: none; flex-direction: column; gap: 3px; padding: 8px;
+  display: none; flex-direction: column; gap: 3px; padding: 8px; margin: 10px 10px 0;
   border: 1px solid #5c4a1c; border-radius: 6px; background: #241f10;
 }
 .banner.on { display: flex; }
 .banner .banner-title { font-weight: 600; color: #e0b23a; }
 .banner .banner-body { font-size: 12px; color: #c9cbd4; }
+/* Collapsed: the title alone, and it has to carry its own bottom margin. */
+.panel.collapsed .banner { margin-bottom: 10px; }
+.panel.collapsed .banner .banner-body { display: none; }
 .note { font-size: 12px; color: #9a9ca6; }
 .note.warn { color: #e0b23a; }
 .note.err { color: #e05a4f; }
@@ -120,8 +124,11 @@ export class Panel {
   private readonly h: UIHandlers;
   private gestureOverlay: HTMLElement | null = null;
   private joined = false;
+  private readonly doc: Document;
+  private readonly onFullscreen = () => { this.reparent(); };
 
   constructor(doc: Document, fields: UIFields, handlers: UIHandlers, mode: ShadowRootMode = 'closed') {
+    this.doc = doc;
     this.h = handlers;
     this.host = doc.createElement('div');
     this.host.id = 'videosync-root';
@@ -140,6 +147,42 @@ export class Panel {
       this.root.addEventListener(t, (e) => { e.stopPropagation(); });
     }
     doc.documentElement.append(this.host);
+    // A fullscreen element is in the top layer: nothing outside it is on
+    // screen, so a panel under `documentElement` is invisible for as long as
+    // the member watches fullscreen -- which is most of the time, and exactly
+    // when the disconnect banner matters. Follow it in and out.
+    for (const t of ['fullscreenchange', 'webkitfullscreenchange']) {
+      doc.addEventListener(t, this.onFullscreen);
+    }
+    this.reparent();
+  }
+
+  /**
+   * Elements that render no children, so putting the host inside one would
+   * hide it as surely as leaving it outside. A `<video>` taken fullscreen by
+   * itself is the common one; there is nowhere to go then, and the host stays
+   * where the site is least likely to trip over it.
+   */
+  private static readonly NO_CHILDREN = new Set(['VIDEO', 'AUDIO', 'IMG', 'IFRAME', 'CANVAS', 'OBJECT', 'EMBED']);
+
+  /**
+   * Put the host inside the current fullscreen element, or back under
+   * `documentElement` when there is none.
+   *
+   * Called on every `fullscreenchange`, and it re-appends whenever the host is
+   * not already where it belongs -- a site that reparents or drops our node
+   * while rearranging its player is put right by the next change. `append`
+   * moves an attached node, so there is nothing to detach first, and the
+   * shadow root (and `panelRoot()` with it) is unaffected: it belongs to the
+   * host, not to its parent.
+   */
+  private reparent(): void {
+    const d = this.doc as Document & { webkitFullscreenElement?: Element | null };
+    const fs = d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
+    const usable = fs && fs !== this.host && !this.host.contains?.(fs) &&
+      !Panel.NO_CHILDREN.has(fs.tagName) && typeof (fs as Element & { append?: unknown }).append === 'function';
+    const target = usable ? fs : this.doc.documentElement;
+    if (this.host.parentNode !== target) target.append(this.host);
   }
 
   private build(doc: Document, f: UIFields): HTMLElement {
@@ -207,6 +250,16 @@ export class Panel {
     // and none of it is sent later (engine.ts `onClose`). Nobody would guess
     // that from a coloured dot, so it is said in words -- and it collects
     // nothing, so it is safe in the site's DOM.
+    //
+    // It is load-bearing, so it has to be seen: it lives outside `.body`, so
+    // a collapsed panel still shows it (the title alone), and `reparent` moves
+    // the whole host into the fullscreen element, where `documentElement` has
+    // nothing on screen.
+    //
+    // Known hole: a path that goes dark without a close keeps the status at
+    // `joined` until the time probe gives up, `SILENT_PROBES` x
+    // `timeSyncIntervalMs` -- 15-20 s in which the panel says 연결됨, this
+    // banner is off, and a press reaches nobody (engine.ts `timeLoop`).
     const banner = mk('div', 'banner');
     banner.append(
       mk('div', 'banner-title', '연결이 끊겼어요'),
@@ -257,7 +310,6 @@ export class Panel {
     };
 
     body.append(
-      banner,
       field('서버', server),
       field('이름', name),
       field('방 ID', room),
@@ -273,7 +325,7 @@ export class Panel {
       log,
       chatInput,
     );
-    panel.append(head, body);
+    panel.append(head, banner, body);
 
     Object.assign(this.el, {
       dot, title, status, banner, members, log, create, join, leave, copy, rotate,
@@ -410,8 +462,6 @@ export class Panel {
     this.el.banner!.className = on ? 'banner on' : 'banner';
   }
 
-  get disconnectedShown(): boolean { return this.el.banner!.className.includes('on'); }
-
   /**
    * `inSession`: there is a session to leave, joined or not. One that is
    * reconnecting, or waiting for a sign-in, keeps running until left, and
@@ -520,5 +570,10 @@ export class Panel {
   /** The element the panel lives in: input inside it is not a press on the player. */
   get hostElement(): HTMLElement { return this.host; }
 
-  destroy(): void { this.host.remove(); }
+  destroy(): void {
+    for (const t of ['fullscreenchange', 'webkitfullscreenchange']) {
+      this.doc.removeEventListener(t, this.onFullscreen);
+    }
+    this.host.remove();
+  }
 }

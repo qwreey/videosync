@@ -112,6 +112,11 @@ export class FakeElement {
 
   click(): void { this.dispatchEvent({ type: 'click' }); }
 
+  contains(el: FakeElement | null): boolean {
+    for (let n: FakeElement | null = el; n; n = n.parentNode) if (n === this) return true;
+    return false;
+  }
+
   /** Tag-name selectors only. */
   closest(sel: string): FakeElement | null {
     for (let n: FakeElement | null = this; n; n = n.parentNode) {
@@ -143,12 +148,26 @@ export class FakeElement {
 export class FakeDocument {
   readonly documentElement: FakeElement;
   hidden = false;
+  /** What the page has taken fullscreen, as `document.fullscreenElement`. */
+  fullscreenElement: FakeElement | null = null;
+  private readonly listeners = new Map<string, Set<Listener>>();
   constructor() { this.documentElement = new FakeElement(this, 'html'); }
   createElement(tag: string): FakeElement { return new FakeElement(this, tag); }
   querySelectorAll(_sel: string): FakeElement[] { return []; }
   getElementById(id: string): FakeElement | null {
     for (const e of this.documentElement.walk()) if (e.id === id) return e;
     return null;
+  }
+  addEventListener(type: string, fn: Listener): void {
+    let s = this.listeners.get(type);
+    if (!s) { s = new Set(); this.listeners.set(type, s); }
+    s.add(fn);
+  }
+  removeEventListener(type: string, fn: Listener): void { this.listeners.get(type)?.delete(fn); }
+  /** Take `el` fullscreen (or leave it, with `null`) and fire the event. */
+  setFullscreen(el: FakeElement | null): void {
+    this.fullscreenElement = el;
+    for (const fn of [...(this.listeners.get('fullscreenchange') ?? [])]) fn({ type: 'fullscreenchange' });
   }
 }
 
