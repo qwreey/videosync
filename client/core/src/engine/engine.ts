@@ -1133,12 +1133,13 @@ export class SyncEngine {
    * many intervals, and such a check could never change the outcome.
    * `silentSince` only dates the silence for the close reason.
    *
-   * Only a command pressed inside the last `OWN_ACK_WAIT_MS` before this
-   * fires is sent again after the reconnect (see `onClose`). A path that
-   * goes dark silently is found here 15-20 s later, so a press in roughly the
-   * first 10 s of it is still lost, and the reconciler undoes it. Accepted:
-   * resending older commands would replay intent the room may have moved on
-   * from.
+   * This is also the only thing that notices such a path at all, which makes
+   * it the hole in the disconnect banner: until it fires, the status is still
+   * `joined`, the panel says 연결됨 and the banner is off, while every press
+   * goes nowhere and none of it is sent later (see `onClose`). That window is
+   * `SILENT_PROBES` x `timeSyncIntervalMs`, 15-20 s with the shipped config.
+   * Shortening it means probing faster, or trusting a time condition a
+   * throttled tab makes meaningless; neither has been measured.
    */
   private timeLoop(): void {
     const now = this.d.now();

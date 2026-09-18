@@ -572,17 +572,15 @@ describe('reconnect', () => {
    * A member playing with a room of two at 10 s loses its link, `offline`
    * does something to the player 200 ms later, and the session comes back
    * 800 ms after that into the room as `anchor` and `seq` say -- by default,
-   * exactly the room it left. `beforeDrop` runs in the same instant as the
-   * drop, so nothing evaluates in between.
+   * exactly the room it left.
    */
   async function changedWhileAway(
     offline: (p: FakePlayer, h: Harness) => void,
-    o: { anchor?: Partial<Anchor>; seq?: number; beforeDrop?: (p: FakePlayer) => void } = {},
+    o: { anchor?: Partial<Anchor>; seq?: number } = {},
   ) {
     const h = harness({ paused: false, positionS: 10 });
     await h.join({ positionMs: 10_000, atServerMs: OFFSET, paused: false }, 0, 2);
     await h.vt.advance(2000);
-    o.beforeDrop?.(h.player);
     h.tr.drop('link blip');
     await h.vt.advance(200);
     offline(h.player, h);
@@ -636,6 +634,29 @@ describe('reconnect', () => {
   it('control: a player that stalled while away is not read as a seek', async () => {
     const h = await changedWhileAway((p) => p.stall());
     assert.deepEqual(h.tr.sentOf('cmd'), [], 'a stall offline dragged the room back');
+  });
+
+  it('known and accepted: a member that reaches the end while away is stranded there', async () => {
+    // Dragged into the end, or simply run out, while the link was down. The
+    // member comes back `ended`: the reconciler skips it (an element at its
+    // end is finished, not paused -- play() there restarts from 0), the
+    // report says finished and absent, and the server leaves an absent member
+    // alone. So it sits at the end while the room plays on, with the panel
+    // saying 연결됨.
+    //
+    // Kept on purpose (the user's call, 2026-09-18). Telling this member apart
+    // from one who legitimately watched to the end needs exactly the offline
+    // knowledge that was removed, and the alternative -- letting it drag the
+    // room -- is the worse failure.
+    const h = await changedWhileAway((p) => { p.positionS = p.durationS; p.paused = true; p.ended = true; });
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an ended member moved the room');
+    const hb = h.tr.sentOf('hb').at(-1);
+    assert.equal(hb?.finished, true, 'an ended member was not reported finished');
+    assert.equal(hb?.suspended, true, 'an ended member was judged present, and would gate the room');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 1000);
+    assert.deepEqual(h.tr.sentOf('cmd'), [], 'an ended member moved the room');
+    assert.equal(h.player.ended, true, 'the reconciler pressed play on an ended element');
+    assert.equal(h.player.positionS, h.player.durationS, 'the member was moved off the end');
   });
 
   it('follows a room another member moved while away, over its own pause', async () => {
@@ -2257,13 +2278,13 @@ describe('a command lost with the connection', () => {
 
   /**
    * A member in a room of two playing at 10 s does `act` 2 s in; the command
-   * goes out and the link is found dead `dropAfterMs` later. The session comes
-   * back 600 ms after that into `room` (by default exactly what it left).
+   * goes out and the link is found dead 200 ms later. The session comes back
+   * 600 ms after that into `room` (by default exactly what it left).
    */
   async function lostWithLink(
     act: (p: FakePlayer) => Promise<void> | void,
     o: {
-      dropAfterMs?: number; room?: Partial<Anchor>; seq?: number; paused?: boolean; gestures?: boolean;
+      room?: Partial<Anchor>; seq?: number; paused?: boolean; gestures?: boolean;
       /** What the site does to the player while the link is down, with nobody touching anything. */
       offline?: (p: FakePlayer) => Promise<void> | void;
     } = {},
@@ -2300,7 +2321,7 @@ describe('a command lost with the connection', () => {
     await vt.advance(100);
     const sent = tr.sentOf('cmd').length;
     assert.ok(sent >= 1, 'the change never became a command');
-    await vt.advance(o.dropAfterMs ?? 200);
+    await vt.advance(200);
     tr.drop('link was dead');
     await vt.advance(300);
     await o.offline?.(player);
