@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import { rewriteInviteSecret, start } from '../src/app/bootstrap.ts';
+import { trackGestures } from '../src/app/gestures.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
@@ -692,6 +693,58 @@ describe('the disconnect banner', () => {
     h.button('나가기')!.click();
     await h.tick(100);
     assert.equal(shown(h), false, 'a member with no session was told their input goes nowhere');
+  });
+});
+
+describe('input on the panel stays on the panel', () => {
+  // These events are composed: they leave the shadow root retargeted to the
+  // host, a plain div that no site check skips. A site listening on `document`
+  // for its own shortcuts would act on every one -- YouTube's k/j/l and Space
+  // on keys, and on clicks a player overlay that toggles playback or
+  // fullscreen under our own buttons.
+  //
+  // What is NOT stopped, and must not be: the capture phase. `gestures.ts`
+  // listens on `window` with `capture: true`, which in a browser runs on the
+  // way down, before the root's bubble listener; it has to see the press to
+  // file it as the member's own but not a press on the player. The fake DOM
+  // has no capture phase, so the second test asserts the tracker's half
+  // directly.
+  const TYPES = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup',
+    'wheel', 'contextmenu', 'keydown', 'keyup', 'keypress'];
+
+  for (const type of TYPES) {
+    it(`${type} does not reach the page`, () => {
+      const h = harness(ROOM_URL);
+      let onPage = 0;
+      h.dom.doc.documentElement.addEventListener(type, () => { onPage++; });
+      const btn = h.button('참가')!;
+      btn.dispatchEvent({ type });
+      assert.equal(onPage, 0, `a ${type} on the panel reached a site handler on the page`);
+      // Control: the same event from the page is the site's own, untouched.
+      const other = h.dom.doc.createElement('div');
+      h.dom.doc.documentElement.append(other);
+      other.dispatchEvent({ type });
+      assert.equal(onPage, 1, 'the panel swallowed an event that was never its own');
+    });
+  }
+
+  it('is still counted by the gesture tracker, as ours rather than as a press', () => {
+    // The tracker's listener, called as the capture phase would call it.
+    const h = harness(ROOM_URL);
+    const hostEl = h.dom.doc.getElementById('videosync-root')!;
+    const win = { at: 0 };
+    const g = trackGestures(
+      { addEventListener: (_t, fn) => { (win as { fn?: unknown }).fn = fn; }, removeEventListener: () => {} },
+      () => hostEl as unknown as Node,
+      () => ++win.at,
+    );
+    const fn = (win as unknown as { fn: (e: Event) => void }).fn;
+    fn({ type: 'pointerdown', isTrusted: true, pointerType: 'mouse', composedPath: () => [hostEl] } as unknown as Event);
+    assert.ok(g.lastIgnoredInputAt() > 0, 'a press on the panel was not seen at all');
+    assert.equal(g.lastInputAt(), -Infinity, 'a press on the panel counted as a press on the player');
+    // Control: the same press anywhere else is a press on the player.
+    fn({ type: 'pointerdown', isTrusted: true, pointerType: 'mouse', composedPath: () => [] } as unknown as Event);
+    assert.ok(g.lastInputAt() > 0);
   });
 });
 

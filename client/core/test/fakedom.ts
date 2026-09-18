@@ -88,6 +88,11 @@ export class FakeElement {
   attachShadow(o: { mode: string }): FakeElement {
     this.shadowMode = o.mode;
     this.shadow = new FakeElement(this.ownerDocument, '#shadow-root');
+    // The composed tree: a composed event dispatched inside the shadow root
+    // bubbles on through the host and up the page, which is the whole reason
+    // the panel stops key and pointer events at the root. Not in `children`,
+    // so `walk()` and `getElementById` still see the light tree only.
+    this.shadow.parentNode = this;
     return this.shadow;
   }
 

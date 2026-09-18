@@ -136,14 +136,25 @@ export class Panel {
     const style = doc.createElement('style');
     style.textContent = CSS;
     this.root.append(style, this.build(doc, fields));
-    // A site listening on document for single-key shortcuts (YouTube's k/j/l,
-    // digits, Space) would otherwise act on every key pressed in the panel:
-    // key events are composed and reach the page retargeted to the host, a
-    // plain div that no "is the target editable?" check skips. Stopped at the
-    // root, so every field and button is covered -- the name field stays
-    // editable while joined, and a seek it caused would go to the whole room.
-    // A capture listener on the page still sees them (see `buildSignIn`).
-    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+    // A site listening on document for its own shortcuts would otherwise act
+    // on everything done to the panel: these events are composed and reach the
+    // page retargeted to the host, a plain div that no "is the target
+    // editable?" or "is this my player?" check skips. Single keys (YouTube's
+    // k/j/l, digits, Space) and pointers alike -- a click on our own UI must
+    // never toggle playback or fullscreen on the site underneath. Stopped at
+    // the root, so every field, button and blank corner is covered, and the
+    // name field stays editable while joined.
+    //
+    // Only propagation past the panel: NOT `preventDefault`, so the panel's own
+    // controls keep working, and NOT the capture phase -- `gestures.ts` listens
+    // on `window` with `capture: true`, which runs on the way *down*, before
+    // this does. It must still see the press, to file it as the member's own
+    // but not a press on the player. (A page listening in capture sees them
+    // too; that is assumed anyway, see `buildSignIn`.)
+    for (const t of [
+      'keydown', 'keyup', 'keypress',
+      'click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'wheel', 'contextmenu',
+    ] as const) {
       this.root.addEventListener(t, (e) => { e.stopPropagation(); });
     }
     doc.documentElement.append(this.host);
