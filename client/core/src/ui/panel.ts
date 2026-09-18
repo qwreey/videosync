@@ -49,6 +49,13 @@ button.action:disabled { opacity: .5; cursor: default; }
 .status { font-size: 12px; color: #9a9ca6; min-height: 1.45em; }
 .status.warn { color: #e0b23a; }
 .status.err { color: #e05a4f; }
+.banner {
+  display: none; flex-direction: column; gap: 3px; padding: 8px;
+  border: 1px solid #5c4a1c; border-radius: 6px; background: #241f10;
+}
+.banner.on { display: flex; }
+.banner .banner-title { font-weight: 600; color: #e0b23a; }
+.banner .banner-body { font-size: 12px; color: #c9cbd4; }
 .note { font-size: 12px; color: #9a9ca6; }
 .note.warn { color: #e0b23a; }
 .note.err { color: #e05a4f; }
@@ -196,6 +203,16 @@ export class Panel {
     rotate.title = '기존 참가자는 그대로 있고, 예전 링크로는 아무도 들어올 수 없게 돼요.';
     rotate.addEventListener('click', () => this.h.onRotate());
 
+    // Nothing the member presses while the session is down reaches the room,
+    // and none of it is sent later (engine.ts `onClose`). Nobody would guess
+    // that from a coloured dot, so it is said in words -- and it collects
+    // nothing, so it is safe in the site's DOM.
+    const banner = mk('div', 'banner');
+    banner.append(
+      mk('div', 'banner-title', '연결이 끊겼어요'),
+      mk('div', 'banner-body', '지금 누르는 재생·정지·이동은 방에 전해지지 않아요. 다시 연결되면 방 상태로 돌아가요.'),
+    );
+
     const status = mk('div', 'status');
     // Navigating to a different video does not move the room by itself: with no
     // host, an accidental navigation by anybody would drag everyone off what
@@ -240,6 +257,7 @@ export class Panel {
     };
 
     body.append(
+      banner,
       field('서버', server),
       field('이름', name),
       field('방 ID', room),
@@ -258,7 +276,7 @@ export class Panel {
     panel.append(head, body);
 
     Object.assign(this.el, {
-      dot, title, status, members, log, create, join, leave, copy, rotate,
+      dot, title, status, banner, members, log, create, join, leave, copy, rotate,
       server, name, room, secret, chatInput, mediaWrap, mediaNotice, mediaBtn,
       signed, signedText,
     });
@@ -379,6 +397,20 @@ export class Panel {
   setConnection(state: string): void {
     this.el.dot!.className = `dot ${state}`;
   }
+
+  /**
+   * The disconnect banner: on while a session that had joined is not joined.
+   *
+   * It is not decoration. Nothing the member does to the player while the
+   * session is down is sent to the room -- not then, not on reconnect -- so
+   * without this the panel shows a dot and the member goes on pressing
+   * buttons that do nothing. See `engine.ts` `onClose`.
+   */
+  setDisconnected(on: boolean): void {
+    this.el.banner!.className = on ? 'banner on' : 'banner';
+  }
+
+  get disconnectedShown(): boolean { return this.el.banner!.className.includes('on'); }
 
   /**
    * `inSession`: there is a session to leave, joined or not. One that is

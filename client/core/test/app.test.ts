@@ -612,6 +612,65 @@ describe('leaving', () => {
   });
 });
 
+describe('the disconnect banner', () => {
+  // Nothing the member does to the player while the session is down is sent
+  // to the room -- not then, not on reconnect (2026-09-18). The dot alone
+  // does not say that, so the panel does.
+  const banner = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'banner');
+  const shown = (h: H) => banner(h)?.className.split(' ').includes('on') ?? false;
+
+  it('comes up when a joined session drops, and says the presses go nowhere', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.equal(shown(h), false, 'control: a joined session shows no banner');
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'a dropped session said nothing about it');
+    assert.match(banner(h)!.textContent, /연결이 끊겼어요/);
+    assert.match(banner(h)!.textContent, /방에 전해지지 않아요/);
+  });
+
+  it('stays up across the reconnect attempts, and goes on the next welcome', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(shown(h), true, 'the banner went while the member was still out of the room');
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.equal(h.app.api.engine()?.state, 'joined', 'control: the session rejoined');
+    assert.equal(shown(h), false, 'the banner stayed up over a room the member is back in');
+  });
+
+  it('is not shown for a session that never joined', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(shown(h), false, 'a member who was never in a room was told they left one');
+  });
+
+  it('goes when the member leaves', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'control: the banner is up');
+    h.button('나가기')!.click();
+    await h.tick(100);
+    assert.equal(shown(h), false, 'a member with no session was told their input goes nowhere');
+  });
+});
+
 describe('a page restored from the back/forward cache (N20)', () => {
   /** What the browser fires on the page's window; the fake only records listeners. */
   function fire(h: H, type: string, persisted: boolean): void {
