@@ -17,7 +17,7 @@ import { CODE, FakeServer, gatewayPage, json, KEY, LOGIN_URL, PASSWORD, USER } f
 import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
-import { installDom } from './fakedom.ts';
+import { installDom, popover } from './fakedom.ts';
 import type { FakeElement, Installed } from './fakedom.ts';
 
 const SERVER = 'https://sync.example';
@@ -748,42 +748,59 @@ describe('input on the panel stays on the panel', () => {
   });
 });
 
-describe('the panel follows the page into fullscreen', () => {
-  // A fullscreen element is in the top layer: nothing under `documentElement`
-  // is on screen while one is set, so the panel -- and the disconnect banner
-  // with it -- would be invisible for as long as the member watches.
+describe('the panel reaches the top layer instead of moving', () => {
+  // A fullscreen element is in the top layer, and while one is set nothing
+  // outside the top layer paints -- so the panel, and the disconnect banner
+  // with it, would be invisible for as long as the member watches. The host
+  // joins the top layer as a manual popover and never leaves `<html>`: moving
+  // into the site's fullscreen subtree means a node the site owns, rearranges
+  // and may render not at all.
   const host = (h: H) => h.dom.doc.getElementById('videosync-root')!;
 
-  it('moves into the fullscreen element and back out', async () => {
+  it('shows the host as a popover, in the page, from the start', () => {
+    const h = harness(ROOM_URL);
+    assert.equal(host(h).getAttribute('popover'), 'manual');
+    assert.equal(host(h).matches(':popover-open'), true, 'the host never entered the top layer');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the host left <html>');
+  });
+
+  it('re-enters the top layer on every fullscreen change, and stays in the page', () => {
+    // The top layer paints in the order things joined it, so a popover shown
+    // before the page went fullscreen sits under the fullscreen element.
     const h = harness(ROOM_URL);
     const player = h.dom.doc.createElement('div');
     h.dom.doc.documentElement.append(player);
-    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'control: it starts on the root');
+    assert.equal(host(h).topLayer, 1, 'control: shown once when it was built');
     h.dom.doc.setFullscreen(player);
-    assert.equal(host(h).parentNode, player, 'the panel stayed under the root, off screen');
-    assert.equal(h.app.api.panelRoot(), host(h).shadow as unknown as ShadowRoot,
-      'panelRoot() lost the shadow root in the move');
+    assert.equal(host(h).topLayer, 2, 'the panel stayed under the fullscreen element');
+    assert.equal(host(h).matches(':popover-open'), true);
     h.dom.doc.setFullscreen(null);
-    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the panel stayed inside a dead element');
+    assert.equal(host(h).topLayer, 3, 'leaving fullscreen can drop the popover; it was not re-shown');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the host was moved out of <html>');
+    assert.equal(h.app.api.panelRoot(), host(h).shadow as unknown as ShadowRoot);
   });
 
-  it('stays put for an element that renders no children', async () => {
-    // A <video> taken fullscreen by itself shows no children, so moving in
-    // would hide the panel just as surely -- and take it out of the page.
+  it('is left alone by a browser with no popover, and stays visible', () => {
+    // Firefox before 125, and anything pre-2023. The panel is invisible while
+    // the site is fullscreen, and that is accepted (STATE.md round 5) -- but
+    // it must not be invisible the rest of the time, which is what a `popover`
+    // attribute the browser half-understands would do.
+    popover.supported = false;
     const h = harness(ROOM_URL);
-    const video = h.dom.doc.createElement('video');
-    h.dom.doc.documentElement.append(video);
-    h.dom.doc.setFullscreen(video);
-    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the panel was appended into a <video>');
+    assert.equal(host(h).getAttribute('popover'), null, 'set a popover attribute with no popover support');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement);
+    h.dom.doc.setFullscreen(h.dom.doc.documentElement);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'fell back to moving the host');
   });
 
-  it('puts itself back when the site moved it', async () => {
+  it('takes the attribute back off if showing it failed', () => {
+    // A popover that is not open is `display: none` in the UA stylesheet. An
+    // attribute left on after a failed show would hide the panel outright --
+    // worse than never having tried.
+    popover.fails = true;
     const h = harness(ROOM_URL);
-    const elsewhere = h.dom.doc.createElement('div');
-    h.dom.doc.documentElement.append(elsewhere);
-    elsewhere.append(host(h));                    // the site rearranges its player
-    h.dom.doc.setFullscreen(null);
-    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'a moved host was left where the site put it');
+    assert.equal(host(h).matches(':popover-open'), false, 'control: it did not open');
+    assert.equal(host(h).getAttribute('popover'), null, 'a closed popover attribute was left on the host');
   });
 });
 

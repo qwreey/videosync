@@ -18,12 +18,31 @@
 import type { MemberInfo } from '../engine/protocol.ts';
 
 const CSS = `
-:host { all: initial; }
+/*
+ * The host is a zero-size, click-through anchor, never a box. "all: initial"
+ * goes first, because it resets every property declared after it too --
+ * pointer-events included.
+ *
+ * It is also a popover (see showTopLayer in this file), and the UA stylesheet
+ * gives a popover a box of its own: position fixed, inset 0, width and height
+ * fit-content, margin auto, a solid border, 0.25em padding, overflow auto and
+ * a Canvas background -- plus display:none until it is shown. Every one of
+ * those is overridden here, so the host looks the same whether or not the
+ * browser has popovers and whether or not showing one worked: a closed
+ * popover must not take the panel down with it.
+ */
+:host {
+  all: initial;
+  position: fixed; inset: 0; width: 0; height: 0;
+  margin: 0; border: 0; padding: 0; background: none;
+  overflow: visible; display: block; pointer-events: none;
+}
 .panel {
   position: fixed; z-index: 2147483000; right: 16px; bottom: 16px; width: 300px;
   font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: #e9e9ea; background: #17181c; border: 1px solid #303138; border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,.45); overflow: hidden;
+  pointer-events: auto;                 /* the host is click-through; this is not */
 }
 .panel.collapsed .body { display: none; }
 .head {
@@ -79,6 +98,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 .gesture {
   position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.72); font: 600 18px system-ui, sans-serif; color: #fff; cursor: pointer;
+  pointer-events: auto;                 /* it exists to catch a click */
 }
 .gesture div { padding: 18px 26px; border: 1px solid #4a4c58; border-radius: 12px; background: #17181c; text-align: center; }
 .gesture small { display: block; font-weight: 400; font-size: 13px; color: #9a9ca6; margin-top: 6px; }
@@ -125,7 +145,7 @@ export class Panel {
   private gestureOverlay: HTMLElement | null = null;
   private joined = false;
   private readonly doc: Document;
-  private readonly onFullscreen = () => { this.reparent(); };
+  private readonly onFullscreen = () => { this.raiseTopLayer(); };
 
   constructor(doc: Document, fields: UIFields, handlers: UIHandlers, mode: ShadowRootMode = 'closed') {
     this.doc = doc;
@@ -140,17 +160,16 @@ export class Panel {
     // on everything done to the panel: these events are composed and reach the
     // page retargeted to the host, a plain div that no "is the target
     // editable?" or "is this my player?" check skips. Single keys (YouTube's
-    // k/j/l, digits, Space) and pointers alike -- a click on our own UI must
+    // k/j/l, digits, Space) and clicks alike -- a click on our own UI must
     // never toggle playback or fullscreen on the site underneath. Stopped at
-    // the root, so every field, button and blank corner is covered, and the
-    // name field stays editable while joined.
+    // the root, so every field, button and blank corner is covered.
     //
-    // Only propagation past the panel: NOT `preventDefault`, so the panel's own
-    // controls keep working, and NOT the capture phase -- `gestures.ts` listens
-    // on `window` with `capture: true`, which runs on the way *down*, before
-    // this does. It must still see the press, to file it as the member's own
-    // but not a press on the player. (A page listening in capture sees them
-    // too; that is assumed anyway, see `buildSignIn`.)
+    // Only propagation past the panel: NOT `preventDefault`, so the panel's
+    // own controls keep working, and NOT the capture phase -- `gestures.ts`
+    // listens on `window` with `capture: true`, which runs on the way *down*,
+    // before this does. It must still see the press, to mark it as the
+    // member's own but not a press on the player (see `buildSignIn` for why a
+    // page listening in capture is assumed to see everything anyway).
     for (const t of [
       'keydown', 'keyup', 'keypress',
       'click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'wheel', 'contextmenu',
@@ -158,42 +177,67 @@ export class Panel {
       this.root.addEventListener(t, (e) => { e.stopPropagation(); });
     }
     doc.documentElement.append(this.host);
-    // A fullscreen element is in the top layer: nothing outside it is on
-    // screen, so a panel under `documentElement` is invisible for as long as
-    // the member watches fullscreen -- which is most of the time, and exactly
-    // when the disconnect banner matters. Follow it in and out.
+    // A fullscreen element is in the top layer, and while one is set nothing
+    // outside the top layer paints at all -- so the panel, and the disconnect
+    // banner with it, would be invisible for as long as the member watches.
+    // The way in is to be in the top layer too; the host stays a child of
+    // `<html>` either way (see `showTopLayer`).
     for (const t of ['fullscreenchange', 'webkitfullscreenchange']) {
       doc.addEventListener(t, this.onFullscreen);
     }
-    this.reparent();
+    this.showTopLayer();
   }
 
   /**
-   * Elements that render no children, so putting the host inside one would
-   * hide it as surely as leaving it outside. A `<video>` taken fullscreen by
-   * itself is the common one; there is nowhere to go then, and the host stays
-   * where the site is least likely to trip over it.
+   * Put the host in the top layer, as a manual popover.
+   *
+   * This is the one way to paint above a fullscreen element without leaving
+   * `<html>` -- and moving there is not an option: the element may render no
+   * children at all (a `<video>` gone fullscreen by itself), the site owns
+   * that subtree and rearranges it, and a host inside it is a host the site
+   * can take away.
+   *
+   * Every step can fail, and none of the failures may cost the panel:
+   *
+   * - no popover support (pre-2023 browsers, and Firefox before 125): nothing
+   *   is set, and the panel is simply invisible while the site is fullscreen.
+   *   Accepted -- documented in STATE.md's round-5 section.
+   * - `showPopover()` throws if the host is already showing (the ordinary case
+   *   on a re-show) or is not connected. A popover that is not open is
+   *   `display: none` in the UA stylesheet, so if it did not open, the
+   *   attribute comes straight back off; `:host` overrides that `display`
+   *   anyway, and this is the belt to its braces.
    */
-  private static readonly NO_CHILDREN = new Set(['VIDEO', 'AUDIO', 'IMG', 'IFRAME', 'CANVAS', 'OBJECT', 'EMBED']);
+  private showTopLayer(): void {
+    const h = this.host as HTMLElement & { showPopover?: () => void };
+    if (typeof h.showPopover !== 'function') return;
+    if (!h.getAttribute('popover')) h.setAttribute('popover', 'manual');
+    try {
+      h.showPopover();
+    } catch {
+      if (!this.inTopLayer()) h.removeAttribute('popover');
+    }
+  }
 
   /**
-   * Put the host inside the current fullscreen element, or back under
-   * `documentElement` when there is none.
+   * Re-enter the top layer, so the host is above whatever just joined it.
    *
-   * Called on every `fullscreenchange`, and it re-appends whenever the host is
-   * not already where it belongs -- a site that reparents or drops our node
-   * while rearranging its player is put right by the next change. `append`
-   * moves an attached node, so there is nothing to detach first, and the
-   * shadow root (and `panelRoot()` with it) is unaffected: it belongs to the
-   * host, not to its parent.
+   * The top layer paints in the order things were added to it, so a popover
+   * shown before the page went fullscreen sits *under* the fullscreen element.
+   * Leaving and re-entering puts it back on top. Entering or leaving
+   * fullscreen can also drop a shown popover outright, which the same call
+   * repairs.
    */
-  private reparent(): void {
-    const d = this.doc as Document & { webkitFullscreenElement?: Element | null };
-    const fs = d.fullscreenElement ?? d.webkitFullscreenElement ?? null;
-    const usable = fs && fs !== this.host && !this.host.contains?.(fs) &&
-      !Panel.NO_CHILDREN.has(fs.tagName) && typeof (fs as Element & { append?: unknown }).append === 'function';
-    const target = usable ? fs : this.doc.documentElement;
-    if (this.host.parentNode !== target) target.append(this.host);
+  private raiseTopLayer(): void {
+    const h = this.host as HTMLElement & { hidePopover?: () => void };
+    if (typeof h.hidePopover === 'function') {
+      try { h.hidePopover(); } catch { /* it was not showing; showTopLayer decides */ }
+    }
+    this.showTopLayer();
+  }
+
+  private inTopLayer(): boolean {
+    try { return this.host.matches(':popover-open'); } catch { return false; }
   }
 
   private build(doc: Document, f: UIFields): HTMLElement {

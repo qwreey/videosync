@@ -12,6 +12,13 @@
 
 type Listener = (e: FakeEvent) => void;
 
+/**
+ * What this fake browser offers of the Popover API, for the panel's top-layer
+ * path. Set before `installDom` (the panel shows its popover while it is being
+ * built); `uninstall()` puts it back.
+ */
+export const popover = { supported: true, fails: false };
+
 export interface FakeEvent {
   type: string;
   target?: FakeElement;
@@ -42,6 +49,12 @@ export class FakeElement {
   constructor(doc: FakeDocument, tag: string) {
     this.ownerDocument = doc;
     this.tagName = tag.toUpperCase();
+    // A browser with no top layer to offer: an own property shadows the
+    // prototype method, so `typeof el.showPopover` is 'undefined', which is
+    // what the panel feature-detects on.
+    if (!popover.supported) {
+      Object.assign(this, { showPopover: undefined, hidePopover: undefined });
+    }
   }
 
   get textContent(): string { return this.text + this.children.map((c) => c.textContent).join(''); }
@@ -122,6 +135,37 @@ export class FakeElement {
     return false;
   }
 
+  // --- the top layer, as far as the panel uses it -----------------------------
+  // `showPopover` throws when it is already showing, as the real one does, and
+  // `popover.fails` makes it throw the way it does for a host that is not
+  // connected. `topLayer` counts entries, so a test can see a re-show.
+  /** How many times this element entered the top layer. */
+  topLayer = 0;
+  private open = false;
+
+  showPopover(): void {
+    if (this.open) throw new Error('InvalidStateError: already showing');
+    if (popover.fails) throw new Error('InvalidStateError: not connected');
+    this.open = true;
+    this.topLayer++;
+  }
+
+  hidePopover(): void {
+    if (!this.open) throw new Error('InvalidStateError: not showing');
+    this.open = false;
+  }
+
+  /** `:popover-open` only; nothing else here is a selector engine. */
+  matches(sel: string): boolean {
+    if (sel === ':popover-open') return this.open;
+    throw new Error(`fakedom: unsupported selector ${sel}`);
+  }
+
+  getAttribute(name: string): string | null { return this.attrs.get(name) ?? null; }
+  setAttribute(name: string, value: string): void { this.attrs.set(name, value); }
+  removeAttribute(name: string): void { this.attrs.delete(name); }
+  private readonly attrs = new Map<string, string>();
+
   /** Tag-name selectors only. */
   closest(sel: string): FakeElement | null {
     for (let n: FakeElement | null = this; n; n = n.parentNode) {
@@ -153,7 +197,12 @@ export class FakeElement {
 export class FakeDocument {
   readonly documentElement: FakeElement;
   hidden = false;
-  /** What the page has taken fullscreen, as `document.fullscreenElement`. */
+  /**
+   * What the page has taken fullscreen, as `document.fullscreenElement`.
+   * The panel does not read it -- it stays where it is and uses the top layer
+   * instead -- but `setFullscreen(el)` reads better in a test than a bare
+   * "fire the event".
+   */
   fullscreenElement: FakeElement | null = null;
   private readonly listeners = new Map<string, Set<Listener>>();
   constructor() { this.documentElement = new FakeElement(this, 'html'); }
@@ -248,6 +297,8 @@ export function installDom(href: string): Installed {
     doc, loc, win, history,
     setClipboard(c) { clipboard = c; },
     uninstall() {
+      popover.supported = true;
+      popover.fails = false;
       for (const [k, d] of saved) {
         if (d) Object.defineProperty(globalThis, k, d);
         else delete (globalThis as Record<string, unknown>)[k];
