@@ -331,9 +331,10 @@ export class Panel {
     // nothing, so it is safe in the site's DOM.
     //
     // It is load-bearing, so it has to be seen: it lives outside `.body`, so
-    // a collapsed panel still shows it (the title alone), and `reparent` moves
-    // the whole host into the fullscreen element, where `documentElement` has
-    // nothing on screen.
+    // a collapsed panel still shows it (the title alone), and the host is in
+    // the top layer (`showTopLayer`), so it paints over a fullscreen player --
+    // where the panel is a read-out with only the title and this banner left,
+    // because nothing there can be pressed (`.panel.fullscreen`).
     //
     // Known hole: a path that goes dark without a close keeps the status at
     // `joined` until the time probe gives up, `SILENT_PROBES` x
