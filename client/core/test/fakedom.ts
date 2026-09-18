@@ -12,6 +12,13 @@
 
 type Listener = (e: FakeEvent) => void;
 
+/**
+ * What this fake browser offers of the Popover API, for the panel's top-layer
+ * path. Set before `installDom` (the panel shows its popover while it is being
+ * built); `uninstall()` puts it back.
+ */
+export const popover = { supported: true, fails: false };
+
 export interface FakeEvent {
   type: string;
   target?: FakeElement;
@@ -42,6 +49,12 @@ export class FakeElement {
   constructor(doc: FakeDocument, tag: string) {
     this.ownerDocument = doc;
     this.tagName = tag.toUpperCase();
+    // A browser with no top layer to offer: an own property shadows the
+    // prototype method, so `typeof el.showPopover` is 'undefined', which is
+    // what the panel feature-detects on.
+    if (!popover.supported) {
+      Object.assign(this, { showPopover: undefined, hidePopover: undefined });
+    }
   }
 
   get textContent(): string { return this.text + this.children.map((c) => c.textContent).join(''); }
@@ -88,6 +101,11 @@ export class FakeElement {
   attachShadow(o: { mode: string }): FakeElement {
     this.shadowMode = o.mode;
     this.shadow = new FakeElement(this.ownerDocument, '#shadow-root');
+    // The composed tree: a composed event dispatched inside the shadow root
+    // bubbles on through the host and up the page, which is the whole reason
+    // the panel stops key and pointer events at the root. Not in `children`,
+    // so `walk()` and `getElementById` still see the light tree only.
+    this.shadow.parentNode = this;
     return this.shadow;
   }
 
@@ -111,6 +129,42 @@ export class FakeElement {
   }
 
   click(): void { this.dispatchEvent({ type: 'click' }); }
+
+  contains(el: FakeElement | null): boolean {
+    for (let n: FakeElement | null = el; n; n = n.parentNode) if (n === this) return true;
+    return false;
+  }
+
+  // --- the top layer, as far as the panel uses it -----------------------------
+  // `showPopover` throws when it is already showing, as the real one does, and
+  // `popover.fails` makes it throw the way it does for a host that is not
+  // connected. `topLayer` counts entries, so a test can see a re-show.
+  /** How many times this element entered the top layer. */
+  topLayer = 0;
+  private open = false;
+
+  showPopover(): void {
+    if (this.open) throw new Error('InvalidStateError: already showing');
+    if (popover.fails) throw new Error('InvalidStateError: not connected');
+    this.open = true;
+    this.topLayer++;
+  }
+
+  hidePopover(): void {
+    if (!this.open) throw new Error('InvalidStateError: not showing');
+    this.open = false;
+  }
+
+  /** `:popover-open` only; nothing else here is a selector engine. */
+  matches(sel: string): boolean {
+    if (sel === ':popover-open') return this.open;
+    throw new Error(`fakedom: unsupported selector ${sel}`);
+  }
+
+  getAttribute(name: string): string | null { return this.attrs.get(name) ?? null; }
+  setAttribute(name: string, value: string): void { this.attrs.set(name, value); }
+  removeAttribute(name: string): void { this.attrs.delete(name); }
+  private readonly attrs = new Map<string, string>();
 
   /** Tag-name selectors only. */
   closest(sel: string): FakeElement | null {
@@ -143,12 +197,31 @@ export class FakeElement {
 export class FakeDocument {
   readonly documentElement: FakeElement;
   hidden = false;
+  /**
+   * What the page has taken fullscreen, as `document.fullscreenElement`.
+   * The panel does not read it -- it stays where it is and uses the top layer
+   * instead -- but `setFullscreen(el)` reads better in a test than a bare
+   * "fire the event".
+   */
+  fullscreenElement: FakeElement | null = null;
+  private readonly listeners = new Map<string, Set<Listener>>();
   constructor() { this.documentElement = new FakeElement(this, 'html'); }
   createElement(tag: string): FakeElement { return new FakeElement(this, tag); }
   querySelectorAll(_sel: string): FakeElement[] { return []; }
   getElementById(id: string): FakeElement | null {
     for (const e of this.documentElement.walk()) if (e.id === id) return e;
     return null;
+  }
+  addEventListener(type: string, fn: Listener): void {
+    let s = this.listeners.get(type);
+    if (!s) { s = new Set(); this.listeners.set(type, s); }
+    s.add(fn);
+  }
+  removeEventListener(type: string, fn: Listener): void { this.listeners.get(type)?.delete(fn); }
+  /** Take `el` fullscreen (or leave it, with `null`) and fire the event. */
+  setFullscreen(el: FakeElement | null): void {
+    this.fullscreenElement = el;
+    for (const fn of [...(this.listeners.get('fullscreenchange') ?? [])]) fn({ type: 'fullscreenchange' });
   }
 }
 
@@ -224,6 +297,8 @@ export function installDom(href: string): Installed {
     doc, loc, win, history,
     setClipboard(c) { clipboard = c; },
     uninstall() {
+      popover.supported = true;
+      popover.fails = false;
       for (const [k, d] of saved) {
         if (d) Object.defineProperty(globalThis, k, d);
         else delete (globalThis as Record<string, unknown>)[k];

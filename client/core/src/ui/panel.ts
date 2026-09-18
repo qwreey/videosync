@@ -18,12 +18,31 @@
 import type { MemberInfo } from '../engine/protocol.ts';
 
 const CSS = `
-:host { all: initial; }
+/*
+ * The host is a zero-size, click-through anchor, never a box. "all: initial"
+ * goes first, because it resets every property declared after it too --
+ * pointer-events included.
+ *
+ * It is also a popover (see showTopLayer in this file), and the UA stylesheet
+ * gives a popover a box of its own: position fixed, inset 0, width and height
+ * fit-content, margin auto, a solid border, 0.25em padding, overflow auto and
+ * a Canvas background -- plus display:none until it is shown. Every one of
+ * those is overridden here, so the host looks the same whether or not the
+ * browser has popovers and whether or not showing one worked: a closed
+ * popover must not take the panel down with it.
+ */
+:host {
+  all: initial;
+  position: fixed; inset: 0; width: 0; height: 0;
+  margin: 0; border: 0; padding: 0; background: none;
+  overflow: visible; display: block; pointer-events: none;
+}
 .panel {
   position: fixed; z-index: 2147483000; right: 16px; bottom: 16px; width: 300px;
   font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color: #e9e9ea; background: #17181c; border: 1px solid #303138; border-radius: 10px;
   box-shadow: 0 8px 32px rgba(0,0,0,.45); overflow: hidden;
+  pointer-events: auto;                 /* the host is click-through; this is not */
 }
 .panel.collapsed .body { display: none; }
 .head {
@@ -49,6 +68,17 @@ button.action:disabled { opacity: .5; cursor: default; }
 .status { font-size: 12px; color: #9a9ca6; min-height: 1.45em; }
 .status.warn { color: #e0b23a; }
 .status.err { color: #e05a4f; }
+/* Outside .body on purpose: collapsing the panel must not hide it. */
+.banner {
+  display: none; flex-direction: column; gap: 3px; padding: 8px; margin: 10px 10px 0;
+  border: 1px solid #5c4a1c; border-radius: 6px; background: #241f10;
+}
+.banner.on { display: flex; }
+.banner .banner-title { font-weight: 600; color: #e0b23a; }
+.banner .banner-body { font-size: 12px; color: #c9cbd4; }
+/* Collapsed: the title alone, and it has to carry its own bottom margin. */
+.panel.collapsed .banner { margin-bottom: 10px; }
+.panel.collapsed .banner .banner-body { display: none; }
 .note { font-size: 12px; color: #9a9ca6; }
 .note.warn { color: #e0b23a; }
 .note.err { color: #e05a4f; }
@@ -68,6 +98,7 @@ button.action:disabled { opacity: .5; cursor: default; }
 .gesture {
   position: fixed; inset: 0; z-index: 2147483001; display: flex; align-items: center; justify-content: center;
   background: rgba(0,0,0,.72); font: 600 18px system-ui, sans-serif; color: #fff; cursor: pointer;
+  pointer-events: auto;                 /* it exists to catch a click */
 }
 .gesture div { padding: 18px 26px; border: 1px solid #4a4c58; border-radius: 12px; background: #17181c; text-align: center; }
 .gesture small { display: block; font-weight: 400; font-size: 13px; color: #9a9ca6; margin-top: 6px; }
@@ -113,8 +144,11 @@ export class Panel {
   private readonly h: UIHandlers;
   private gestureOverlay: HTMLElement | null = null;
   private joined = false;
+  private readonly doc: Document;
+  private readonly onFullscreen = () => { this.raiseTopLayer(); };
 
   constructor(doc: Document, fields: UIFields, handlers: UIHandlers, mode: ShadowRootMode = 'closed') {
+    this.doc = doc;
     this.h = handlers;
     this.host = doc.createElement('div');
     this.host.id = 'videosync-root';
@@ -122,17 +156,88 @@ export class Panel {
     const style = doc.createElement('style');
     style.textContent = CSS;
     this.root.append(style, this.build(doc, fields));
-    // A site listening on document for single-key shortcuts (YouTube's k/j/l,
-    // digits, Space) would otherwise act on every key pressed in the panel:
-    // key events are composed and reach the page retargeted to the host, a
-    // plain div that no "is the target editable?" check skips. Stopped at the
-    // root, so every field and button is covered -- the name field stays
-    // editable while joined, and a seek it caused would go to the whole room.
-    // A capture listener on the page still sees them (see `buildSignIn`).
-    for (const t of ['keydown', 'keyup', 'keypress'] as const) {
+    // A site listening on document for its own shortcuts would otherwise act
+    // on everything done to the panel: these events are composed and reach the
+    // page retargeted to the host, a plain div that no "is the target
+    // editable?" or "is this my player?" check skips. Single keys (YouTube's
+    // k/j/l, digits, Space) and clicks alike -- a click on our own UI must
+    // never toggle playback or fullscreen on the site underneath. Stopped at
+    // the root, so every field, button and blank corner is covered.
+    //
+    // Only propagation past the panel: NOT `preventDefault`, so the panel's
+    // own controls keep working, and NOT the capture phase -- `gestures.ts`
+    // listens on `window` with `capture: true`, which runs on the way *down*,
+    // before this does. It must still see the press, to mark it as the
+    // member's own but not a press on the player (see `buildSignIn` for why a
+    // page listening in capture is assumed to see everything anyway).
+    for (const t of [
+      'keydown', 'keyup', 'keypress',
+      'click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'wheel', 'contextmenu',
+    ] as const) {
       this.root.addEventListener(t, (e) => { e.stopPropagation(); });
     }
     doc.documentElement.append(this.host);
+    // A fullscreen element is in the top layer, and while one is set nothing
+    // outside the top layer paints at all -- so the panel, and the disconnect
+    // banner with it, would be invisible for as long as the member watches.
+    // The way in is to be in the top layer too; the host stays a child of
+    // `<html>` either way (see `showTopLayer`).
+    for (const t of ['fullscreenchange', 'webkitfullscreenchange']) {
+      doc.addEventListener(t, this.onFullscreen);
+    }
+    this.showTopLayer();
+  }
+
+  /**
+   * Put the host in the top layer, as a manual popover.
+   *
+   * This is the one way to paint above a fullscreen element without leaving
+   * `<html>` -- and moving there is not an option: the element may render no
+   * children at all (a `<video>` gone fullscreen by itself), the site owns
+   * that subtree and rearranges it, and a host inside it is a host the site
+   * can take away.
+   *
+   * Every step can fail, and none of the failures may cost the panel:
+   *
+   * - no popover support (pre-2023 browsers, and Firefox before 125): nothing
+   *   is set, and the panel is simply invisible while the site is fullscreen.
+   *   Accepted -- documented in STATE.md's round-5 section.
+   * - `showPopover()` throws if the host is already showing (the ordinary case
+   *   on a re-show) or is not connected. A popover that is not open is
+   *   `display: none` in the UA stylesheet, so if it did not open, the
+   *   attribute comes straight back off; `:host` overrides that `display`
+   *   anyway, and this is the belt to its braces.
+   */
+  private showTopLayer(): void {
+    const h = this.host as HTMLElement & { showPopover?: () => void };
+    if (typeof h.showPopover !== 'function') return;
+    if (!h.getAttribute('popover')) h.setAttribute('popover', 'manual');
+    try {
+      h.showPopover();
+    } catch {
+      if (!this.inTopLayer()) h.removeAttribute('popover');
+    }
+  }
+
+  /**
+   * Re-enter the top layer, so the host is above whatever just joined it.
+   *
+   * The top layer paints in the order things were added to it, so a popover
+   * shown before the page went fullscreen sits *under* the fullscreen element.
+   * Leaving and re-entering puts it back on top. Entering or leaving
+   * fullscreen can also drop a shown popover outright, which the same call
+   * repairs.
+   */
+  private raiseTopLayer(): void {
+    const h = this.host as HTMLElement & { hidePopover?: () => void };
+    if (typeof h.hidePopover === 'function') {
+      try { h.hidePopover(); } catch { /* it was not showing; showTopLayer decides */ }
+    }
+    this.showTopLayer();
+  }
+
+  private inTopLayer(): boolean {
+    try { return this.host.matches(':popover-open'); } catch { return false; }
   }
 
   private build(doc: Document, f: UIFields): HTMLElement {
@@ -196,6 +301,26 @@ export class Panel {
     rotate.title = '기존 참가자는 그대로 있고, 예전 링크로는 아무도 들어올 수 없게 돼요.';
     rotate.addEventListener('click', () => this.h.onRotate());
 
+    // Nothing the member presses while the session is down reaches the room,
+    // and none of it is sent later (engine.ts `onClose`). Nobody would guess
+    // that from a coloured dot, so it is said in words -- and it collects
+    // nothing, so it is safe in the site's DOM.
+    //
+    // It is load-bearing, so it has to be seen: it lives outside `.body`, so
+    // a collapsed panel still shows it (the title alone), and `reparent` moves
+    // the whole host into the fullscreen element, where `documentElement` has
+    // nothing on screen.
+    //
+    // Known hole: a path that goes dark without a close keeps the status at
+    // `joined` until the time probe gives up, `SILENT_PROBES` x
+    // `timeSyncIntervalMs` -- 15-20 s in which the panel says 연결됨, this
+    // banner is off, and a press reaches nobody (engine.ts `timeLoop`).
+    const banner = mk('div', 'banner');
+    banner.append(
+      mk('div', 'banner-title', '연결이 끊겼어요'),
+      mk('div', 'banner-body', '지금 누르는 재생·정지·이동은 방에 전해지지 않아요. 다시 연결되면 방 상태로 돌아가요.'),
+    );
+
     const status = mk('div', 'status');
     // Navigating to a different video does not move the room by itself: with no
     // host, an accidental navigation by anybody would drag everyone off what
@@ -255,10 +380,10 @@ export class Panel {
       log,
       chatInput,
     );
-    panel.append(head, body);
+    panel.append(head, banner, body);
 
     Object.assign(this.el, {
-      dot, title, status, members, log, create, join, leave, copy, rotate,
+      dot, title, status, banner, members, log, create, join, leave, copy, rotate,
       server, name, room, secret, chatInput, mediaWrap, mediaNotice, mediaBtn,
       signed, signedText,
     });
@@ -381,6 +506,18 @@ export class Panel {
   }
 
   /**
+   * The disconnect banner: on while a session that had joined is not joined.
+   *
+   * It is not decoration. Nothing the member does to the player while the
+   * session is down is sent to the room -- not then, not on reconnect -- so
+   * without this the panel shows a dot and the member goes on pressing
+   * buttons that do nothing. See `engine.ts` `onClose`.
+   */
+  setDisconnected(on: boolean): void {
+    this.el.banner!.className = on ? 'banner on' : 'banner';
+  }
+
+  /**
    * `inSession`: there is a session to leave, joined or not. One that is
    * reconnecting, or waiting for a sign-in, keeps running until left, and
    * would otherwise take the member back into the room they meant to leave.
@@ -488,5 +625,10 @@ export class Panel {
   /** The element the panel lives in: input inside it is not a press on the player. */
   get hostElement(): HTMLElement { return this.host; }
 
-  destroy(): void { this.host.remove(); }
+  destroy(): void {
+    for (const t of ['fullscreenchange', 'webkitfullscreenchange']) {
+      this.doc.removeEventListener(t, this.onFullscreen);
+    }
+    this.host.remove();
+  }
 }

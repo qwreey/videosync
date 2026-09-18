@@ -281,6 +281,13 @@ export function start(p: Platform): App {
   let resumeMedia: 'follow' | 'offer' | null = null;
   /** Whether the last status was 'joined', so leaving it is seen once. */
   let wasJoined = false;
+  /**
+   * Whether this session ever joined. A session that has is one whose member
+   * believes they are in a room, so a drop has to be said out loud: what they
+   * press while it is down reaches nobody, then or later. Cleared by `leave`,
+   * which every join calls first.
+   */
+  let joinedOnce = false;
   /** The rejoin record this page last wrote, exactly as written. */
   let ownRejoin = '';
   /** How many `followRoom` passes are writing their rejoin record. */
@@ -878,6 +885,13 @@ export function start(p: Platform): App {
         wasJoined = s === 'joined';
         const prev = lastStatus;
         lastStatus = s;
+        if (s === 'joined') joinedOnce = true;
+        // A session that had joined and is not joined now: nothing the member
+        // presses is reaching the room, and none of it is sent when the link
+        // comes back (engine.ts `onClose`). A refusal is not this -- it is
+        // over, the room is not coming back, and it says so in its own words.
+        const dead = s === 'refused' || (prev === 'refused' && s === 'closed');
+        panel.setDisconnected(joinedOnce && engine !== null && s !== 'joined' && !dead);
         // The server closes the socket right after refusing, and the close is
         // not news: "connection lost" in place of "check the room ID or
         // secret" sends the user off to debug their network.
@@ -1004,8 +1018,10 @@ export function start(p: Platform): App {
     stayedAwayFrom = '';
     resumeMedia = null;
     wasJoined = false;
+    joinedOnce = false;
     lastStatus = 'idle';
     panel.setJoined(false);
+    panel.setDisconnected(false);
     panel.setMembers([], '', []);
     clearMediaAction();
     panel.hideGesturePrompt();

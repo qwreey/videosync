@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it, mock } from 'node:test';
 
 import { rewriteInviteSecret, start } from '../src/app/bootstrap.ts';
+import { trackGestures } from '../src/app/gestures.ts';
 import type { App, Platform, Store } from '../src/app/bootstrap.ts';
 import type { ServerFrame } from '../src/engine/protocol.ts';
 import { Panel } from '../src/ui/panel.ts';
@@ -16,7 +17,7 @@ import { CODE, FakeServer, gatewayPage, json, KEY, LOGIN_URL, PASSWORD, USER } f
 import { buildRegistry, sha256Hex } from '../src/providers/adoption.ts';
 import { BUILTIN_SOURCES } from '../src/providers/builtin.gen.ts';
 import type { Descriptor } from '../src/providers/descriptor.ts';
-import { installDom } from './fakedom.ts';
+import { installDom, popover } from './fakedom.ts';
 import type { FakeElement, Installed } from './fakedom.ts';
 
 const SERVER = 'https://sync.example';
@@ -609,6 +610,197 @@ describe('leaving', () => {
     h.button('나가기')!.click();
     assert.doesNotMatch(h.status().text, /끊겼/, 'a member who left on purpose is told the network failed');
     assert.doesNotMatch(dot(h).className, /\bclosed\b/, 'a red dot for a deliberate leave');
+  });
+});
+
+describe('the disconnect banner', () => {
+  // Nothing the member does to the player while the session is down is sent
+  // to the room -- not then, not on reconnect (2026-09-18). The dot alone
+  // does not say that, so the panel does.
+  const banner = (h: H) => [...h.root().shadow!.walk()].find((x) => x.className.split(' ')[0] === 'banner');
+  const shown = (h: H) => banner(h)?.className.split(' ').includes('on') ?? false;
+
+  it('comes up when a joined session drops, and says the presses go nowhere', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.equal(shown(h), false, 'control: a joined session shows no banner');
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'a dropped session said nothing about it');
+    assert.match(banner(h)!.textContent, /연결이 끊겼어요/);
+    assert.match(banner(h)!.textContent, /방에 전해지지 않아요/);
+  });
+
+  it('stays up across the reconnect attempts, and goes on the next welcome', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(shown(h), true, 'the banner went while the member was still out of the room');
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    assert.equal(h.app.api.engine()?.state, 'joined', 'control: the session rejoined');
+    assert.equal(shown(h), false, 'the banner stayed up over a room the member is back in');
+  });
+
+  it('is not shown for a session that never joined', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(1000);
+    assert.equal(h.app.api.engine()?.state, 'connecting', 'control: the session is retrying');
+    assert.equal(shown(h), false, 'a member who was never in a room was told they left one');
+  });
+
+  it('is not inside the part a collapsed panel hides', async () => {
+    // `.panel.collapsed .body { display: none }` takes the whole body with it,
+    // and a member who collapsed the panel is exactly the one who will not
+    // notice a dot. Nothing here lays anything out (see fakedom.ts), so this
+    // is structural: the banner is a sibling of `.body`, not a descendant, so
+    // no rule on `.body` can reach it. The compact form when collapsed is CSS
+    // only (`.panel.collapsed .banner .banner-body`).
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'control: the banner is up');
+    const all = [...h.root().shadow!.walk()];
+    const body = all.find((x) => x.className === 'body')!;
+    const panel = all.find((x) => x.className.split(' ')[0] === 'panel')!;
+    assert.equal(banner(h)!.parentNode, panel, 'the banner is not a direct child of the panel');
+    assert.equal(body.contains(banner(h)!), false, 'the banner is inside the part collapsing hides');
+    h.button('–')!.click();
+    assert.ok(panel.className.split(' ').includes('collapsed'), 'control: the panel collapsed');
+    assert.equal(shown(h), true, 'collapsing took the banner down');
+  });
+
+  it('goes when the member leaves', async () => {
+    const h = harness(ROOM_URL);
+    h.join();
+    h.welcome({ mediaKey: ROOM_KEY });
+    await h.tick(50);
+    h.tr().drop('net');
+    await h.tick(100);
+    assert.equal(shown(h), true, 'control: the banner is up');
+    h.button('나가기')!.click();
+    await h.tick(100);
+    assert.equal(shown(h), false, 'a member with no session was told their input goes nowhere');
+  });
+});
+
+describe('input on the panel stays on the panel', () => {
+  // These events are composed: they leave the shadow root retargeted to the
+  // host, a plain div that no site check skips. A site listening on `document`
+  // for its own shortcuts would act on every one -- YouTube's k/j/l and Space
+  // on keys, and on clicks a player overlay that toggles playback or
+  // fullscreen under our own buttons.
+  //
+  // What is NOT stopped, and must not be: the capture phase. `gestures.ts`
+  // listens on `window` with `capture: true`, which in a browser runs on the
+  // way down, before the root's bubble listener; it has to see the press to
+  // file it as the member's own but not a press on the player. The fake DOM
+  // has no capture phase, so the second test asserts the tracker's half
+  // directly.
+  const TYPES = ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup',
+    'wheel', 'contextmenu', 'keydown', 'keyup', 'keypress'];
+
+  for (const type of TYPES) {
+    it(`${type} does not reach the page`, () => {
+      const h = harness(ROOM_URL);
+      let onPage = 0;
+      h.dom.doc.documentElement.addEventListener(type, () => { onPage++; });
+      const btn = h.button('참가')!;
+      btn.dispatchEvent({ type });
+      assert.equal(onPage, 0, `a ${type} on the panel reached a site handler on the page`);
+      // Control: the same event from the page is the site's own, untouched.
+      const other = h.dom.doc.createElement('div');
+      h.dom.doc.documentElement.append(other);
+      other.dispatchEvent({ type });
+      assert.equal(onPage, 1, 'the panel swallowed an event that was never its own');
+    });
+  }
+
+  it('is still counted by the gesture tracker, as ours rather than as a press', () => {
+    // The tracker's listener, called as the capture phase would call it.
+    const h = harness(ROOM_URL);
+    const hostEl = h.dom.doc.getElementById('videosync-root')!;
+    const win = { at: 0 };
+    const g = trackGestures(
+      { addEventListener: (_t, fn) => { (win as { fn?: unknown }).fn = fn; }, removeEventListener: () => {} },
+      () => hostEl as unknown as Node,
+      () => ++win.at,
+    );
+    const fn = (win as unknown as { fn: (e: Event) => void }).fn;
+    fn({ type: 'pointerdown', isTrusted: true, pointerType: 'mouse', composedPath: () => [hostEl] } as unknown as Event);
+    assert.ok(g.lastIgnoredInputAt() > 0, 'a press on the panel was not seen at all');
+    assert.equal(g.lastInputAt(), -Infinity, 'a press on the panel counted as a press on the player');
+    // Control: the same press anywhere else is a press on the player.
+    fn({ type: 'pointerdown', isTrusted: true, pointerType: 'mouse', composedPath: () => [] } as unknown as Event);
+    assert.ok(g.lastInputAt() > 0);
+  });
+});
+
+describe('the panel reaches the top layer instead of moving', () => {
+  // A fullscreen element is in the top layer, and while one is set nothing
+  // outside the top layer paints -- so the panel, and the disconnect banner
+  // with it, would be invisible for as long as the member watches. The host
+  // joins the top layer as a manual popover and never leaves `<html>`: moving
+  // into the site's fullscreen subtree means a node the site owns, rearranges
+  // and may render not at all.
+  const host = (h: H) => h.dom.doc.getElementById('videosync-root')!;
+
+  it('shows the host as a popover, in the page, from the start', () => {
+    const h = harness(ROOM_URL);
+    assert.equal(host(h).getAttribute('popover'), 'manual');
+    assert.equal(host(h).matches(':popover-open'), true, 'the host never entered the top layer');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the host left <html>');
+  });
+
+  it('re-enters the top layer on every fullscreen change, and stays in the page', () => {
+    // The top layer paints in the order things joined it, so a popover shown
+    // before the page went fullscreen sits under the fullscreen element.
+    const h = harness(ROOM_URL);
+    const player = h.dom.doc.createElement('div');
+    h.dom.doc.documentElement.append(player);
+    assert.equal(host(h).topLayer, 1, 'control: shown once when it was built');
+    h.dom.doc.setFullscreen(player);
+    assert.equal(host(h).topLayer, 2, 'the panel stayed under the fullscreen element');
+    assert.equal(host(h).matches(':popover-open'), true);
+    h.dom.doc.setFullscreen(null);
+    assert.equal(host(h).topLayer, 3, 'leaving fullscreen can drop the popover; it was not re-shown');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'the host was moved out of <html>');
+    assert.equal(h.app.api.panelRoot(), host(h).shadow as unknown as ShadowRoot);
+  });
+
+  it('is left alone by a browser with no popover, and stays visible', () => {
+    // Firefox before 125, and anything pre-2023. The panel is invisible while
+    // the site is fullscreen, and that is accepted (STATE.md round 5) -- but
+    // it must not be invisible the rest of the time, which is what a `popover`
+    // attribute the browser half-understands would do.
+    popover.supported = false;
+    const h = harness(ROOM_URL);
+    assert.equal(host(h).getAttribute('popover'), null, 'set a popover attribute with no popover support');
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement);
+    h.dom.doc.setFullscreen(h.dom.doc.documentElement);
+    assert.equal(host(h).parentNode, h.dom.doc.documentElement, 'fell back to moving the host');
+  });
+
+  it('takes the attribute back off if showing it failed', () => {
+    // A popover that is not open is `display: none` in the UA stylesheet. An
+    // attribute left on after a failed show would hide the panel outright --
+    // worse than never having tried.
+    popover.fails = true;
+    const h = harness(ROOM_URL);
+    assert.equal(host(h).matches(':popover-open'), false, 'control: it did not open');
+    assert.equal(host(h).getAttribute('popover'), null, 'a closed popover attribute was left on the host');
   });
 });
 

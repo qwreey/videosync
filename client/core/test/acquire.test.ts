@@ -1197,22 +1197,19 @@ describe('a pause made while the session is down', () => {
 
   /**
    * Playing in a playing room, the link drops; 200 ms later the player is
-   * paused -- by a press if `pressed`, else by nobody we saw. `hidden` hides
-   * the tab first, and `muted` makes the playback one that never made a
-   * sound. The session comes back into `room` at `seq`.
+   * paused -- by a press if `pressed`, else by nobody we saw. The session
+   * comes back into `room` at `seq`.
    */
   async function pausedAway(pressed: boolean, o: {
-    hidden?: boolean; muted?: boolean; room?: Partial<Anchor>; seq?: number;
+    room?: Partial<Anchor>; seq?: number;
   } = {}) {
     const h = harness({ player: { paused: false, positionS: 100 } });
-    h.player.muted = o.muted ?? false;
     await h.join(ROOM);
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
     assert.equal(h.engine.acquisition, 'steady');
     h.tr.drop();
     await h.vt.advance(200);
     if (pressed) h.g.press();
-    if (o.hidden) h.tab.hidden = true;
     h.player.readState();
     h.player.paused = true;
     h.player.emit('pause');
@@ -1220,9 +1217,15 @@ describe('a pause made while the session is down', () => {
     return h;
   }
 
-  it('is sent when a gesture made it', async () => {
+  it('is not sent even when a gesture made it, and the room puts it back', async () => {
+    // Deliberate (2026-09-18): the room wins on reconnect. Sending what a
+    // member did while unreachable lets one dropped link drag everybody, and
+    // the panel says so instead.
     const h = await pausedAway(true);
-    assert.deepEqual(h.kinds(), ['pause']);
+    assert.deepEqual(h.kinds(), [], 'a pause made while the session was down was sent');
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
+    assert.deepEqual(h.kinds(), []);
+    assert.equal(h.player.paused, false, 'the member was left paused against a playing room');
   });
 
   it('control: with no gesture after the drop it is the site\'s, and put back', async () => {
@@ -1232,27 +1235,46 @@ describe('a pause made while the session is down', () => {
     assert.equal(h.player.paused, false);
   });
 
-  it('is not sent when it is the browser\'s pause of a hidden tab that never made a sound', async () => {
-    // The member clicked, then switched tabs; the browser paused the muted
-    // playback. Live, the detector calls that `suspended` and sends nothing.
-    const h = await pausedAway(true, { hidden: true, muted: true });
-    await h.vt.advance(2000);
-    assert.deepEqual(h.kinds(), [], 'the browser\'s background pause paused the room');
-  });
-
-  it('control: a pause in a hidden tab that has made a sound is the member\'s (a media key)', async () => {
-    const h = await pausedAway(true, { hidden: true });
-    assert.deepEqual(h.kinds(), ['pause']);
-  });
-
   it('is not sent over a room somebody else moved meanwhile', async () => {
     const moved = { positionMs: 400_000, atServerMs: OFFSET + 1000, paused: false };
     const h = await pausedAway(true, { room: moved, seq: 1 });
-    assert.deepEqual(h.kinds(), [], 'an older offline pause overrode the room');
+    assert.deepEqual(h.kinds(), [], 'a pause made while the session was down was sent');
     await h.vt.advance(DEFAULT_ENGINE_CONFIG.reconcileAfterMs + 500);
     assert.deepEqual(h.kinds(), []);
     assert.equal(h.player.paused, false, 'the member did not follow the room');
     assert.ok(h.player.positionS > 390, `left at ${h.player.positionS}`);
+  });
+
+  it('control, live: the browser\'s pause of a hidden tab that never made a sound is not sent', async () => {
+    // Not about the outage -- this is the connected path, and the one that
+    // matters now that the offline one sends nothing at all. The member
+    // clicked, then switched tabs, and the browser paused the never-audible
+    // playback: `SeekDetector` calls that `suspended` and nobody is paused.
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    h.player.muted = true;
+    await h.join(ROOM);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    h.g.press();
+    h.tab.hidden = true;
+    h.player.readState();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the browser\'s background pause paused the room');
+  });
+
+  it('control, live: a pause in a tab that has made a sound is the member\'s', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join(ROOM);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.g.press();
+    h.tab.hidden = true;
+    h.player.readState();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), ['pause'], 'an audible tab\'s pause was swallowed as the browser\'s');
   });
 });
 

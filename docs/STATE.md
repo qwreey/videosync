@@ -378,7 +378,9 @@ What changed in behaviour (details in the commit bodies):
   A change made while reconnecting is sent after the `welcome` **only if the room did not move
   meanwhile** (same `seq` and anchor) and never if it is the browser's pause of a never-audible
   hidden tab (`SeekDetector.browserPaused`); otherwise the room wins, silently — there is no panel
-  notice yet (N20, the user's choice).
+  notice yet (N20, the user's choice). **Superseded (2026-09-18):** N20's answer was reversed. A
+  change made while the session is down is not sent at all; the room wins on reconnect and the
+  panel shows a disconnect banner. See round 5 below.
 - **Detector/adapter.** A forward seek right after a stall is reported; the frozen-read allowance
   is capped at 1.5 s (N6). A superseded seek of ours is rejected at once instead of after the seek
   timeout (N21). Continuation is decided by the descriptor of the *page*, not by the key prefix: a
@@ -441,7 +443,8 @@ and `test-e2e` (21) pass. Live on the merged build: BROWSER-FINDINGS §25.
   - `play()` is waited on for at most 1 s (N2).
   - Three unanswered time probes end a silently dead socket (N8).
   - A command lost with the connection is resent if the room did not move, excusing only its own
-    change from the gesture check (N16).
+    change from the gesture check (N16). **Superseded (2026-09-18):** a lost command is not resent
+    either — same decision as N20's reversal. See round 5 below.
   - A joiner welcomed inside a play's lead waits for it (N29).
   - A lone member's play is held while the readiness gate would hold it (N25, recommended option
     A).
@@ -478,6 +481,66 @@ and `test-e2e` (21) pass. Live on the merged build: BROWSER-FINDINGS §25.
 
 **The next passes are smaller and slower, by the user's direction: `docs/REVIEW-NEXT.md` is the
 work list** (what changed, known leftovers, what is worth digging, and the order).
+
+## Round 5: nothing done offline is sent (2026-09-18, the user's decision)
+
+Round 3's N20 and round 4's N16 built machinery to replay, after the `welcome`, what a member did
+to the player while the session was down — a pause, a seek, a command the dead socket took with
+it — as long as the room had not moved meanwhile. **That is removed.** The user's reasoning:
+
+- the blast radius is bigger than the member can see — one disconnected member drags the whole
+  room, from a decision nobody else witnessed;
+- it is hard to get right, and it kept producing edge cases: four review rounds running found new
+  bugs in exactly this machinery (round 5 pass 1's P4 and P6 were the latest two).
+
+In its place: **the room wins on reconnect** (the reconciler already puts the player back on the
+anchor's pause state, and a position off the anchor is the room's to judge through the report),
+and **the panel says so** — a warning banner while a session that had joined is not joined
+(`Panel.setDisconnected`, wired in `bootstrap.ts`), so the member is not pressing buttons that
+silently do nothing.
+
+Removed from `client/core/src/engine/engine.ts`: `sendOfflineChanges`, the `offline` snapshot field
+and its type, `fromLostSeek`, `roomUnmoved`, and the lost-command capture in `onClose` — about 180
+lines with their tests. Unchanged: `releaseRate()` on close, the reconciler, `intended`/`roomAnchor`,
+`underOwnSeek`, liveness (`SILENT_PROBES`).
+
+**The banner is load-bearing, so it has to be seen.**
+
+- **Collapsed panel.** The banner lives outside `.body`, which is what `.panel.collapsed` hides, so
+  a collapsed panel still shows it — the title alone.
+- **Fullscreen.** A fullscreen element is in the top layer, and while one is set nothing outside
+  the top layer paints, which is most of the time somebody is watching. The panel gets in the same
+  way: the host is a **manual popover** and `showPopover()` puts it in the top layer
+  (`Panel.showTopLayer`). It **never leaves `<html>`** — an earlier version moved the host into
+  `document.fullscreenElement`, and that was dropped in review: the site owns that subtree,
+  rearranges it whenever it rebuilds its player, and it may render no children at all (a `<video>`
+  gone fullscreen by itself). The top layer paints in join order, so every `fullscreenchange` hides
+  and re-shows the popover to get back on top (`raiseTopLayer`); that also repairs a popover the
+  transition dropped. The host is styled to be a zero-size, click-through anchor that overrides
+  every part of the UA popover box, so it looks the same whether or not any of this worked.
+- **No Popover API, no top layer.** Firefox before 125 and anything pre-2023: the panel is simply
+  invisible while the site is fullscreen. Accepted — there is no second way in that does not mean
+  living inside the site's DOM. The `popover` attribute is never left on a popover that did not
+  open, because a closed popover is `display: none` and that would hide the panel the rest of the
+  time too.
+- **Not measured live yet.** The popover path has unit coverage only; the next `probe-stack` run
+  should check the panel is visible over fullscreen on Laftel and YouTube.
+
+**Two holes in the banner itself, both known and accepted:**
+
+- **The 15–20 s hole.** A path that goes dark without a close is only noticed by the time probe,
+  after `SILENT_PROBES` × `timeSyncIntervalMs`. Until then the status is still `joined`, the panel
+  says 연결됨 and the banner is off, while every press goes nowhere and none of it is sent later.
+  Shortening it means probing faster or trusting a time condition that a throttled tab makes
+  meaningless; neither has been measured.
+- **A member that reaches the end while away is stranded there.** Dragged into the end, or simply
+  run out, it comes back `ended`: the reconciler skips it (play() on an ended element restarts
+  from 0), its report says `finished`, which means absent, and the server leaves an absent member
+  alone. So it sits at the end while the room plays on, with the panel saying 연결됨. Kept on
+  purpose: telling it apart from a member who legitimately watched to the end needs exactly the
+  offline knowledge that was removed, and letting it drag the room is the worse failure. Pinned by
+  `engine.test.ts` "known and accepted: a member that reaches the end while away is stranded
+  there".
 
 ## Open questions that block things
 
