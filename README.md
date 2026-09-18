@@ -180,6 +180,10 @@ device signs in once.
 
 The design, and what is still unmeasured, is in `docs/design/auth.md`.
 
+A step-by-step guide for running a real session with friends — Docker behind a TLS proxy,
+each sign-in path (forward-auth gateways, OIDC), building and handing out the extension, what to
+try and what to bring back when something goes wrong — is `docs/FIELD-TEST.md` (in Korean).
+
 ## How it works, in six lines
 
 1. The server owns a UTC timebase; clients measure their offset by **min-RTT**

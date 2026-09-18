@@ -3,7 +3,9 @@
 Written so a session with no memory of the work can continue without re-deriving anything.
 Read this before picking up work, then `CLAUDE.md`'s "Traps" section.
 
-**Current work (2026-09-18): converging the many-eyes review in small passes — `docs/REVIEW-NEXT.md`.**
+**Current work (2026-09-18): field testing with real people and networks — `docs/FIELD-TEST.md`
+(deploy, sign-in paths, builds, what to try, what to bring back). Static review is close to
+converged; its open items and the round-5 findings F1–F4 are in `docs/REVIEW-NEXT.md`.**
 
 ## Status by phase
 
