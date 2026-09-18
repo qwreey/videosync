@@ -1244,6 +1244,38 @@ describe('a pause made while the session is down', () => {
     assert.equal(h.player.paused, false, 'the member did not follow the room');
     assert.ok(h.player.positionS > 390, `left at ${h.player.positionS}`);
   });
+
+  it('control, live: the browser\'s pause of a hidden tab that never made a sound is not sent', async () => {
+    // Not about the outage -- this is the connected path, and the one that
+    // matters now that the offline one sends nothing at all. The member
+    // clicked, then switched tabs, and the browser paused the never-audible
+    // playback: `SeekDetector` calls that `suspended` and nobody is paused.
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    h.player.muted = true;
+    await h.join(ROOM);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    assert.equal(h.engine.acquisition, 'steady');
+    h.g.press();
+    h.tab.hidden = true;
+    h.player.readState();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), [], 'the browser\'s background pause paused the room');
+  });
+
+  it('control, live: a pause in a tab that has made a sound is the member\'s', async () => {
+    const h = harness({ player: { paused: false, positionS: 100 } });
+    await h.join(ROOM);
+    await h.vt.advance(DEFAULT_ENGINE_CONFIG.settleMs + 100);
+    h.g.press();
+    h.tab.hidden = true;
+    h.player.readState();
+    h.player.paused = true;
+    h.player.emit('pause');
+    await h.vt.advance(2000);
+    assert.deepEqual(h.kinds(), ['pause'], 'an audible tab\'s pause was swallowed as the browser\'s');
+  });
 });
 
 describe('a creator that reconnects while it loads', () => {

@@ -283,7 +283,7 @@ export class SeekDetector {
    * hidden tab that never made a sound, not anybody's doing. Audibility is
    * what `evaluate` has seen so far.
    */
-  browserPaused(s: PlayerState): boolean {
+  private browserPaused(s: PlayerState): boolean {
     return s.paused && this.isHidden() && !this.everAudible && s.readyState >= this.cfg.minReadyState;
   }
 
