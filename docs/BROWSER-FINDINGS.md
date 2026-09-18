@@ -1243,8 +1243,9 @@ room and A must not be paused; (3) a cut with nobody doing anything.
   seconds after the reconnect.
 
 **Superseded (2026-09-18), case 1 only.** The user's decision removed offline intent entirely: a
-change made while the session is down is not sent, ever. `probe-offline.mjs` case 1 now expects
-the wrong thing — B's offline pause must *not* reach the room, and B must follow the room back.
+change made while the session is down is not sent, ever. So the run above no longer describes the
+shipped client, and **`probe-offline.mjs` case 1 has been inverted to match** — it now asserts that
+B sends nothing, that A keeps playing, and that B is put back on the room. **Not re-run yet.**
 Cases 2 and 3 are unchanged, and the two fixes above (the reconciler's starvation, `releaseRate`
 on close) still stand. See STATE.md "Round 5: nothing done offline is sent".
 

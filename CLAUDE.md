@@ -196,7 +196,19 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
   create one.
 - **The panel's shadow root is closed.** A room creator's secret sits in its input and is never in
   the URL. Reach it with `VideoSync.panelRoot()` from the isolated world; the Firefox probe uses the
-  `local-ext.mjs` build, the only one that opens it.
+  `local-ext.mjs` build, the only one that opens it. The root also stops **key and pointer** events
+  from propagating past it — these events are composed, so a click on our own button otherwise
+  reaches whatever the site has on `document`, which on a player page toggles playback. Bubble
+  phase only: `gestures.ts` listens on `window` in capture and must still see the press to file it
+  as ours-but-not-a-press-on-the-player.
+- **While a fullscreen element is set, nothing outside the top layer paints** — the panel included,
+  which is most of the time somebody is watching. The way in is to be in the top layer too: the
+  host is a manual popover (`Panel.showTopLayer`), re-shown on every `fullscreenchange` because the
+  top layer paints in join order. **Do not move the host into `document.fullscreenElement`**: the
+  site owns and rearranges that subtree, and it may render no children at all (a `<video>` gone
+  fullscreen by itself). A browser with no Popover API gets no panel while fullscreen; accepted.
+  And a `popover` attribute on an element that did not open is `display: none`, so it must come
+  back off — the `:host` rule overrides the whole UA popover box for the same reason.
 - **The client assumes acks come back in the order it sent the commands** (`ownAck` drops every
   older unacked command). Whatever the hub does to deferred commands — folding, batching — it must
   apply the survivors in send order.

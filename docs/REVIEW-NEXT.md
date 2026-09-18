@@ -109,6 +109,15 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
   by `engine.test.ts` "known and accepted: a member that reaches the end while away is stranded
   there". If it is ever revisited, the lead is the server: an absent member at the end of media
   that the room is still playing is a fact the server can see on its own.
+- **The panel is invisible while the site is fullscreen on a browser with no Popover API.** The
+  host joins the top layer as a manual popover (`Panel.showTopLayer`), which is the only way to
+  paint above a fullscreen element without moving into the site's own subtree — and moving there
+  was tried and rejected in review. Firefox before 125 and anything pre-2023 get nothing, banner
+  included. **Known and accepted**; the popover path has no live coverage yet, so the next
+  `probe-stack` run should check the panel is visible over fullscreen on Laftel and YouTube.
+- **The panel's compact collapsed banner is CSS-only and untested.** The fake DOM lays nothing out,
+  so `.panel.collapsed .banner .banner-body { display: none }` is unverified; only the structural
+  guarantee (the banner is not inside the part collapsing hides) is pinned.
 - **N13 residual:** an attacker spread over many `/64`s can keep the kdf queue full while the
   attack lasts. Documented in `docs/design/auth.md`.
 - The report's slope comes from the detector's judged history while the residual is against the

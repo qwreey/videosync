@@ -504,14 +504,29 @@ and its type, `fromLostSeek`, `roomUnmoved`, and the lost-command capture in `on
 lines with their tests. Unchanged: `releaseRate()` on close, the reconciler, `intended`/`roomAnchor`,
 `underOwnSeek`, liveness (`SILENT_PROBES`).
 
-**The banner is load-bearing, so it has to be seen.** It lives outside the panel's `.body`, so a
-collapsed panel still shows it (the title alone), and the panel's host follows the page into
-`document.fullscreenElement` and back — a fullscreen element is in the top layer, so nothing under
-`documentElement` is on screen while one is set, which is most of the time somebody is watching
-(`Panel.reparent`). An element that renders no children (a `<video>` gone fullscreen by itself) is
-left alone: there is nowhere useful to go.
+**The banner is load-bearing, so it has to be seen.**
 
-**Two holes in it, both known and accepted:**
+- **Collapsed panel.** The banner lives outside `.body`, which is what `.panel.collapsed` hides, so
+  a collapsed panel still shows it — the title alone.
+- **Fullscreen.** A fullscreen element is in the top layer, and while one is set nothing outside
+  the top layer paints, which is most of the time somebody is watching. The panel gets in the same
+  way: the host is a **manual popover** and `showPopover()` puts it in the top layer
+  (`Panel.showTopLayer`). It **never leaves `<html>`** — an earlier version moved the host into
+  `document.fullscreenElement`, and that was dropped in review: the site owns that subtree,
+  rearranges it whenever it rebuilds its player, and it may render no children at all (a `<video>`
+  gone fullscreen by itself). The top layer paints in join order, so every `fullscreenchange` hides
+  and re-shows the popover to get back on top (`raiseTopLayer`); that also repairs a popover the
+  transition dropped. The host is styled to be a zero-size, click-through anchor that overrides
+  every part of the UA popover box, so it looks the same whether or not any of this worked.
+- **No Popover API, no top layer.** Firefox before 125 and anything pre-2023: the panel is simply
+  invisible while the site is fullscreen. Accepted — there is no second way in that does not mean
+  living inside the site's DOM. The `popover` attribute is never left on a popover that did not
+  open, because a closed popover is `display: none` and that would hide the panel the rest of the
+  time too.
+- **Not measured live yet.** The popover path has unit coverage only; the next `probe-stack` run
+  should check the panel is visible over fullscreen on Laftel and YouTube.
+
+**Two holes in the banner itself, both known and accepted:**
 
 - **The 15–20 s hole.** A path that goes dark without a close is only noticed by the time probe,
   after `SILENT_PROBES` × `timeSyncIntervalMs`. Until then the status is still `joined`, the panel
