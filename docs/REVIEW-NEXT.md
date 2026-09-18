@@ -200,6 +200,58 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
 - **Lesson.** Every follow-up review of a fix found something new in that fix, even at one or two
   reviewers. Keep the loop going until a review comes back empty, and keep each fix small.
 
+### Round 5, pass 2 (2026-09-18): two tiers, in sequence
+
+The user's direction: run the tiers one after the other, not in parallel. A fast model catches the
+easy things first, so the deep one is not spent re-finding them.
+
+- **Sonnet, on `68dc4c6..HEAD` (the round-5 diff).** It found one stale comment (the banner comment
+  still described the dropped `reparent`), fixed in bbcf493. It reported everything else clean.
+- **Opus, whole-structure seams, on bbcf493.** It found **3 new findings, reproduced**, and 1
+  traced in the code but not reproduced. All four sit on seams no single-area pass owns.
+  - **F1 (low).** `predict()` stacks our seek on our own gate-held play, which the server drops
+    when any later command of ours arrives (`room.go:398-401`). A second play pressed within one
+    RTT of the seek is then taken as an echo and never sent, and the room stays paused.
+    Reproduced in a unit test and in e2e against a real videosyncd.
+  - **F2 (low, latent).** A descriptor's `seek.landingToleranceS` (0.05–5 s) reaches `Html5Adapter`
+    but not the engine's echo test, which uses `seekThresholdMs` (1 s). On a site whose seeks snap
+    2 s away, every engine seek lands "elsewhere", is sent as the member's own seek, and moves the
+    whole room. Reproduced in a unit test.
+  - **F3 (low–medium, latent).** `capabilities.directSeek: false` is honoured by `applyTransition`
+    only. `applyCorrection` still writes `currentTime` on every server `correct{seek}` (at least
+    one every 2 s while the residual is out of band). Reproduced in a unit test.
+  - **F4 (low, traced only).** Nothing bounds the time a socket takes to *open*. Liveness starts
+    in `onOpen`, and neither `WebSocketTransport`, `PortTransport` nor `sw.ts` has a connect
+    timeout. On a path that drops SYNs, one attempt can hang for the OS/Chromium connect timeout.
+    Needs a live check.
+- **Found clean.** Room/hub:
+  - seq/ack ordering and the `when` clamp;
+  - `committedAt` and the stale-resend grace;
+  - media CAS and the gate;
+  - the waiver and coalesce order.
+
+  Engine ↔ servo:
+  - rate release, clamps and thresholds;
+  - `ownAck` and `beforeOwnPlay`;
+  - the lone-member hold;
+  - reconnect/welcome handling;
+  - `hiddenContinuation` and `noticeUnblocked`;
+  - auth join ordering;
+  - the relay.
+- **Not reached.**
+  - A7–A9 in depth: `manage.ts`/`adoption.ts`, the Go vs TS plain-URL grammar, OIDC and kdf
+    internals, the options page.
+  - A multi-engine e2e with gesture evidence.
+  - Two browser-only suspicions:
+    - the reconciler pressing play on a hidden, never-audible member;
+    - an ad's `ended` leaving a `lastFinish` behind, so a manual navigation within 20 s moves the
+      room.
+- **Convergence (Opus's judgement).** Close to converged for the engine↔room core: three rounds
+  found nothing in its heavily tested paths. What is left is the descriptor↔engine and
+  engine↔server-semantics seams, plus A7–A9 — one narrow pass each. Past that, live measurement is
+  more likely than static review to find the rest (snapping DRM seeks, connect hangs, hidden-tab
+  `play()`, ghost connections).
+
 ## D. Suggested order for round 5
 
 1. A2 (the merge resolution) and A1, one pass each, 4 finders × 2 lenses, 2 verifiers each.
