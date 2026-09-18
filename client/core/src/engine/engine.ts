@@ -601,26 +601,6 @@ export class SyncEngine {
   private connectGen = 0;
   /** A click to sync arrived when there was no session to sync to. */
   private gestureRetryPending = false;
-  /**
-   * The player as it was when a joined session dropped, so that what the
-   * member did to it before the next `welcome` can still be sent. See
-   * `sendOfflineChanges`.
-   */
-  private offline: {
-    at: number; positionS: number; paused: boolean; rate: number; media: number; key: string;
-    seq: number; anchor: Anchor;
-    /**
-     * Commands of ours unanswered at the drop, so the snapshot is the room's
-     * (see `onClose`): the last lost seek, and the pause state the last lost
-     * play or pause asked for. What they did to the player is the member's
-     * own change even without an input after the drop; nothing else is.
-     */
-    lostSeek: OwnCmd | null;
-    lostPaused: boolean | null;
-    /** ...and the last press among them was a play the player was held for. */
-    playLost: boolean;
-  } | null = null;
-
   /** True once `play()` was refused for lack of a user gesture. */
   private autoplayBlocked = false;
   /** Unsubscribes the adapter listener, so a stopped engine stops listening. */
@@ -959,7 +939,6 @@ export class SyncEngine {
     this.unacked = [];
     this.intended = null;
     this.gestureRetryPending = false;
-    this.offline = null;
     this.connectGen++;
     this.ticket = '';
     this.d.transport.close();
@@ -1072,11 +1051,6 @@ export class SyncEngine {
     this.d.clearTimer(this.timeTimer); this.timeTimer = 0;
     this.d.clearTimer(this.applyTimer); this.applyTimer = 0;
     this.pending = [];
-    // Read before the clock and the unacked list are thrown away: see the
-    // offline snapshot below.
-    const at = this.d.now();
-    const lost = this.unacked.filter((c) => c.kind !== 'media' && at - c.at < OWN_ACK_WAIT_MS);
-    const roomMs = this.clock.ready ? expectedAt(this.anchor, this.serverNow()) : null;
     // Whatever the old socket was carrying back will never arrive.
     this.unacked = [];
     this.intended = null;
@@ -1092,64 +1066,14 @@ export class SyncEngine {
     // longer exists. Keeping it would let a stale bias survive the one event
     // that could have cleared it.
     this.clock.reset();
-    // Only the first drop of a session records the player: a failed reconnect
-    // attempt has nothing newer to say about it.
+    // Nothing the member does to the player from here is recorded, and nothing
+    // a command lost with this socket did is resent. Deliberate (2026-09-18):
+    // sending it after the `welcome` has a blast radius the member cannot see
+    // -- one disconnected member drags the whole room -- and four review
+    // rounds running found new bugs in the machinery for it. The room wins
+    // instead: the reconciler puts the player back on the anchor, and the
+    // panel tells the member their input is not reaching the room.
     //
-    // A command of ours still unanswered may never have left: a socket that
-    // reset is found dead by writing into it. The player already shows what
-    // that command did, so a snapshot of the player would find nothing to
-    // send, and the reconciler then undid the member's change. Such a drop
-    // records the room as the anchor had it instead -- the member's change is
-    // then a difference like any made offline, and goes out if the room did
-    // not move. A lost `play` left the player held, which looks like the
-    // room; it is remembered as such. Only a command young enough to be
-    // waited for: an older one has been reconciled already. That leaves a gap
-    // for a path that goes dark with no reset: `timeLoop` notices it 15-20 s
-    // in, so a command pressed in about the first 10 s is not resent.
-    //
-    // A snapshot not read yet -- the reconnect is joined at its `welcome`, but
-    // reads it only once its clock settles and no old apply is running -- is
-    // kept: a player read now already shows the change it recorded, with
-    // nothing lost to resend. Commands lost since are added to it, the newest
-    // winning. Only while it still describes this session's room, though: one
-    // the room has moved past will never be sent, and a command lost on top
-    // of it would go with it.
-    if (this.status === 'joined') {
-      const s = this.d.adapter.readState();
-      const room = lost.length > 0 && roomMs !== null;
-      const lastPress = lost.filter((c) => c.kind !== 'seek').at(-1);
-      const lostSeek = room ? lost.filter((c) => c.kind === 'seek').at(-1) ?? null : null;
-      const lostPaused = room && lastPress ? lastPress.kind === 'pause' : null;
-      const playLost = room && lastPress?.kind === 'play' && this.anchor.paused && s.paused;
-      const o = this.offline;
-      const kept = o && o.media === this.acq.id && o.key === this.localMediaKey && this.roomUnmoved(o) ? o : null;
-      if (kept) {
-        if (lostSeek) kept.lostSeek = lostSeek;
-        if (lostPaused !== null) {
-          kept.lostPaused = lostPaused;
-          kept.playLost = playLost;
-        }
-      } else {
-        // An apply from before the drop is still running (the snapshot waits
-        // for it, see `sendOfflineChanges`): the player is where that apply's
-        // seek lands, not where it sits now. Read from the element, the
-        // landing -- aimed at a room that may have moved since -- was a jump
-        // the member made offline, and was sent. Its pause state is the
-        // element's: the drop's epoch bump stops the apply after its seek, so
-        // it presses nothing more. Only an apply that is seeking: one that
-        // never seeks (within tolerance, or an adapter that cannot) leaves the
-        // element where it is, however far that is from its target.
-        const applying = this.applyingRemote;
-        const positionS = applying?.seeking ? landsAt(applying.targetMs, s.durationS) / 1000 : s.positionS;
-        this.offline = this.onRoomMedia() ? {
-          at, rate: s.rate,
-          positionS: room ? roomMs / 1000 : positionS,
-          paused: room ? this.anchor.paused : s.paused,
-          lostSeek, lostPaused, playLost,
-          media: this.acq.id, key: this.localMediaKey, seq: this.lastAppliedSeq, anchor: this.anchor,
-        } : null;
-      }
-    }
     // A nudge is a correction against a room this member can no longer hear.
     // Left on, it runs the player away for the whole outage -- 660 ms in an
     // 8 s drop on Laftel (BROWSER-FINDINGS §24).
@@ -1784,7 +1708,11 @@ export class SyncEngine {
     if (this.gating() && this.acq.state === 'steady' && this.adoptFor !== null) {
       this.toSteady(now, state);
     }
-    this.sendOfflineChanges(now, state);
+    // Nothing the member did while the session was down is sent here: nothing
+    // is evaluated while not joined, and the detector is reset with the
+    // connection, so it became the new baseline. See `onClose` -- the room
+    // wins, the reconciler puts the player back, the panel says so.
+    //
     // A click to sync that came with no session to sync to. See resumeAfterGesture.
     if (this.gestureRetryPending && this.canAim(this.epoch)) void this.resumeAfterGesture();
 
@@ -2049,89 +1977,6 @@ export class SyncEngine {
     if (!this.foreignMove) return true;
     this.adoptFor = null;
     return false;
-  }
-
-  /**
-   * Send what the member did to the player while the session was down.
-   *
-   * Nothing is evaluated while not joined, and the detector is reset with the
-   * connection, so a pause made then became the new baseline: never sent,
-   * and undone by the reconciler `reconcileAfterMs` after the `welcome`.
-   * Compared once the clock can aim again, against the player as it was when
-   * the link dropped:
-   *
-   * - a play state that changed is sent, as `act` sends any (so not the end
-   *   of the media, and not one that agrees with the room as it is now);
-   * - a position is a seek only outside everything playback could have
-   *   reached meanwhile, and away from the room -- the detector's stall
-   *   range and two-diff test, so a player that stalled offline is not read
-   *   as a backward seek.
-   *
-   * Only in `steady`, and with gesture evidence only if an input came after
-   * the drop: nothing is evaluated offline, so no gesture window applies, and
-   * a site's own move in that time is left for the reconciler to put back.
-   * The one exception is the change a command lost with the link made (see
-   * `onClose`): same kind, same value, and nothing more.
-   *
-   * Only if the room did not move meanwhile, either: the anchor and `seq`
-   * are the ones the drop left. Anybody else's command is newer than what
-   * this member did offline, so the member follows the room. And never a
-   * pause the detector would have called `suspended`: the browser's own pause
-   * of a hidden tab that never made a sound pauses nobody else.
-   */
-  private sendOfflineChanges(now: number, state: PlayerState): void {
-    const o = this.offline;
-    // An apply from before the drop can still be running -- a seek parked
-    // for ten seconds outlives a reconnect. The player is not the member's
-    // to read until it settles, so ask again then rather than spend the only
-    // record of what they did.
-    if (!o || !this.clock.ready || this.applyingRemote) return;
-    this.offline = null;
-    if (o.media !== this.acq.id || o.key !== this.localMediaKey || !this.onRoomMedia()) return;
-    if (this.acq.state !== 'steady' || this.autoplayBlocked) return;
-    // A lost command's press came before the drop, and is evidence enough --
-    // for the change that command made, and nothing else. A site's own move
-    // during the outage (an autoplay, an ad's pause, a resume seek) is not
-    // the member's because a command of ours was lost meanwhile, and the lost
-    // one may have been the engine's own adoption, pressed by nobody.
-    const input = !this.d.gestures || this.d.gestures.lastInputAt() >= o.at;
-    if (!input && !o.lostSeek && o.lostPaused === null) return;
-    if (!this.roomUnmoved(o)) return;
-    const pos = state.positionS * 1000;
-    const lo = o.positionS * 1000;
-    const ran = !o.paused || !state.paused;
-    const hi = ran ? lo + (now - o.at) * Math.max(0, o.rate, state.rate) : lo;
-    const jump = pos < lo ? lo - pos : pos > hi ? pos - hi : 0;
-    const expected = expectedAt(this.anchor, this.serverNow());
-    if (jump > this.seekThresholdMs && Math.abs(pos - landsAt(expected, state.durationS)) > this.seekThresholdMs &&
-      (input || this.fromLostSeek(o.lostSeek, pos, now, Math.max(o.rate, state.rate), state.durationS))) {
-      this.act({ kind: 'seek', positionS: state.positionS }, state);
-    }
-    // A player still held for a lost play is, as far as the member is
-    // concerned, playing.
-    const paused = state.paused && !o.playLost;
-    if (paused !== o.paused && !(paused && this.detector.browserPaused(state)) &&
-      (input || paused === o.lostPaused)) {
-      this.act({ kind: 'playstate', paused, positionS: state.positionS }, state);
-    }
-  }
-
-  /** Whether the room is still where it was when this snapshot was taken. */
-  private roomUnmoved(o: { seq: number; anchor: Anchor }): boolean {
-    const a = this.anchor;
-    return this.lastAppliedSeq === o.seq && a.mediaKey === o.anchor.mediaKey && a.paused === o.anchor.paused &&
-      a.positionMs === o.anchor.positionMs && a.atServerMs === o.anchor.atServerMs;
-  }
-
-  /**
-   * Whether a player at `posMs` is still where a lost seek put it: at the
-   * target, or anywhere playback could have taken it since.
-   */
-  private fromLostSeek(c: OwnCmd | null, posMs: number, now: number, rate: number, durationS: number): boolean {
-    if (!c) return false;
-    const lo = landsAt(c.positionMs, durationS);
-    const hi = lo + (now - c.at) * Math.max(0, rate);
-    return posMs >= lo - this.seekThresholdMs && posMs <= hi + this.seekThresholdMs;
   }
 
   /**
