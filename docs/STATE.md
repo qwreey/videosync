@@ -504,6 +504,29 @@ and its type, `fromLostSeek`, `roomUnmoved`, and the lost-command capture in `on
 lines with their tests. Unchanged: `releaseRate()` on close, the reconciler, `intended`/`roomAnchor`,
 `underOwnSeek`, liveness (`SILENT_PROBES`).
 
+**The banner is load-bearing, so it has to be seen.** It lives outside the panel's `.body`, so a
+collapsed panel still shows it (the title alone), and the panel's host follows the page into
+`document.fullscreenElement` and back — a fullscreen element is in the top layer, so nothing under
+`documentElement` is on screen while one is set, which is most of the time somebody is watching
+(`Panel.reparent`). An element that renders no children (a `<video>` gone fullscreen by itself) is
+left alone: there is nowhere useful to go.
+
+**Two holes in it, both known and accepted:**
+
+- **The 15–20 s hole.** A path that goes dark without a close is only noticed by the time probe,
+  after `SILENT_PROBES` × `timeSyncIntervalMs`. Until then the status is still `joined`, the panel
+  says 연결됨 and the banner is off, while every press goes nowhere and none of it is sent later.
+  Shortening it means probing faster or trusting a time condition that a throttled tab makes
+  meaningless; neither has been measured.
+- **A member that reaches the end while away is stranded there.** Dragged into the end, or simply
+  run out, it comes back `ended`: the reconciler skips it (play() on an ended element restarts
+  from 0), its report says `finished`, which means absent, and the server leaves an absent member
+  alone. So it sits at the end while the room plays on, with the panel saying 연결됨. Kept on
+  purpose: telling it apart from a member who legitimately watched to the end needs exactly the
+  offline knowledge that was removed, and letting it drag the room is the worse failure. Pinned by
+  `engine.test.ts` "known and accepted: a member that reaches the end while away is stranded
+  there".
+
 ## Open questions that block things
 
 - ~~**Should the `play` presser wait instead of jump?**~~ **Done** — `holdLocalPlay`,

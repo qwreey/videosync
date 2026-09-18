@@ -1266,8 +1266,14 @@ The merged round-4 build (`NAME=ext-r4`, `videosyncd` from the same commit), Hel
 | probe | result |
 |---|---|
 | `probe-laftel-room.mjs` (`laftel-room-r4.json`) | presser 517–528 ms, the other 531–544 ms; re-aim at the press in 2 of 6 (82, 93 ms); 0 correction seeks, 0 reconciles; pause moves the presser by 0; gap −246 to −5 ms |
-| `probe-offline.mjs` (`offline-r4.json`) | **4/4**: offline pause reached the room (gap 0 ms); moved room followed (175 ms), A not paused; a cut alone sent nothing (69 ms) |
+| `probe-offline.mjs` (`offline-r4.json`) | **4/4**: offline pause reached the room (gap 0 ms) — **superseded, see below**; moved room followed (175 ms), A not paused; a cut alone sent nothing (69 ms) |
 | `probe-round3.mjs` (`round3-r4.json`) | **12/12**: rewrite in 0 ms, site untouched, reload rejoins; hidden member not waited on, A starts after 934 ms |
+
+**Superseded (2026-09-18), the offline-pause row only.** The user's decision removed offline intent
+entirely: a change made while the session is down is not sent, ever. `probe-offline.mjs` case 1 has
+been **inverted** — it now asserts that B sends nothing, that A keeps playing, and that B is put
+back on the room. The other two cases are unchanged, and everything else in this table stands. Not
+re-run yet. See STATE.md "Round 5: nothing done offline is sent", and the §24 note.
 
 The first `probe-round3.mjs` run failed its first check. That was the probe's fault: tab B was
 already on the episode, so the invite URL was a same-document fragment navigation and loaded

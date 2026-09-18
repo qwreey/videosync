@@ -25,11 +25,14 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
    - `intended` / `roomAnchor()` (N1)
    - `PLAY_WAIT_MS` race in `tryPlay` (N2)
    - probe-count liveness (N8)
-   - lost-command resend with `lostSeek`/`lostPaused` (N16)
+   - ~~lost-command resend with `lostSeek`/`lostPaused` (N16)~~ — **gone (2026-09-18)**: no
+     command is resent after a drop. What is left to review is `onClose` doing nothing but
+     releasing the rate and resetting.
    - welcome conform waiting for a play's `when`, `MAX_WELCOME_LEAD_MS` (N29)
    - lone-member hold via `gateHolds`/`reportedUnready` (N25)
    - the reconciler holding its wait during an apply, and `releaseRate` on close (5c044b6)
-   - How these meet `holdForRoom`, `ownAck` and `sendOfflineChanges`.
+   - How these meet `holdForRoom` and `ownAck`. (`sendOfflineChanges` was removed on
+     2026-09-18.)
 2. **The merge resolution in `isEcho`/`act`** (d807781): `roomAnchor()` from one branch, the
    unready play-state exemption from the other. Nobody reviewed the combination.
 3. **Engine: acquisition** (`engine.ts`, `detector.ts`)
@@ -93,7 +96,19 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
 - ~~**N16:** a press in about the first 10 s of a black-holed outage is still lost.~~ **Removed
   (2026-09-18, the user's decision):** nothing done while the session is down is sent, so there is
   no window to get right. The room wins on reconnect and the panel says so. See STATE.md
-  "Round 5: nothing done offline is sent".
+  "Round 5: nothing done offline is sent". **But the same 15–20 s survives as a hole in the
+  banner:** a silently dead path keeps the status at `joined` for `SILENT_PROBES` ×
+  `timeSyncIntervalMs`, so the panel says 연결됨, the banner is off, and a press in that window
+  reaches nobody with nothing to say so. Known and accepted; shortening it means probing faster,
+  which is unmeasured.
+- **A member that reaches the end while the session is down is stranded there.** It comes back
+  `ended`: the reconciler skips it, its report says `finished` (= absent), and the server leaves
+  an absent member alone — so it sits at the end while the room plays, panel saying 연결됨.
+  **Known and accepted (the user's call, 2026-09-18):** separating it from a member who watched to
+  the end needs the offline knowledge that was just removed, and dragging the room is worse. Pinned
+  by `engine.test.ts` "known and accepted: a member that reaches the end while away is stranded
+  there". If it is ever revisited, the lead is the server: an absent member at the end of media
+  that the room is still playing is a fact the server can see on its own.
 - **N13 residual:** an attacker spread over many `/64`s can keep the kdf queue full while the
   attack lasts. Documented in `docs/design/auth.md`.
 - The report's slope comes from the detector's judged history while the residual is against the
@@ -109,8 +124,9 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
   - N30 r4: a roster rebroadcast on every ready flip (heartbeat amplification). Measure it.
   - N45 r3: a member's old connection lingering ~90 s after a network change. The server side of
     liveness.
-- **Sim fidelity.** `server/internal/sim` does not model `intended`, liveness, lost-command resend,
-  the reconciler hold or the lone-member hold. Its conclusions about those paths are not evidence.
+- **Sim fidelity.** `server/internal/sim` does not model `intended`, liveness, the reconciler hold
+  or the lone-member hold. Its conclusions about those paths are not evidence. (It never modelled
+  the lost-command resend either; that is no longer a gap — the resend is gone.)
 - **The steady ~200–300 ms lag in Firefox on Laftel** (§23, §24). It sits inside the servo's band.
   Is that band right for a room where one member is Firefox?
 - **The re-aim at the press on Laftel** (84–206 ms in most trials, §22–§25). Where does it come

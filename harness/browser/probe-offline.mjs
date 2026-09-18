@@ -1,6 +1,12 @@
 /**
- * N20 live (STATE.md "Review round 3"): what a member does to the player while
- * its connection is down.
+ * Live: what a member does to the player while its connection is down.
+ *
+ * Written for N20 (STATE.md "Review round 3"), when such a change was replayed
+ * after the `welcome` if the room had not moved. **That was removed** (the
+ * user's decision, 2026-09-18, STATE.md "Round 5: nothing done offline is
+ * sent"): nothing done while the session is down is sent, ever. Case 1 was
+ * inverted to match -- it now asserts the room is NOT moved by B, and that B
+ * follows it back. Cases 2 and 3 are unchanged; they always asserted this.
  *
  * Member B reaches videosyncd through a TCP relay in this process, which the
  * probe can cut: open sockets are destroyed and new ones refused until it is
@@ -9,7 +15,8 @@
  * windows -- a background tab loads no media).
  *
  *   1. The room did not move: B, cut off, pauses with a real click. After the
- *      reconnect B's pause must reach the room: A pauses too.
+ *      reconnect that pause must reach nobody: B sends nothing, A keeps
+ *      playing, and B is put back on the room, playing at A's position.
  *   2. The room moved: B is cut off, A seeks the room 60 s on, B pauses with a
  *      real click. After the reconnect B must follow the room (playing, at A's
  *      position) and A must NOT be paused.
@@ -138,13 +145,16 @@ async function main() {
     };
   }
 
-  // 1. The room stays put; B pauses offline.
+  // 1. The room stays put; B pauses offline. Nothing of it reaches the room,
+  //    and the reconciler puts B back (see this file's header).
   await playing();
   const c1 = await outage(async () => { await click(b); await sleep(1500); });
   let pa = await player(a); let pb = await player(b);
   results.cases.unmoved = { ...c1, a: pa, b: pb };
-  check('1. B\'s offline pause reaches the room once it is back', pa.paused && pb.paused && c1.bSent >= 1,
-    `A paused=${pa.paused} B paused=${pb.paused}, B sent ${c1.bSent}, gap ${gapMs(pa, pb)} ms`);
+  check('1. B\'s offline pause reaches nobody: A keeps playing', c1.bSent === 0 && !pa.paused,
+    `A paused=${pa.paused}, B sent ${c1.bSent}`);
+  check('   and B is put back on the room', !pb.paused && Math.abs(gapMs(pa, pb)) < 500,
+    `A ${pa.pos.toFixed(2)} B ${pb.pos.toFixed(2)} B paused=${pb.paused}, gap ${gapMs(pa, pb)} ms`);
 
   // 2. A moves the room while B is away; B pauses offline.
   await playing();
