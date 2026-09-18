@@ -90,8 +90,10 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
   - a descriptor that displaces several built-ins is untested;
   - with a same-id built-in, other displaced built-ins are not diffed.
 - `client/extension/README.md` "Permissions" is stale after N6 (the authserver fixer's note).
-- **N16:** a press in about the first 10 s of a black-holed outage is still lost. Documented,
-  accepted.
+- ~~**N16:** a press in about the first 10 s of a black-holed outage is still lost.~~ **Removed
+  (2026-09-18, the user's decision):** nothing done while the session is down is sent, so there is
+  no window to get right. The room wins on reconnect and the panel says so. See STATE.md
+  "Round 5: nothing done offline is sent".
 - **N13 residual:** an attacker spread over many `/64`s can keep the kdf queue full while the
   attack lasts. Documented in `docs/design/auth.md`.
 - The report's slope comes from the detector's judged history while the residual is against the
@@ -140,19 +142,27 @@ Scope for the first passes: `git diff 5ec092e..HEAD`, taken one area at a time.
     - Without gesture evidence, it is excused only in the post-seek `play()` window.
   - **P2.** A site's unpressed move is judged against the anchor. A press that matches only the
     pending command is treated as the member's.
-  - **P4/P6.**
+  - ~~**P4/P6.**~~ **Removed (2026-09-18, the user's decision)** — the whole offline-intent
+    machinery is gone, so these fixes are gone with it. What they said:
     - The offline snapshot waits for an old apply.
     - It survives a second drop while the room is unmoved.
     - It merges commands lost in between.
     - A fresh snapshot taken during a *seeking* apply records where that seek lands.
+
+    Nothing a member does while the session is down is sent now: the room wins on reconnect and
+    the panel shows a disconnect banner. That this area produced a new bug in four review rounds
+    running was the reason. See STATE.md "Round 5: nothing done offline is sent".
 - **Still open from pass 1.**
   - **P3** (low): an own-seek prediction survives another member's earlier command, so a pause in
     the gap is swallowed.
-  - **P5** (low): a command lost after our own ack, before that ack applied, is not resent.
+  - ~~**P5** (low): a command lost after our own ack, before that ack applied, is not resent.~~
+    **Removed (2026-09-18):** no lost command is resent any more.
   - **P7** (low): the delayed welcome conform still runs after a gestured press made acquisition
     steady.
 - **Known and accepted.**
-  - An offline *seek* can still be undone when a server correction queues behind a parked apply.
+  - ~~An offline *seek* can still be undone when a server correction queues behind a parked
+    apply.~~ **Removed (2026-09-18):** an offline seek is never sent, so the room undoing it is
+    the design.
   - A mouse press is stamped at mousedown, so both of these are taken for the site's (as
     `intent()` already does):
     - a click held longer than 500 ms during our seek;

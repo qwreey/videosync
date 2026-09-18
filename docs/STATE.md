@@ -378,7 +378,9 @@ What changed in behaviour (details in the commit bodies):
   A change made while reconnecting is sent after the `welcome` **only if the room did not move
   meanwhile** (same `seq` and anchor) and never if it is the browser's pause of a never-audible
   hidden tab (`SeekDetector.browserPaused`); otherwise the room wins, silently — there is no panel
-  notice yet (N20, the user's choice).
+  notice yet (N20, the user's choice). **Superseded (2026-09-18):** N20's answer was reversed. A
+  change made while the session is down is not sent at all; the room wins on reconnect and the
+  panel shows a disconnect banner. See round 5 below.
 - **Detector/adapter.** A forward seek right after a stall is reported; the frozen-read allowance
   is capped at 1.5 s (N6). A superseded seek of ours is rejected at once instead of after the seek
   timeout (N21). Continuation is decided by the descriptor of the *page*, not by the key prefix: a
@@ -441,7 +443,8 @@ and `test-e2e` (21) pass. Live on the merged build: BROWSER-FINDINGS §25.
   - `play()` is waited on for at most 1 s (N2).
   - Three unanswered time probes end a silently dead socket (N8).
   - A command lost with the connection is resent if the room did not move, excusing only its own
-    change from the gesture check (N16).
+    change from the gesture check (N16). **Superseded (2026-09-18):** a lost command is not resent
+    either — same decision as N20's reversal. See round 5 below.
   - A joiner welcomed inside a play's lead waits for it (N29).
   - A lone member's play is held while the readiness gate would hold it (N25, recommended option
     A).
@@ -478,6 +481,28 @@ and `test-e2e` (21) pass. Live on the merged build: BROWSER-FINDINGS §25.
 
 **The next passes are smaller and slower, by the user's direction: `docs/REVIEW-NEXT.md` is the
 work list** (what changed, known leftovers, what is worth digging, and the order).
+
+## Round 5: nothing done offline is sent (2026-09-18, the user's decision)
+
+Round 3's N20 and round 4's N16 built machinery to replay, after the `welcome`, what a member did
+to the player while the session was down — a pause, a seek, a command the dead socket took with
+it — as long as the room had not moved meanwhile. **That is removed.** The user's reasoning:
+
+- the blast radius is bigger than the member can see — one disconnected member drags the whole
+  room, from a decision nobody else witnessed;
+- it is hard to get right, and it kept producing edge cases: four review rounds running found new
+  bugs in exactly this machinery (round 5 pass 1's P4 and P6 were the latest two).
+
+In its place: **the room wins on reconnect** (the reconciler already puts the player back on the
+anchor's pause state, and a position off the anchor is the room's to judge through the report),
+and **the panel says so** — a warning banner while a session that had joined is not joined
+(`Panel.setDisconnected`, wired in `bootstrap.ts`), so the member is not pressing buttons that
+silently do nothing.
+
+Removed from `client/core/src/engine/engine.ts`: `sendOfflineChanges`, the `offline` snapshot field
+and its type, `fromLostSeek`, `roomUnmoved`, and the lost-command capture in `onClose` — about 180
+lines with their tests. Unchanged: `releaseRate()` on close, the reconciler, `intended`/`roomAnchor`,
+`underOwnSeek`, liveness (`SILENT_PROBES`).
 
 ## Open questions that block things
 

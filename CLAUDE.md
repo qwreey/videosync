@@ -200,9 +200,14 @@ check STATE.md's "claims that were corrected". Do not silently contradict DECISI
 - **The client assumes acks come back in the order it sent the commands** (`ownAck` drops every
   older unacked command). Whatever the hub does to deferred commands — folding, batching — it must
   apply the survivors in send order.
-- **A change made while disconnected is only good against the room it was made in.** Send it after
-  the `welcome` only if `seq` and the anchor are what they were at the drop; otherwise the room
-  moved and wins.
+- **A change made while the session is down is not sent at all** (user's decision, 2026-09-18).
+  Not the pause the member pressed, not the seek, not a command the dead socket took with it. It
+  used to be replayed after the `welcome` if the room had not moved; that had a blast radius the
+  member could not see — one disconnected member drags the whole room — and four review rounds
+  running found new bugs in the machinery for it. The room wins: the reconciler puts the player
+  back on the anchor, a position off it is the room's to judge, and the **panel says so** — a
+  warning banner while a session that had joined is not joined (`Panel.setDisconnected`). Do not
+  reintroduce an offline snapshot without a new decision from the user.
 - **Continuation belongs to the page's descriptor, not to the key's prefix.** A single-label host
   (`http://nas`) mints generic keys under a bare name that looks exactly like a descriptor id.
 - **Judge a member's change against where their own pending command takes the room.** Until its

@@ -1242,6 +1242,12 @@ room and A must not be paused; (3) a cut with nobody doing anything.
   the room, playing, gap −2 / −67 ms; A stayed playing. (3) nothing sent, gap −127 / −155 ms five
   seconds after the reconnect.
 
+**Superseded (2026-09-18), case 1 only.** The user's decision removed offline intent entirely: a
+change made while the session is down is not sent, ever. `probe-offline.mjs` case 1 now expects
+the wrong thing — B's offline pause must *not* reach the room, and B must follow the room back.
+Cases 2 and 3 are unchanged, and the two fixes above (the reconciler's starvation, `releaseRate`
+on close) still stand. See STATE.md "Round 5: nothing done offline is sent".
+
 The existing probes again on `ext-r3c`: `probe-laftel-room.mjs` (`laftel-room-r3c.json`) presser
 509–517 ms, the other 521–548 ms, re-aim in 4 of 6 (84–191 ms), 0 correction seeks, gap −182 to
 +168 ms; `probe-acquire.mjs SCEN=CONTROL` (`acquire-CONTROL-r3c.json`) as before in eleven cases.
