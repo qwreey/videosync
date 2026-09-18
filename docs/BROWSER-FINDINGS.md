@@ -1322,6 +1322,11 @@ fullscreen, 280x75), survives a collapsed panel, and goes when the room is back.
 Not measured: YouTube's fullscreen, and Firefox — both whether its popover reaches the top layer
 and whether its hit testing does the same thing.
 
+**The decision itself, live** (`probe-offline.mjs`, `results/offline-r7.json`): **5/5**. B's
+offline pause reached nobody (B sent 0, A kept playing) and B was put back on the room (gap
+285 ms); a room that moved while B was away was followed, not overridden (gap −7 ms); and a cut
+with nobody pressing anything sent nothing (gap −189 ms).
+
 Rig notes: `requestFullscreen` needs user activation, so the probe presses F2 with CDP `Input` and
 calls it from a `keydown` handler. It fails with `TypeError: Permissions check failed` if a
 previous fullscreen was left over; reloading the page clears that. And while focus is inside the
